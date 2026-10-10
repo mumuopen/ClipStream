@@ -15,7 +15,7 @@ type Config struct {
 }
 
 type Engines struct {
-	YtDlp  string `yaml:"ytdlp"`  // 可执行文件路径或命令名
+	YtDlp  string `yaml:"ytdlp"` // 可执行文件路径或命令名
 	FFmpeg string `yaml:"ffmpeg"`
 	Probe  string `yaml:"ffprobe"`
 	ASR    ASR    `yaml:"asr"`

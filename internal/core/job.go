@@ -24,9 +24,9 @@ func (s JobStatus) Terminal() bool {
 // Job 一个任务 = 一条管线实例
 type Job struct {
 	ID        string    `json:"id"`
-	Kind      string    `json:"kind"`   // clips | live | ...
+	Kind      string    `json:"kind"` // clips | live | ...
 	Status    JobStatus `json:"status"`
-	Stage     string    `json:"stage"`  // 当前阶段名
+	Stage     string    `json:"stage"` // 当前阶段名
 	Progress  int       `json:"progress"`
 	Input     string    `json:"input"`  // URL 或本地文件路径
 	Params    string    `json:"params"` // 阶段间传递的键值（JSON）

@@ -20,7 +20,16 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	// 单写者足够（任务量小）；避免 SQLite 锁竞争
+	// 多进程并发安全（serve 与 run/status 可同时运行）：WAL + 忙等 5s
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	// 单写者足够（任务量小）；避免进程内锁竞争
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	s := &Store{db: db}
@@ -90,8 +99,11 @@ func (s *Store) ListJobs(limit int) ([]*core.Job, error) {
 }
 
 // ResetInterrupted 服务重启后，把中断中的任务复位为排队（重新入队执行）
+// 仅 running（真被中断）记入提示；queued 从未执行，不应误标
 func (s *Store) ResetInterrupted() error {
-	_, err := s.db.Exec(`UPDATE jobs SET status='queued', error='服务重启，任务重新入队' WHERE status IN ('queued','running')`)
+	_, err := s.db.Exec(`UPDATE jobs SET status='queued',
+		error=CASE WHEN status='running' THEN '服务重启，任务重新入队' ELSE '' END
+		WHERE status IN ('queued','running')`)
 	return err
 }
 

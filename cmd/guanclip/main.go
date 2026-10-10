@@ -142,7 +142,7 @@ type app struct {
 	runner *pipeline.Runner
 }
 
-func setup(cfgPath string) (*app, error) {
+func setup(cfgPath string, reset bool) (*app, error) {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return nil, err
@@ -154,8 +154,11 @@ func setup(cfgPath string) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := st.ResetInterrupted(); err != nil {
-		return nil, err
+	// 仅长驻进程（serve）负责复位中断任务；run/status 只读，避免误伤并行运行中的任务
+	if reset {
+		if err := st.ResetInterrupted(); err != nil {
+			return nil, err
+		}
 	}
 	bus := core.NewBus()
 	env := &pipeline.Env{
@@ -193,7 +196,7 @@ func (a *app) newJob(input, kind string) (*core.Job, error) {
 // ---- serve ----
 
 func doServe(cfgPath string) error {
-	app, err := setup(cfgPath)
+	app, err := setup(cfgPath, true)
 	if err != nil {
 		return err
 	}
@@ -237,7 +240,7 @@ func doRun(cfgPath string, args []string) error {
 		return fmt.Errorf("缺少输入：guanclip run -i <URL或本地文件>")
 	}
 
-	app, err := setup(cfgPath)
+	app, err := setup(cfgPath, false)
 	if err != nil {
 		return err
 	}
@@ -274,7 +277,7 @@ func doRun(cfgPath string, args []string) error {
 			fmt.Println("────────────────────────────────────────")
 			fmt.Printf("任务结束：%s（进度 %d%%）\n", statusCN(string(j.Status)), j.Progress)
 			if j.Status == core.StatusReview {
-				printClips(job, j)
+				printClips(j)
 				fmt.Println("已进入审核台：guanclip serve 打开控制台预览/下载切片")
 			}
 			if j.Error != "" {
@@ -286,7 +289,7 @@ func doRun(cfgPath string, args []string) error {
 	}
 }
 
-func printClips(jobMeta *core.Job, j *core.Job) {
+func printClips(j *core.Job) {
 	var r struct {
 		Clips []struct {
 			File  string  `json:"file"`
@@ -326,7 +329,7 @@ func statusCN(s string) string {
 // ---- status ----
 
 func doStatus(cfgPath string) {
-	app, err := setup(cfgPath)
+	app, err := setup(cfgPath, false)
 	if err != nil {
 		log.Fatalf("初始化失败: %v", err)
 	}

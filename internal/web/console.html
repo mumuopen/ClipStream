@@ -82,7 +82,6 @@ const $ = s => document.querySelector(s);
 let jobs = [];          // 列表快照
 let openId = null;      // 当前展开的 job
 let es = null;          // EventSource
-let logShown = 0;       // 已展示的日志长度（按 job 记忆）
 
 function fmtTime(ts) {
   const d = new Date(ts * 1000);
@@ -152,7 +151,13 @@ function render() {
       </div>
       <div class="detail" id="detail-${j.id}"></div>
     </div>`).join('');
-  if (openId) renderDetail(openId, true);
+  // 轮询重建 DOM 后，恢复展开状态并刷新详情（SSE 断流时的兑底）
+  if (openId) {
+    const el = document.getElementById('detail-' + openId);
+    const job = jobs.find(j => j.id === openId);
+    if (el && job) { el.classList.add('open'); renderDetailBody(el, job); }
+    else closeDetail(); // 任务被删除
+  }
 }
 
 async function toggle(id) {
@@ -160,7 +165,6 @@ async function toggle(id) {
   closeDetail();
   openId = id;
   $('#detail-' + id).classList.add('open');
-  logShown = 0;
   const job = jobs.find(j => j.id === id);
   if (job) renderDetailBody($('#detail-' + id), job);
   connectSSE(id);
@@ -183,12 +187,10 @@ function connectSSE(id) {
         appendLog(id, msg.msg);
       } else if (msg.type === 'job' && msg.job) {
         renderDetailBody($('#detail-' + id), msg.job);
-        const row = document.querySelector('#job-' + id + ' .badge');
-        if (row) { /* 顶部卡片等下一轮列表刷新 */ }
       }
     } catch (e) {}
   };
-  es.onerror = () => { /* 轮询兜底 */ };
+  es.onerror = () => { /* 断流时由轮询兑底，EventSource 自动重连 */ };
 }
 
 function appendLog(id, line) {

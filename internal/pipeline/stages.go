@@ -88,13 +88,15 @@ func stageHighlight(ctx context.Context, job *core.Job, env *Env) error {
 		}
 	}
 
-var clips []engine.Clip
+	var clips []engine.Clip
+	fromLLM := false
 	if len(segs) > 0 && env.LLM != nil && env.LLM.Available() {
 		llmClips, err := llmHighlight(ctx, env.LLM, segs)
 		if err != nil {
 			env.log(job, "LLM 高光分析失败（回退等分切片）：%v", err)
 		} else if len(llmClips) > 0 {
 			clips = llmClips
+			fromLLM = true
 			env.log(job, "LLM 高光分析完成：%d 段候选", len(llmClips))
 		}
 	}
@@ -107,14 +109,14 @@ var clips []engine.Clip
 			}
 		}
 		clips = fallbackChunks(duration)
-		env.log(job, "使用等分切片策略：%d 段", len(clips))
+		env.log(job, "使用等分切片策略：%d 段（每段约 %.0fs）", len(clips), duration/float64(len(clips)))
 	}
 
-	// 过滤非法区间（8s~300s）
+	// 过滤非法区间：下限 8s 对所有来源生效；上限 300s 仅约束 LLM 输出（等分回退按构造保证全覆盖）
 	var kept []engine.Clip
 	for _, c := range clips {
 		d := c.End - c.Start
-		if d >= 8 && d <= 300 && c.Start >= 0 && c.End > c.Start {
+		if d >= 8 && c.Start >= 0 && c.End > c.Start && (!fromLLM || d <= 300) {
 			kept = append(kept, c)
 		}
 	}
@@ -169,32 +171,29 @@ func tail(s string, n int) string {
 	return s
 }
 
-// fallbackChunks 无 LLM/转写时的等分切片
+// fallbackChunks 无 LLM/转写时的等分切片：目标每段约 60s，最多 20 段，重新均分保证覆盖全时长
 func fallbackChunks(duration float64) []engine.Clip {
 	if duration <= 0 {
 		return nil
 	}
-	chunk := math.Min(60, duration/4) // 至多 4 段，每段不超过 60s
-	n := int(math.Ceil(duration / chunk))
-	if n > 6 {
-		n = 6
-	}
+	n := int(math.Ceil(duration / 60))
 	if n < 1 {
 		n = 1
 	}
+	if n > 20 {
+		n = 20
+	}
+	chunk := duration / float64(n) // 均分覆盖全时长（超长视频时每段>60s）
 	clips := make([]engine.Clip, 0, n)
 	for i := 0; i < n; i++ {
-		start := float64(i) * chunk
-		end := start + chunk
-		if end > duration {
-			end = duration
-		}
+		start := math.Round(chunk*float64(i)*10) / 10
+		end := math.Round(math.Min(chunk*float64(i+1), duration)*10) / 10
 		if end-start < 5 {
 			break
 		}
 		clips = append(clips, engine.Clip{
-			Start: math.Round(start*10) / 10,
-			End:   math.Round(end*10) / 10,
+			Start: start,
+			End:   end,
 			Title: fmt.Sprintf("片段 %d", i+1),
 			Score: 0,
 		})
@@ -235,11 +234,15 @@ func stageCut(ctx context.Context, job *core.Job, env *Env) error {
 			env.log(job, "切片 %02d 失败：%v", i+1, err)
 			continue
 		}
+		coverRel := ""
 		cover := filepath.Join(clipsDir, fmt.Sprintf("clip_%02d.jpg", i+1))
 		_ = env.FFMPEG.ExtractFrame(ctx, video, cover, (c.Start+c.End)/2)
+		if _, err := os.Stat(cover); err == nil {
+			coverRel = relPath(job.Dir, cover) // 提取失败时不留 404 引用
+		}
 		results = append(results, ClipResult{
 			File:  relPath(job.Dir, outPath),
-			Cover: relPath(job.Dir, cover),
+			Cover: coverRel,
 			Title: c.Title,
 			Start: c.Start,
 			End:   c.End,
