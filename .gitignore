@@ -1,6 +1,7 @@
 # 数据与产物
 data/
 bin/
+engines/
 *.exe
 *.log
 
