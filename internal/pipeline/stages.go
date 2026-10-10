@@ -267,7 +267,21 @@ func relPath(base, full string) string {
 
 // ---- finalize ----
 
-func stageFinalize(_ context.Context, job *core.Job, _ *Env) error {
-	job.Status = core.StatusReview // 进入审核台，等人工放行（M2 接发布）
+func stageFinalize(_ context.Context, job *core.Job, env *Env) error {
+	job.Status = core.StatusReview // 进入审核台，等人工放行
+
+	// pushme 通知：切片待审核
+	var r struct {
+		Clips []struct {
+			Title string `json:"title"`
+		} `json:"clips"`
+	}
+	_ = json.Unmarshal([]byte(job.Result), &r)
+	consoleURL := "http://" + env.Cfg.Web.Listen
+	if env.Cfg.Web.Listen == "" {
+		consoleURL = "http://127.0.0.1:8899"
+	}
+	env.notify("GuanClip 切片待审核",
+		fmt.Sprintf("任务 %s 完成，%d 个切片进入审核台：%s", job.ID, len(r.Clips), consoleURL))
 	return nil
 }

@@ -1,0 +1,40 @@
+# 抖音发布配置 —— rod 浏览器自动化（创作者中心）
+# 选择器源自 social-auto-upload 2026-06 实测 DOM，平台改版时改本文件即可，无需动代码
+engine: douyin
+
+upload_url: "https://creator.douyin.com/creator-micro/content/upload"
+# 上传完成后的发布页（两种版本 URL，命中任一即进入表单）
+publish_url_contains:
+  - "creator.douyin.com/creator-micro/content/publish"
+  - "creator.douyin.com/creator-micro/content/post/video"
+# 发布成功后跳转
+success_url_contains: "creator.douyin.com/creator-micro/content/manage"
+# 命中即视为未登录（需要 guanclip login --platform douyin）
+login_markers: ["扫码登录", "手机号登录"]
+# 登录成功标志（URL 含此片段）
+logged_in_url_contains: "creator.douyin.com/creator-micro"
+
+selectors:
+  # 文件上传 input（多个逗号分隔依次尝试）
+  upload_input: "input.upload-btn-input"
+  upload_input_fallback: "div[class^='container'] input[accept], div[class^='container'] input[type='file'], div[class^='container'] input.upload-input"
+  # 上传完成标志（XPath 文本匹配）
+  upload_done_text: "重新上传"
+  # 上传失败标志（XPath 文本匹配）
+  upload_fail_text: "上传失败"
+  # 标题输入框
+  title_input: "input[placeholder*='填写作品标题']"
+  # 描述编辑器（contenteditable）
+  desc_editor: "div.zone-container[contenteditable='true']"
+  # 发布按钮文本
+  publish_button_text: "发布"
+  # 未设封面拦截提示
+  cover_required_text: "请设置封面后再发布"
+  # 推荐封面（兜底选第一个）
+  recommend_cover: "[class^='recommendCover-']"
+  cover_confirm_text: "是否确认应用此封面"
+  cover_confirm_button: "确定"
+
+title_max_len: 30
+# 等待视频上传完成的轮询上限
+upload_timeout_sec: 600

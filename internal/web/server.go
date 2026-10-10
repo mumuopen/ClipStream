@@ -15,6 +15,7 @@ import (
 	"chopperbot/internal/config"
 	"chopperbot/internal/core"
 	"chopperbot/internal/pipeline"
+	"chopperbot/internal/publish"
 	"chopperbot/internal/store"
 )
 
@@ -67,6 +68,13 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	kind := req.Kind
 	if kind == "" {
 		kind = "clips"
+	}
+	// 发布任务：Input 必须是合法的发布请求 JSON
+	if kind == "publish" {
+		if _, err := publish.ParseRequest(req.Input); err != nil {
+			httpError(w, 400, err.Error())
+			return
+		}
 	}
 
 	job := &core.Job{

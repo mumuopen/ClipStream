@@ -12,12 +12,16 @@ type Config struct {
 	Engines Engines `yaml:"engines"`
 	LLM     LLM     `yaml:"llm"`
 	Web     Web     `yaml:"web"`
+	Publish Publish `yaml:"publish"`
+	Notify  Notify  `yaml:"notify"`
+	Chrome  Chrome  `yaml:"chrome"`
 }
 
 type Engines struct {
 	YtDlp  string `yaml:"ytdlp"` // 可执行文件路径或命令名
 	FFmpeg string `yaml:"ffmpeg"`
 	Probe  string `yaml:"ffprobe"`
+	Biliup string `yaml:"biliup"` // B站投稿 CLI 引擎（github.com/biliup/biliup）
 	ASR    ASR    `yaml:"asr"`
 }
 
@@ -38,12 +42,33 @@ type Web struct {
 	Listen string `yaml:"listen"`
 }
 
+type Publish struct {
+	Headless     bool   `yaml:"headless"`      // 抖音浏览器发布是否无头（默认有头，风控更稳）
+	Screenshots  bool   `yaml:"screenshots"`   // 发布前/后截图存档
+	PlatformsDir string `yaml:"platforms_dir"` // 平台选择器配置目录
+}
+
+type Notify struct {
+	Pushme Pushme `yaml:"pushme"`
+}
+
+type Pushme struct {
+	Enable  bool   `yaml:"enable"`   // 总开关
+	URL     string `yaml:"url"`      // 自建 pushme 服务地址，如 http://server:3100/
+	PushKey string `yaml:"push_key"` // 客户端生成的 push_key（手机 App 订阅的那个）
+}
+
+type Chrome struct {
+	Path string `yaml:"path"` // 本机 Chrome 可执行路径，留空则 rod 自动探测
+}
+
 func Default() *Config {
 	return &Config{
 		DataDir: "./data",
 		Proxy:   "http://127.0.0.1:7897",
 		Engines: Engines{YtDlp: "yt-dlp", FFmpeg: "ffmpeg", Probe: "ffprobe"},
 		Web:     Web{Listen: "127.0.0.1:8899"},
+		Publish: Publish{Headless: false, Screenshots: true, PlatformsDir: "configs/platforms"},
 	}
 }
 

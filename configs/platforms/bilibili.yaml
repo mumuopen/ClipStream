@@ -1,0 +1,10 @@
+# B站发布配置 —— 走 biliup CLI 引擎（github.com/biliup/biliup，免浏览器直传）
+# 选择器无需配置；此文件只放投稿参数
+engine: biliup
+
+# 投稿分区 ID（tid）
+# 常用：21 日常 / 17 单机游戏 / 122 野生技术协会 / 231 科技·人工智能 / 138 搞笑
+tid: 122
+
+# 默认标签（发布请求未传 tags 时使用）
+tags_default: []

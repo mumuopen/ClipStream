@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"chopperbot/internal/core"
@@ -24,8 +25,11 @@ type Runner struct {
 
 func NewRunner(env *Env) *Runner {
 	return &Runner{
-		env:    env,
-		stages: map[string][]Stage{"clips": clipStages()},
+		env: env,
+		stages: map[string][]Stage{
+			"clips":   clipStages(),
+			"publish": publishStages(),
+		},
 		sem:    make(chan struct{}, 2), // 最多 2 个任务并行
 		active: map[string]bool{},
 	}
@@ -87,6 +91,9 @@ func (r *Runner) run(id string) {
 			r.env.log(job, "✗ 阶段失败：%v", err)
 			_ = r.env.Store.UpdateJob(job)
 			r.env.publishStatus(job)
+			// pushme 通知：任务失败
+			r.env.notify("GuanClip 任务失败",
+				fmt.Sprintf("任务 %s 在 %s 阶段失败：%s", job.ID, st.Name, job.Error))
 			return
 		}
 		job.Progress = (i + 1) * 100 / len(stages)
