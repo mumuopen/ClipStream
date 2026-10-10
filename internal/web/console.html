@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GuanClip 控制台</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3;
+    --muted: #8b949e; --accent: #4f8cc9; --ok: #3fb950; --warn: #d29922; --err: #f85149;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; padding: 0 0 60px; }
+  header { padding: 20px 24px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 12px; }
+  header h1 { font-size: 20px; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  main { max-width: 1080px; margin: 0 auto; padding: 20px 24px; }
+
+  .newjob { display: flex; gap: 10px; margin-bottom: 24px; }
+  .newjob input { flex: 1; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; color: var(--text); font-size: 14px; outline: none; }
+  .newjob input:focus { border-color: var(--accent); }
+  .newjob button { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 10px 22px; font-size: 14px; cursor: pointer; white-space: nowrap; }
+  .newjob button:hover { filter: brightness(1.15); }
+  .newjob button:disabled { opacity: .5; cursor: wait; }
+  .hint { color: var(--muted); font-size: 12px; margin: -16px 0 20px; }
+
+  .job { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 14px; overflow: hidden; }
+  .job-row { display: flex; align-items: center; gap: 14px; padding: 14px 16px; cursor: pointer; }
+  .job-row:hover { background: #1c2129; }
+  .job-id { font-family: Consolas, monospace; color: var(--muted); font-size: 12px; min-width: 120px; }
+  .badge { padding: 2px 10px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
+  .badge.queued  { background: #30363d; color: var(--muted); }
+  .badge.running { background: #1f3a5f; color: #79c0ff; }
+  .badge.review  { background: #3d2e00; color: var(--warn); }
+  .badge.done    { background: #0f2e18; color: var(--ok); }
+  .badge.failed  { background: #3d1418; color: var(--err); }
+  .badge.canceled{ background: #30363d; color: var(--muted); }
+  .stage { color: var(--muted); font-size: 12px; min-width: 90px; }
+  .bar { flex: 1; height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; min-width: 80px; }
+  .bar > div { height: 100%; background: var(--accent); transition: width .4s; }
+  .pct { font-size: 12px; color: var(--muted); width: 40px; text-align: right; }
+  .job-input { flex: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 13px; }
+  .del { border: none; background: none; color: var(--muted); cursor: pointer; font-size: 15px; padding: 4px; }
+  .del:hover { color: var(--err); }
+
+  .detail { border-top: 1px solid var(--border); padding: 16px; background: #11151c; display: none; }
+  .detail.open { display: block; }
+  .detail h4 { font-size: 13px; color: var(--muted); margin: 12px 0 8px; }
+  pre.log { background: #0a0e14; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font: 12px/1.7 Consolas, monospace; max-height: 240px; overflow: auto; white-space: pre-wrap; }
+  .err-line { color: var(--err); white-space: pre-wrap; margin: 10px 0; }
+
+  .clips { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+  .clip { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .clip video { width: 100%; aspect-ratio: 16/9; background: #000; display: block; }
+  .clip img.cover { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; background: #000; }
+  .clip .meta { padding: 10px 12px; }
+  .clip .title { font-size: 13px; margin-bottom: 4px; }
+  .clip .info { color: var(--muted); font-size: 12px; display: flex; justify-content: space-between; align-items: center; }
+  .clip a { color: var(--accent); text-decoration: none; font-size: 12px; }
+  .empty { text-align: center; color: var(--muted); padding: 40px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>GuanClip</h1>
+  <span class="sub">ChopperBot 融合平台 · M1 搬运+智能切片 · 直播/翻译/发布后续里程碑</span>
+</header>
+<main>
+  <div class="newjob">
+    <input id="input" placeholder="粘贴视频 URL（YouTube/B站…）或本地文件路径，回车提交">
+    <button id="submit" onclick="submitJob()">创建任务</button>
+  </div>
+  <div class="hint">管线：下载 → 转写 → 高光 → 切片 → 审核。ASR/LLM 未配置时自动降级（等分切片），任务产物在本机 data/jobs/ 目录。</div>
+
+  <div id="list"></div>
+</main>
+
+<script>
+'use strict';
+const STATUS_CN = { queued: '排队', running: '执行中', review: '待审核', done: '完成', failed: '失败', canceled: '已取消' };
+const $ = s => document.querySelector(s);
+let jobs = [];          // 列表快照
+let openId = null;      // 当前展开的 job
+let es = null;          // EventSource
+let logShown = 0;       // 已展示的日志长度（按 job 记忆）
+
+function fmtTime(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString('zh-CN', { hour12: false });
+}
+
+async function fetchJSON(url, opt) {
+  const r = await fetch(url, opt);
+  if (!r.ok) throw new Error(r.status + ' ' + await r.text());
+  return r.json();
+}
+
+async function submitJob() {
+  const input = $('#input').value.trim();
+  if (!input) return;
+  $('#submit').disabled = true;
+  try {
+    await fetchJSON('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: input, kind: 'clips' }) });
+    $('#input').value = '';
+    refreshList();
+  } catch (e) { alert('创建失败：' + e.message); }
+  $('#submit').disabled = false;
+}
+$('#input').addEventListener('keydown', e => { if (e.key === 'Enter') submitJob(); });
+
+async function refreshList() {
+  try {
+    jobs = await fetchJSON('/api/jobs');
+    render();
+  } catch (e) { /* 服务重启中 */ }
+}
+
+function clipHTML(job, c) {
+  const file = '/api/files/' + job.id + '/' + c.file;
+  const cover = c.cover ? '/api/files/' + job.id + '/' + c.cover : null;
+  const dur = Math.round(c.end - c.start);
+  return `<div class="clip">
+    <video controls preload="metadata" src="${file}" ${cover ? `poster="${cover}"` : ''}></video>
+    <div class="meta">
+      <div class="title">${esc(c.title || '未命名')}</div>
+      <div class="info"><span>${fmtRange(c.start, c.end)} · ${dur}s${c.score ? ' · 评分 ' + Math.round(c.score) : ''}</span>
+      <a href="${file}" download>下载</a></div>
+    </div>
+  </div>`;
+}
+
+function fmtRange(s, e) {
+  const f = t => Math.floor(t / 60) + ':' + String(Math.round(t % 60)).padStart(2, '0');
+  return f(s) + ' - ' + f(e);
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+
+function render() {
+  const list = $('#list');
+  if (!jobs || !jobs.length) { list.innerHTML = '<div class="empty">暂无任务，粘贴一个视频地址开始</div>'; return; }
+  list.innerHTML = jobs.map(j => `
+    <div class="job" id="job-${j.id}">
+      <div class="job-row" onclick="toggle('${j.id}')">
+        <span class="job-id">${j.id}</span>
+        <span class="badge ${j.status}">${STATUS_CN[j.status] || j.status}</span>
+        <span class="stage">${j.stage ? j.stage : ''}</span>
+        <div class="bar"><div style="width:${j.progress}%"></div></div>
+        <span class="pct">${j.progress}%</span>
+        <span class="job-input" title="${esc(j.input)}">${esc(j.input)}</span>
+        <button class="del" title="删除" onclick="event.stopPropagation();delJob('${j.id}')">✕</button>
+      </div>
+      <div class="detail" id="detail-${j.id}"></div>
+    </div>`).join('');
+  if (openId) renderDetail(openId, true);
+}
+
+async function toggle(id) {
+  if (openId === id) { closeDetail(); return; }
+  closeDetail();
+  openId = id;
+  $('#detail-' + id).classList.add('open');
+  logShown = 0;
+  const job = jobs.find(j => j.id === id);
+  if (job) renderDetailBody($('#detail-' + id), job);
+  connectSSE(id);
+  try { const fresh = await fetchJSON('/api/jobs/' + id); renderDetailBody($('#detail-' + id), fresh); } catch (e) {}
+}
+
+function closeDetail() {
+  if (es) { es.close(); es = null; }
+  if (openId && $('#detail-' + openId)) $('#detail-' + openId).classList.remove('open');
+  openId = null;
+}
+
+function connectSSE(id) {
+  if (es) es.close();
+  es = new EventSource('/api/jobs/' + id + '/events');
+  es.onmessage = ev => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === 'log' && msg.msg) {
+        appendLog(id, msg.msg);
+      } else if (msg.type === 'job' && msg.job) {
+        renderDetailBody($('#detail-' + id), msg.job);
+        const row = document.querySelector('#job-' + id + ' .badge');
+        if (row) { /* 顶部卡片等下一轮列表刷新 */ }
+      }
+    } catch (e) {}
+  };
+  es.onerror = () => { /* 轮询兜底 */ };
+}
+
+function appendLog(id, line) {
+  const pre = document.querySelector('#detail-' + id + ' pre.log');
+  if (pre) { pre.textContent += fmtTime(Date.now() / 1000) + ' ' + line + '\n'; pre.scrollTop = pre.scrollHeight; }
+}
+
+function renderDetailBody(el, job) {
+  if (!el || !job) return;
+  let clipsHTML = '';
+  try {
+    const r = JSON.parse(job.result || '{}');
+    if (r.clips && r.clips.length) clipsHTML = '<h4>切片成品（' + r.clips.length + '）</h4><div class="clips">' + r.clips.map(c => clipHTML(job, c)).join('') + '</div>';
+  } catch (e) {}
+  el.innerHTML = `
+    ${job.error ? '<div class="err-line">✗ ' + esc(job.error) + '</div>' : ''}
+    <h4>运行日志</h4>
+    <pre class="log">${esc(job.log || '（等待输出…）')}</pre>
+    ${clipsHTML}`;
+  const pre = el.querySelector('pre.log');
+  if (pre) pre.scrollTop = pre.scrollHeight;
+}
+
+async function delJob(id) {
+  if (!confirm('删除任务 ' + id + '？（文件保留在 data/jobs/）')) return;
+  try { await fetchJSON('/api/jobs/' + id, { method: 'DELETE' }); if (openId === id) closeDetail(); refreshList(); } catch (e) { alert(e.message); }
+}
+
+refreshList();
+setInterval(() => { if (!document.hidden) refreshList(); }, 2500);
+</script>
+</body>
+</html>

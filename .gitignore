@@ -1,0 +1,16 @@
+# 数据与产物
+data/
+bin/
+*.exe
+*.log
+
+# 本地配置（含密钥，不入库）
+config.yaml
+.env
+
+# 临时文件
+.temp/
+.temp-ck/
+
+# 原版 ChopperBot 源码（仅供研读）
+reference/
