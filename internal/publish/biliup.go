@@ -43,6 +43,14 @@ func BiliupPublish(ctx context.Context, cfg *config.Config, pc *PlatformConfig, 
 		args = append(args, "--cover", coverPath)
 	}
 
+	// 演练模式：验证登录态与参数，不真传
+	if req.DryRun {
+		logf("dry-run：登录态有效，演练命令：%s %s", bin, strings.Join(args, " "))
+		res.OK = true
+		res.Detail = "dry-run：登录态有效，未执行上传"
+		return res, nil
+	}
+
 	logf("biliup 上传：%s", strings.Join(args, " "))
 	out, err := runBiliup(ctx, bin, args)
 	if err != nil {
