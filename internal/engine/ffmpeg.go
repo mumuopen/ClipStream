@@ -94,6 +94,40 @@ func (f *FFMPEG) ExtractAudio16k(ctx context.Context, in, out string) error {
 	return nil
 }
 
+// BurnSubtitles 烧录 SRT 字幕（libass）
+// 关键坑规避：①subtitles 滤镜的 filename 含 Windows 盘符冒号会被滤镜解析器吃掉，
+// 因此把进程工作目录切到 srt 所在目录、用相对文件名；②cmd.Dir 改变后相对路径失效，
+// in/out/srtDir 一律先转绝对路径
+func (f *FFMPEG) BurnSubtitles(ctx context.Context, in, out, srtDir, srtName string) error {
+	if abs, err := filepath.Abs(in); err == nil {
+		in = abs
+	}
+	if abs, err := filepath.Abs(out); err == nil {
+		out = abs
+	}
+	if abs, err := filepath.Abs(srtDir); err == nil {
+		srtDir = abs
+	}
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		return err
+	}
+	const style = "FontName=Microsoft YaHei,FontSize=15,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=1.5,Shadow=1,MarginV=22"
+	args := []string{
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-i", in,
+		"-vf", "subtitles=filename=" + srtName + ":force_style='" + style + "'",
+		"-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+		"-c:a", "copy",
+		out,
+	}
+	cmd := exec.CommandContext(ctx, f.Bin, args...)
+	cmd.Dir = srtDir
+	if b, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ffmpeg 烧字幕失败: %v\n%s", err, tail(b, 2000))
+	}
+	return nil
+}
+
 func tail(b []byte, n int) string {
 	s := strings.TrimSpace(string(b))
 	if len(s) > n {

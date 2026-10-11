@@ -76,6 +76,13 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// 字幕任务：Input 必须是合法的字幕请求 JSON
+	if kind == "subtitle" {
+		if _, err := publish.ParseSubtitleRequest(req.Input); err != nil {
+			httpError(w, 400, err.Error())
+			return
+		}
+	}
 
 	job := &core.Job{
 		ID:     newJobID(),

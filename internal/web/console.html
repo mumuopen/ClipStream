@@ -61,6 +61,8 @@
 
   .pub-btn { margin-top: 8px; width: 100%; background: #1f3a5f; color: #79c0ff; border: 1px solid #2c4a6e; border-radius: 6px; padding: 6px 0; cursor: pointer; font-size: 12px; }
   .pub-btn:hover { background: #24466e; }
+  .pub-btn.sub-btn { background: #143242; color: #56d4dd; border-color: #1d4a56; }
+  .pub-btn.sub-btn:hover { background: #1a4256; }
 
   .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: none; align-items: center; justify-content: center; z-index: 100; }
   .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; width: min(500px, 92vw); display: flex; flex-direction: column; gap: 10px; }
@@ -121,6 +123,22 @@
   </div>
 </div>
 
+<div id="sub-bg" class="modal-bg" onclick="if(event.target===this)closeSubModal()">
+  <div class="modal">
+    <h3>给切片加字幕</h3>
+    <div id="sub-meta" class="pub-meta"></div>
+    <div class="modal-row">
+      <label><input type="radio" id="sub-style-bi" name="substyle" checked> 双语（原文+中文）</label>
+      <label><input type="radio" id="sub-style-zh" name="substyle"> 仅中文</label>
+    </div>
+    <div class="hint" style="margin:0">流程：DeepSeek 翻译该片段转写 → SRT 烧录进画面 → 生成 *_sub.mp4 回审核台</div>
+    <div class="modal-actions">
+      <button class="ghost" onclick="closeSubModal()">取消</button>
+      <button onclick="submitSubtitle()">开始加字幕</button>
+    </div>
+  </div>
+</div>
+
 <script>
 'use strict';
 const STATUS_CN = { queued: '排队', running: '执行中', review: '待审核', done: '完成', failed: '失败', canceled: '已取消' };
@@ -128,8 +146,9 @@ const $ = s => document.querySelector(s);
 let jobs = [];          // 列表快照
 let openId = null;      // 当前展开的 job
 let es = null;          // EventSource
-let detailClips = [];   // 当前展开任务详情里的切片列表（供发布弹窗用）
+let detailClips = [];   // 当前展开任务详情里的切片列表（供发布/字幕弹窗用）
 let pubCtx = null;      // 发布弹窗上下文 {jobId, clip}
+let subCtx = null;      // 字幕弹窗上下文 {jobId, clip}
 
 function fmtTime(ts) {
   const d = new Date(ts * 1000);
@@ -172,7 +191,8 @@ function clipHTML(job, c, idx) {
       <div class="title">${esc(c.title || '未命名')}</div>
       <div class="info"><span>${fmtRange(c.start, c.end)} · ${dur}s${c.score ? ' · 评分 ' + Math.round(c.score) : ''}</span>
       <a href="${file}" download>下载</a></div>
-      ${job.status === 'review' ? `<button class="pub-btn" onclick="openPubModal('${job.id}', ${idx})">发布此切片</button>` : ''}
+      ${job.status === 'review' ? `<button class="pub-btn" onclick="openPubModal('${job.id}', ${idx})">发布此切片</button>
+      <button class="pub-btn sub-btn" onclick="openSubModal('${job.id}', ${idx})">加字幕</button>` : ''}
     </div>
   </div>`;
 }
@@ -257,6 +277,19 @@ function renderDetailBody(el, job) {
       extraHTML = '<h4>发布结果' + (r.dry_run ? '（演练）' : '') + '</h4>' + r.results.map(pr => `
         <div class="pub-result ${pr.ok ? 'ok' : 'fail'}">${pr.ok ? '✔' : '✗'} <b>${esc(pr.platform)}</b>：${esc(pr.detail || '')}
         ${pr.screenshot ? `<img src="/api/files/${job.id}/${pr.screenshot}">` : ''}</div>`).join('');
+    } else if (job.kind === 'subtitle' && r.subtitled) {
+      // 字幕任务结果：烧字幕切片预览 + 直接发布入口
+      const src = r.source_job, f = '/api/files/' + src + '/' + r.subtitled;
+      const cover = r.cover ? '/api/files/' + src + '/' + r.cover : null;
+      extraHTML = `<h4>字幕成品（${r.segments} 条 · ${r.style === 'bilingual' ? '双语' : '纯中文'}）</h4>
+        <div class="clip" style="max-width:480px">
+          <video controls preload="metadata" src="${f}" ${cover ? `poster="${cover}"` : ''}></video>
+          <div class="meta">
+            <div class="title">${esc(r.title || '')}</div>
+            <div class="info"><span>原片：${esc(r.original)}</span><a href="${f}" download>下载</a></div>
+            ${job.status === 'review' ? `<button class="pub-btn" onclick='openPubModalFor(${JSON.stringify({ jobId: src, clip: { file: r.subtitled, cover: r.cover || '', title: r.title } })})'>发布此切片</button>` : ''}
+          </div>
+        </div>`;
     } else if (r.clips && r.clips.length) {
       detailClips = r.clips;
       extraHTML = '<h4>切片成品（' + r.clips.length + '）</h4><div class="clips">' + r.clips.map((c, i) => clipHTML(job, c, i)).join('') + '</div>';
@@ -276,12 +309,18 @@ async function delJob(id) {
   try { await fetchJSON('/api/jobs/' + id, { method: 'DELETE' }); if (openId === id) closeDetail(); refreshList(); } catch (e) { alert(e.message); }
 }
 
-// ---- 发布弹窗 ----
+// ---- 发布/字幕弹窗 ----
 
 function openPubModal(jobId, idx) {
   const c = detailClips[idx];
   if (!c) return;
-  pubCtx = { jobId, clip: c };
+  openPubModalFor({ jobId, clip: c });
+}
+
+// 通用发布弹窗：clip = {file, cover, title}
+function openPubModalFor(ctx) {
+  pubCtx = ctx;
+  const c = ctx.clip;
   $('#pub-meta').textContent = c.file + (c.cover ? ' ｜ 封面: ' + c.cover : ' ｜ 无封面');
   $('#pub-title').value = c.title || '';
   $('#pub-desc').value = '';
@@ -320,6 +359,42 @@ async function submitPublish() {
     closePubModal();
     refreshList();
   } catch (e) { alert('创建发布任务失败：' + e.message); }
+}
+
+// ---- 字幕弹窗 ----
+
+function openSubModal(jobId, idx) {
+  const c = detailClips[idx];
+  if (!c) return;
+  subCtx = { jobId, clip: c };
+  $('#sub-meta').textContent = c.file + ' ｜ ' + (c.title || '');
+  $('#sub-style-bi').checked = true;
+  $('#sub-style-zh').checked = false;
+  $('#sub-bg').style.display = 'flex';
+}
+
+function closeSubModal() {
+  $('#sub-bg').style.display = 'none';
+  subCtx = null;
+}
+
+async function submitSubtitle() {
+  if (!subCtx) return;
+  const style = $('#sub-style-bi').checked ? 'bilingual' : 'zh';
+  const req = {
+    source_job: subCtx.jobId,
+    clip: subCtx.clip.file,
+    style: style
+  };
+  try {
+    await fetchJSON('/api/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'subtitle', input: JSON.stringify(req) })
+    });
+    closeSubModal();
+    refreshList();
+  } catch (e) { alert('创建字幕任务失败：' + e.message); }
 }
 
 refreshList();

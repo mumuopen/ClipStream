@@ -27,8 +27,9 @@ func NewRunner(env *Env) *Runner {
 	return &Runner{
 		env: env,
 		stages: map[string][]Stage{
-			"clips":   clipStages(),
-			"publish": publishStages(),
+			"clips":    clipStages(),
+			"publish":  publishStages(),
+			"subtitle": subtitleStages(),
 		},
 		sem:    make(chan struct{}, 2), // 最多 2 个任务并行
 		active: map[string]bool{},
