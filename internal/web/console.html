@@ -63,6 +63,8 @@
   .pub-btn:hover { background: #24466e; }
   .pub-btn.sub-btn { background: #143242; color: #56d4dd; border-color: #1d4a56; }
   .pub-btn.sub-btn:hover { background: #1a4256; }
+  .pub-btn.dub-btn { background: #2a2340; color: #b3a1e8; border-color: #3d3460; }
+  .pub-btn.dub-btn:hover { background: #352c52; }
 
   .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: none; align-items: center; justify-content: center; z-index: 100; }
   .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; width: min(500px, 92vw); display: flex; flex-direction: column; gap: 10px; }
@@ -139,6 +141,29 @@
   </div>
 </div>
 
+<div id="dub-bg" class="modal-bg" onclick="if(event.target===this)closeDubModal()">
+  <div class="modal">
+    <h3>配音解说</h3>
+    <div id="dub-meta" class="pub-meta"></div>
+    <label>音色
+      <select id="dub-voice">
+        <option value="云健(男·播音)">云健（男·播音腔，默认）</option>
+        <option value="云希(男·沉稳)">云希（男·沉稳）</option>
+        <option value="晓晓(女·亲和)">晓晓（女·亲和）</option>
+        <option value="晓伊(女·温柔)">晓伊（女·温柔）</option>
+      </select>
+    </label>
+    <div class="modal-row">
+      <label><input type="checkbox" id="dub-keep"> 保留原声做背景（默认纯解说）</label>
+    </div>
+    <div class="hint" style="margin:0">流程：DeepSeek 按转写写解说稿 → edge-tts 合成 → 变速对齐 → 替换音轨 → 生成 *_dub.mp4 回审核台</div>
+    <div class="modal-actions">
+      <button class="ghost" onclick="closeDubModal()">取消</button>
+      <button onclick="submitDub()">开始配音</button>
+    </div>
+  </div>
+</div>
+
 <script>
 'use strict';
 const STATUS_CN = { queued: '排队', running: '执行中', review: '待审核', done: '完成', failed: '失败', canceled: '已取消' };
@@ -149,6 +174,7 @@ let es = null;          // EventSource
 let detailClips = [];   // 当前展开任务详情里的切片列表（供发布/字幕弹窗用）
 let pubCtx = null;      // 发布弹窗上下文 {jobId, clip}
 let subCtx = null;      // 字幕弹窗上下文 {jobId, clip}
+let dubCtx = null;      // 配音弹窗上下文 {jobId, clip}
 
 function fmtTime(ts) {
   const d = new Date(ts * 1000);
@@ -192,7 +218,8 @@ function clipHTML(job, c, idx) {
       <div class="info"><span>${fmtRange(c.start, c.end)} · ${dur}s${c.score ? ' · 评分 ' + Math.round(c.score) : ''}</span>
       <a href="${file}" download>下载</a></div>
       ${job.status === 'review' ? `<button class="pub-btn" onclick="openPubModal('${job.id}', ${idx})">发布此切片</button>
-      <button class="pub-btn sub-btn" onclick="openSubModal('${job.id}', ${idx})">加字幕</button>` : ''}
+      <button class="pub-btn sub-btn" onclick="openSubModal('${job.id}', ${idx})">加字幕</button>
+      <button class="pub-btn dub-btn" onclick="openDubModal(${JSON.stringify({ jobId: job.id, clip: { file: c.file, cover: c.cover || '', title: c.title } })})">配音解说</button>` : ''}
     </div>
   </div>`;
 }
@@ -287,7 +314,8 @@ function renderDetailBody(el, job) {
           <div class="meta">
             <div class="title">${esc(r.title || '')}</div>
             <div class="info"><span>原片：${esc(r.original)}</span><a href="${f}" download>下载</a></div>
-            ${job.status === 'review' ? `<button class="pub-btn" onclick='openPubModalFor(${JSON.stringify({ jobId: src, clip: { file: r.subtitled, cover: r.cover || '', title: r.title } })})'>发布此切片</button>` : ''}
+            ${job.status === 'review' ? `<button class="pub-btn" onclick='openPubModalFor(${JSON.stringify({ jobId: src, clip: { file: r.subtitled, cover: r.cover || '', title: r.title } })})'>发布此切片</button>
+            <button class="pub-btn dub-btn" onclick='openDubModal(${JSON.stringify({ jobId: src, clip: { file: r.subtitled, cover: r.cover || '', title: r.title } })})'>配音解说</button>` : ''}
           </div>
         </div>`;
     } else if (r.clips && r.clips.length) {
@@ -395,6 +423,38 @@ async function submitSubtitle() {
     closeSubModal();
     refreshList();
   } catch (e) { alert('创建字幕任务失败：' + e.message); }
+}
+
+// ---- 配音弹窗 ----
+
+function openDubModal(ctx) {
+  dubCtx = ctx;
+  $('#dub-meta').textContent = ctx.clip.file + ' ｜ ' + (ctx.clip.title || '');
+  $('#dub-bg').style.display = 'flex';
+}
+
+function closeDubModal() {
+  $('#dub-bg').style.display = 'none';
+  dubCtx = null;
+}
+
+async function submitDub() {
+  if (!dubCtx) return;
+  const req = {
+    source_job: dubCtx.jobId,
+    clip: dubCtx.clip.file,
+    voice: $('#dub-voice').value,
+    keep_audio: $('#dub-keep').checked
+  };
+  try {
+    await fetchJSON('/api/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'dub', input: JSON.stringify(req) })
+    });
+    closeDubModal();
+    refreshList();
+  } catch (e) { alert('创建配音任务失败：' + e.message); }
 }
 
 refreshList();

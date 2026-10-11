@@ -83,6 +83,13 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// 配音任务：Input 必须是合法的配音请求 JSON
+	if kind == "dub" {
+		if _, err := publish.ParseDubRequest(req.Input); err != nil {
+			httpError(w, 400, err.Error())
+			return
+		}
+	}
 
 	job := &core.Job{
 		ID:     newJobID(),

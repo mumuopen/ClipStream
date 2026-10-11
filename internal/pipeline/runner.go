@@ -30,6 +30,7 @@ func NewRunner(env *Env) *Runner {
 			"clips":    clipStages(),
 			"publish":  publishStages(),
 			"subtitle": subtitleStages(),
+			"dub":      dubStages(),
 		},
 		sem:    make(chan struct{}, 2), // 最多 2 个任务并行
 		active: map[string]bool{},
