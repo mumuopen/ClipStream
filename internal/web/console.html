@@ -6,59 +6,63 @@
 <title>GuanClip 控制台</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230B0E14'/%3E%3Ccircle cx='8' cy='8' r='4' fill='%23F5A524'/%3E%3C/svg%3E">
 <style>
-  /* ── 设计令牌：视频工厂控制室 ─────────────────────────────
-     底色=深夜车间，强调=琥珀信号灯；数字一律等宽（终端气质） */
+  /* ── 设计令牌：视频工厂控制室（模块地图对齐原版 ChopperBot）── */
   :root {
-    --bg: #0B0E14;          /* 控制室夜色 */
-    --panel: #12161F;       /* 面板 */
-    --panel-2: #161B26;     /* 面板 hover */
-    --line: #1F2430;        /* 分隔线 */
-    --text: #C9D1DB;
-    --muted: #6E7A8C;
-    --faint: #59667B;
-    --amber: #F5A524;       /* 信号灯 */
-    --amber-dim: #8f6217;
-    --ok: #3FB950;
-    --err: #F85149;
-    --run: #4F8CC9;
-    --c-clips: #4F8CC9;     /* 剪切·蓝 */
-    --c-publish: #E8894C;   /* 发布·橙 */
-    --c-subtitle: #56D4DD;  /* 字幕·青 */
-    --c-dub: #B3A1E8;       /* 配音·紫 */
+    --bg: #0B0E14; --panel: #12161F; --panel-2: #161B26; --line: #1F2430;
+    --text: #C9D1DB; --muted: #6E7A8C; --faint: #59667B;
+    --amber: #F5A524; --amber-dim: #8f6217;
+    --ok: #3FB950; --err: #F85149; --run: #4F8CC9;
+    --c-clips: #4F8CC9; --c-publish: #E8894C; --c-subtitle: #56D4DD; --c-dub: #B3A1E8;
     --mono: Consolas, "Cascadia Mono", "JetBrains Mono", monospace;
+    --sidebar-w: 208px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { color-scheme: dark; }
   body {
-    background:
-      radial-gradient(1200px 500px at 70% -10%, rgba(245,165,36,.05), transparent 60%),
-      var(--bg);
-    color: var(--text);
-    font: 14px/1.65 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-    min-height: 100vh;
-    -webkit-font-smoothing: antialiased;
+    background: radial-gradient(1200px 500px at 70% -10%, rgba(245,165,36,.05), transparent 60%), var(--bg);
+    color: var(--text); font: 14px/1.65 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    min-height: 100vh; -webkit-font-smoothing: antialiased;
   }
   ::selection { background: rgba(245,165,36,.35); }
   button { font-family: inherit; }
   :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; border-radius: 4px; }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 
-  .wrap { max-width: 980px; margin: 0 auto; padding: 28px 24px 80px; }
+  /* ── 布局骨架：侧栏 + 内容区 ── */
+  .shell { display: flex; min-height: 100vh; }
+  aside.side {
+    width: var(--sidebar-w); flex-shrink: 0; position: sticky; top: 0; height: 100vh; overflow-y: auto;
+    background: #0E1118; border-right: 1px solid var(--line); padding: 20px 0 24px;
+  }
+  main.main { flex: 1; min-width: 0; padding: 28px 28px 80px; max-width: 1080px; margin: 0 auto; }
 
-  /* ── 顶栏 ── */
-  header.top { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 22px; }
-  .brand { display: flex; align-items: baseline; gap: 14px; }
-  .brand .logo { font: 800 22px/1 var(--mono); letter-spacing: .2em; color: #E8EDF4; }
-  .brand .logo::first-letter { color: var(--amber); }
-  .brand .tag { font-size: 11px; color: var(--muted); letter-spacing: .14em; }
-  .engines { display: flex; gap: 16px; align-items: center; font: 11px var(--mono); color: var(--muted); flex-wrap: wrap; }
-  .engines .e { display: inline-flex; align-items: center; gap: 6px; cursor: help; }
-  .engines .dot { width: 7px; height: 7px; border-radius: 50%; background: #2A3040; box-shadow: inset 0 0 0 1px #3A4252; }
-  .engines .e.on .dot { background: var(--ok); box-shadow: 0 0 6px rgba(63,185,80,.5); }
-  .engines .e.off .dot { background: #2A3040; }
+  /* 侧栏 */
+  .side .brand { padding: 0 18px 18px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+  .side .logo { font: 800 19px/1 var(--mono); letter-spacing: .18em; color: #E8EDF4; }
+  .side .logo::first-letter { color: var(--amber); }
+  .side .tag { font-size: 10px; color: var(--muted); letter-spacing: .12em; margin-top: 5px; }
+  .nav-group { font: 600 10px var(--mono); color: #4A5568; letter-spacing: .2em; padding: 14px 18px 6px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 18px; color: var(--muted);
+    text-decoration: none; font-size: 13px; cursor: pointer; border-left: 2px solid transparent; transition: color .15s, background .15s;
+  }
+  .nav-item:hover { color: var(--text); background: rgba(255,255,255,.025); }
+  .nav-item.active { color: var(--amber); border-left-color: var(--amber); background: rgba(245,165,36,.06); font-weight: 600; }
+  .nav-item .badge-mini { font: 10px var(--mono); margin-left: auto; background: var(--amber); color: #17110A; border-radius: 8px; padding: 0 6px; }
+  .nav-item .soon { font: 9px var(--mono); margin-left: auto; color: #4A5568; letter-spacing: .1em; }
+  .side .status { margin-top: 18px; padding: 12px 18px; border-top: 1px solid var(--line); display: flex; gap: 10px; flex-wrap: wrap; }
+  .side .status .e { display: inline-flex; align-items: center; gap: 5px; font: 11px var(--mono); color: var(--muted); }
+  .side .dot { width: 6px; height: 6px; border-radius: 50%; background: #2A3040; }
+  .side .e.on .dot { background: var(--ok); box-shadow: 0 0 5px rgba(63,185,80,.5); }
 
-  /* ── 投料区 ── */
-  .feed { display: flex; gap: 10px; }
+  /* 页头 */
+  .page-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; }
+  .page-head h2 { font-size: 17px; font-weight: 700; color: #E8EDF4; letter-spacing: .02em; }
+  .page-head .ph-sub { font-size: 12px; color: var(--muted); }
+  .page-head .ph-note { font: 11px var(--mono); color: var(--amber-dim); margin-left: auto; letter-spacing: .15em; }
+
+  /* 投料区 */
+  .feed { display: flex; gap: 10px; margin-bottom: 16px; }
   .feed input {
     flex: 1; height: 46px; background: var(--panel); border: 1px solid #2A3242; border-radius: 9px;
     padding: 0 16px; color: var(--text); font-size: 14px; outline: none; transition: border-color .15s, box-shadow .15s;
@@ -68,39 +72,37 @@
   .feed button {
     height: 46px; background: linear-gradient(180deg, #F7B23E, #EFA21C); color: #17110A; border: none; border-radius: 9px;
     padding: 0 28px; font-size: 14px; font-weight: 700; cursor: pointer; white-space: nowrap;
-    box-shadow: 0 2px 12px rgba(245,165,36,.18);
-    transition: filter .15s, box-shadow .15s;
+    box-shadow: 0 2px 12px rgba(245,165,36,.18); transition: filter .15s, box-shadow .15s;
   }
   .feed button:hover { filter: brightness(1.08); box-shadow: 0 4px 16px rgba(245,165,36,.26); }
   .feed button:disabled { opacity: .5; cursor: wait; }
 
-  /* ── 数字带（独立分区 + 等宽分布）── */
+  /* 数字带 */
   .strip {
     display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 12px;
-    margin: 16px 0 24px; padding: 14px 20px;
-    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    margin-bottom: 24px; padding: 14px 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
   }
   .strip .s { display: flex; flex-direction: column; gap: 3px; }
   .strip .n { font: 700 24px/1.1 var(--mono); color: #E8EDF4; font-variant-numeric: tabular-nums; }
   .strip .l { font-size: 10px; color: var(--muted); letter-spacing: .18em; }
   .strip .s.ok .n { color: var(--ok); }
   .strip .s.warn .n { color: var(--amber); }
-  .strip .s.err .n { color: var(--err); }
   .strip .s.warn.pulse .n { animation: breathe 2s ease-in-out infinite; }
+  .strip .s.err .n { color: var(--err); }
   @keyframes breathe { 50% { opacity: .55; } }
 
-  /* ── 任务卡 ── */
+  /* 任务卡 */
   .job { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 12px; overflow: hidden; transition: border-color .15s; }
   .job:hover { border-color: #2B3344; }
   .job-row { display: flex; align-items: center; gap: 14px; padding: 14px 18px; cursor: pointer; }
   .kind { font: 11px var(--mono); padding: 3px 0; min-width: 62px; text-align: center; border-radius: 5px; letter-spacing: .06em; flex-shrink: 0; }
-  .kind.clips    { color: var(--c-clips);     background: rgba(79,140,201,.12); }
-  .kind.publish  { color: var(--c-publish);   background: rgba(232,137,76,.12); }
-  .kind.subtitle { color: var(--c-subtitle);  background: rgba(86,212,221,.12); }
-  .kind.dub      { color: var(--c-dub);       background: rgba(179,161,232,.12); }
+  .kind.clips    { color: var(--c-clips); background: rgba(79,140,201,.12); }
+  .kind.publish  { color: var(--c-publish); background: rgba(232,137,76,.12); }
+  .kind.subtitle { color: var(--c-subtitle); background: rgba(86,212,221,.12); }
+  .kind.dub      { color: var(--c-dub); background: rgba(179,161,232,.12); }
   .jid { font: 11px var(--mono); color: var(--muted); flex-shrink: 0; }
 
-  /* ── 流水线轨道（signature）：高对比、大节点 ── */
+  /* 流水线轨道（signature） */
   .track { display: flex; align-items: center; flex: 1; min-width: 150px; gap: 0; }
   .track .node { width: 11px; height: 11px; border-radius: 50%; background: transparent; border: 2px solid #414C60; flex-shrink: 0; }
   .track .seg { height: 2px; flex: 1; background: #333D4F; min-width: 10px; }
@@ -123,7 +125,7 @@
   .del { border: none; background: none; color: #4A5568; cursor: pointer; font-size: 14px; padding: 4px 6px; border-radius: 4px; flex-shrink: 0; transition: color .15s; }
   .del:hover { color: var(--err); }
 
-  /* ── 详情 ── */
+  /* 详情 */
   .detail { border-top: 1px solid var(--line); padding: 16px; background: #0E1219; display: none; }
   .detail.open { display: block; }
   .detail h4 { font-size: 11px; color: var(--muted); letter-spacing: .16em; font-weight: 600; margin: 14px 0 8px; }
@@ -131,9 +133,9 @@
   pre.log { background: #0A0D13; border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; font: 12px/1.75 var(--mono); max-height: 260px; overflow: auto; white-space: pre-wrap; color: #9AA6B8; }
   .err-line { color: var(--err); font-size: 13px; white-space: pre-wrap; margin: 10px 0; background: rgba(248,81,73,.07); border: 1px solid rgba(248,81,73,.25); border-radius: 8px; padding: 10px 12px; }
 
-  /* ── 切片网格 ── */
+  /* 切片网格 */
   .clips { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
-  .clip { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; transition: border-color .15s, transform .15s; }
+  .clip { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; transition: border-color .15s; }
   .clip:hover { border-color: #2E3849; }
   .clip video { width: 100%; aspect-ratio: 16/9; background: #000; display: block; }
   .clip .meta { padding: 10px 12px 12px; }
@@ -141,32 +143,62 @@
   .clip .info { color: var(--muted); font: 11px var(--mono); display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
   .clip a { color: var(--run); text-decoration: none; font-size: 11px; }
   .clip a:hover { text-decoration: underline; }
-
   .acts { display: flex; gap: 6px; margin-top: 8px; }
   .acts button { flex: 1; border-radius: 6px; padding: 6px 0; cursor: pointer; font-size: 12px; border: 1px solid; background: transparent; transition: background .15s; }
-  .b-pub   { color: var(--c-publish);  border-color: #4d3521 !important; background: rgba(232,137,76,.08) !important; }
-  .b-pub:hover   { background: rgba(232,137,76,.18) !important; }
-  .b-sub   { color: var(--c-subtitle); border-color: #1d4045 !important; background: rgba(86,212,221,.08) !important; }
-  .b-sub:hover   { background: rgba(86,212,221,.18) !important; }
-  .b-dub   { color: var(--c-dub);      border-color: #352d52 !important; background: rgba(179,161,232,.08) !important; }
-  .b-dub:hover   { background: rgba(179,161,232,.18) !important; }
+  .b-pub { color: var(--c-publish); border-color: #4d3521 !important; background: rgba(232,137,76,.08) !important; }
+  .b-pub:hover { background: rgba(232,137,76,.18) !important; }
+  .b-sub { color: var(--c-subtitle); border-color: #1d4045 !important; background: rgba(86,212,221,.08) !important; }
+  .b-sub:hover { background: rgba(86,212,221,.18) !important; }
+  .b-dub { color: var(--c-dub); border-color: #352d52 !important; background: rgba(179,161,232,.08) !important; }
+  .b-dub:hover { background: rgba(179,161,232,.18) !important; }
 
-  /* ── 发布/字幕/配音结果卡 ── */
+  /* 结果卡 */
   .pub-result { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; font-size: 13px; white-space: pre-wrap; background: var(--panel-2); }
   .pub-result.ok { border-color: rgba(63,185,80,.35); }
   .pub-result.fail { border-color: rgba(248,81,73,.4); }
   .pub-result img { margin-top: 8px; border-radius: 6px; max-width: 100%; }
   .oneclip { max-width: 460px; }
 
-  /* ── 弹窗 ── */
+  /* 筛选 chips */
+  .chips { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .chip { font: 12px var(--mono); padding: 5px 14px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; transition: all .15s; }
+  .chip:hover { color: var(--text); border-color: #2E3849; }
+  .chip.on { color: var(--amber); border-color: var(--amber-dim); background: rgba(245,165,36,.08); }
+  .chip .n { color: var(--faint); margin-left: 5px; }
+
+  /* 占位页（M4/M5 建设中） */
+  .ph-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px 24px; max-width: 720px; }
+  .ph-card .ph-name { font-size: 16px; font-weight: 700; color: #E8EDF4; display: flex; align-items: center; gap: 10px; }
+  .ph-card .ph-tag { font: 10px var(--mono); color: var(--amber); border: 1px solid var(--amber-dim); border-radius: 4px; padding: 2px 8px; letter-spacing: .12em; }
+  .ph-card .ph-origin { font: 11px var(--mono); color: var(--faint); margin: 10px 0 12px; }
+  .ph-card .ph-desc { font-size: 13px; color: var(--muted); line-height: 1.75; }
+  .ph-card ul { margin: 14px 0 0 2px; list-style: none; }
+  .ph-card li { font-size: 12.5px; color: var(--muted); padding: 4px 0; display: flex; gap: 8px; }
+  .ph-card li::before { content: "·"; color: var(--amber-dim); }
+  .coming { margin-top: 22px; padding-top: 16px; border-top: 1px dashed var(--line); }
+  .coming .c1 { font: 12px var(--mono); color: var(--amber-dim); letter-spacing: .25em; }
+  .coming .c2 { font-size: 11px; color: var(--faint); margin-top: 5px; }
+
+  /* 设置页 */
+  .set-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .set-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+  .set-card h4 { font-size: 11px; letter-spacing: .16em; color: var(--muted); margin-bottom: 12px; font-weight: 600; }
+  .kv { display: flex; align-items: center; gap: 10px; padding: 8px 0; font-size: 13px; border-bottom: 1px solid #161B26; }
+  .kv:last-child { border-bottom: none; }
+  .kv .k { color: var(--muted); width: 72px; flex-shrink: 0; }
+  .kv .v { color: var(--text); flex: 1; font-size: 12.5px; }
+  .kv .st { font: 11px var(--mono); flex-shrink: 0; white-space: nowrap; }
+  .st.on { color: var(--ok); } .st.off { color: var(--faint); } .st.warn { color: var(--amber); }
+  .cmd { font: 12px var(--mono); background: #0A0D13; border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; color: #9AA6B8; margin: 6px 0; overflow-x: auto; white-space: nowrap; }
+  .cmd b { color: var(--amber); font-weight: 400; }
+
+  /* 弹窗 */
   .modal-bg { position: fixed; inset: 0; background: rgba(5,7,11,.72); backdrop-filter: blur(3px); display: none; align-items: center; justify-content: center; z-index: 100; }
   .modal { background: var(--panel); border: 1px solid #2A3242; border-radius: 12px; padding: 22px; width: min(500px, 92vw); display: flex; flex-direction: column; gap: 12px; box-shadow: 0 16px 48px rgba(0,0,0,.5); }
   .modal h3 { font-size: 15px; font-weight: 600; margin-bottom: 2px; letter-spacing: .04em; }
   .modal .mmeta { color: var(--muted); font: 11px var(--mono); background: #0A0D13; border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; word-break: break-all; }
   .modal label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
-  .modal input[type=text], .modal textarea, .modal select {
-    background: #0A0D13; border: 1px solid var(--line); border-radius: 6px; padding: 9px 11px; color: var(--text); font-size: 13px; outline: none; resize: vertical;
-  }
+  .modal input[type=text], .modal textarea, .modal select { background: #0A0D13; border: 1px solid var(--line); border-radius: 6px; padding: 9px 11px; color: var(--text); font-size: 13px; outline: none; resize: vertical; }
   .modal input:focus, .modal textarea:focus, .modal select:focus { border-color: var(--amber-dim); }
   .modal-row { display: flex; gap: 16px; flex-wrap: wrap; }
   .modal-row label { flex-direction: row; align-items: center; gap: 7px; color: var(--text); font-size: 13px; }
@@ -177,40 +209,49 @@
   .modal-actions .go:hover { filter: brightness(1.1); }
   .modal-actions .ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
 
-  /* ── 空状态 ── */
-  .empty {
-    text-align: center; color: var(--muted); padding: 64px 20px; border: 1.5px dashed #232B39; border-radius: 12px;
-  }
+  .empty { text-align: center; color: var(--muted); padding: 64px 20px; border: 1.5px dashed #232B39; border-radius: 12px; }
   .empty .big { font-size: 15px; color: #8B95A5; margin-bottom: 6px; }
   .empty .small { font-size: 12px; }
   .empty .arrow { font: 18px var(--mono); color: var(--amber-dim); margin-bottom: 10px; display: block; }
 
-  @media (max-width: 720px) {
+  /* 响应式：窄屏侧栏收成顶部横滚条 */
+  @media (max-width: 860px) {
+    .shell { flex-direction: column; }
+    aside.side { width: 100%; height: auto; position: static; border-right: none; border-bottom: 1px solid var(--line); padding: 10px 0; }
+    .side .brand { padding: 8px 16px 6px; margin: 0; border: none; display: flex; align-items: baseline; gap: 10px; }
+    .side .tag { display: none; }
+    .side nav { display: flex; overflow-x: auto; gap: 2px; padding: 0 12px; }
+    .nav-group { display: none; }
+    .nav-item { padding: 7px 12px; white-space: nowrap; border-left: none; border-bottom: 2px solid transparent; }
+    .nav-item.active { border-left: none; border-bottom-color: var(--amber); }
+    .side .status { display: none; }
+    main.main { padding: 20px 16px 60px; }
+    .set-grid { grid-template-columns: 1fr; }
+    .jinput, .jtime { display: none; }
     .strip { grid-auto-flow: row; grid-template-columns: repeat(3, 1fr); }
-    .jinput { display: none; }
-    .jtime { display: none; }
   }
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="shell">
 
-  <header class="top">
+  <aside class="side">
     <div class="brand">
-      <span class="logo">GUANCLIP</span>
-      <span class="tag">视频内容流水线 · 控制台</span>
+      <div class="logo">GUANCLIP</div>
+      <div class="tag">视频内容流水线 · ChopperBot 血统</div>
     </div>
-    <div class="engines" id="engines"></div>
-  </header>
+    <nav id="nav"></nav>
+    <div class="status" id="side-engines"></div>
+  </aside>
 
-  <div class="feed">
-    <input id="input" placeholder="投喂视频链接（YouTube / B站…）或本地文件路径，回车开工">
-    <button id="submit" onclick="submitJob()">创建任务</button>
-  </div>
-
-  <div class="strip" id="strip"></div>
-
-  <div id="list"></div>
+  <main class="main">
+    <div class="page-head">
+      <h2 id="ph-title"></h2>
+      <span class="ph-sub" id="ph-sub"></span>
+      <span class="ph-note" id="ph-note"></span>
+    </div>
+    <div id="page"></div>
+  </main>
 </div>
 
 <!-- 发布弹窗 -->
@@ -277,7 +318,7 @@
 
 <script>
 'use strict';
-/* ── 基础 ── */
+/* ═══════════ 基础 ═══════════ */
 const STATUS_CN = { queued: '排队', running: '执行中', review: '待审核', done: '完成', failed: '失败', canceled: '已取消' };
 const KIND_STAGES = {
   clips:    ['download', 'transcribe', 'highlight', 'cut', 'finalize'],
@@ -288,32 +329,118 @@ const KIND_STAGES = {
 const ENGINE_CN = { 'yt-dlp': '下载', 'ffmpeg': '转码', 'whisper': '转写', 'biliup': 'B站投稿', 'deepseek': 'LLM', 'pushme': '通知' };
 const $ = s => document.querySelector(s);
 let jobs = [], openId = null, es = null;
-let detailClips = [];   // 当前详情里的切片（弹窗用）
+let detailClips = [];
 let pubCtx = null, subCtx = null, dubCtx = null;
+let stats = null;           // {engines, accounts}
+let taskFilter = 'all';     // 任务中心筛选
+let page = 'board';         // 当前路由页
 
 const esc = s => { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; };
-const fmtRange = (s, e) => {
-  const f = t => Math.floor(t / 60) + ':' + String(Math.round(t % 60)).padStart(2, '0');
-  return f(s) + ' - ' + f(e);
-};
+const fmtRange = (s, e) => { const f = t => Math.floor(t / 60) + ':' + String(Math.round(t % 60)).padStart(2, '0'); return f(s) + ' - ' + f(e); };
 const fmtClock = ts => new Date(ts * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+// 任务摘要：clips 显示原输入；publish/subtitle/dub 解析出人话摘要，不裸露 JSON
+function jobSummary(j) {
+  if (j.kind === 'clips') return j.input;
+  try {
+    const r = JSON.parse(j.input);
+    if (j.kind === 'publish') return `发布 ${r.clip || ''} → ${(r.platforms || []).join('/')}${r.dry_run ? '（演练）' : ''}`;
+    if (j.kind === 'subtitle') return `字幕 ${r.clip || ''}（${r.style === 'zh' ? '纯中文' : '双语'}）`;
+    if (j.kind === 'dub') return `配音 ${r.clip || ''}`;
+  } catch (e) {}
+  return j.input;
+}
+async function fetchJSON(url, opt) { const r = await fetch(url, opt); if (!r.ok) throw new Error(r.status + ' ' + await r.text()); return r.json(); }
 
-async function fetchJSON(url, opt) {
-  const r = await fetch(url, opt);
-  if (!r.ok) throw new Error(r.status + ' ' + await r.text());
-  return r.json();
+/* ═══════════ 模块地图（对齐原版 ChopperBot 菜单 apps.menu.ts）═══════════
+   原版核心模块 → 我们的页面；M4/M5 对应模块先占位，届时骨架现成 */
+const NAV = [
+  { group: '运营' },
+  { key: 'board',     name: '总览',     sub: '流水线概览与投料',   origin: 'Board' },
+  { key: 'tasks',     name: '任务中心', sub: '全部管线任务',       origin: 'Task Center' },
+  { key: 'review',    name: '审核台',   sub: '切片审核与发布决策', origin: '—' },
+  { group: '直播 · M4' },
+  { key: 'creeper',   name: '采集库',   soon: 'M4', origin: 'Creeper Library' },
+  { key: 'hotguard',  name: '热门守卫', soon: 'M4', origin: 'Hot Guard' },
+  { key: 'livefollow',name: '直播关注', soon: 'M4', origin: 'Live Follow' },
+  { key: 'barrage',   name: '弹幕曲线', soon: 'M4', origin: 'Barrage Curve' },
+  { group: '矩阵 · M5' },
+  { key: 'labels',    name: '标签矩阵', soon: 'M5', origin: 'Label Manage' },
+  { group: '系统' },
+  { key: 'settings',  name: '设置',     sub: '引擎 · 账号 · 通知' },
+];
+
+/* M4/M5 占位页内容（对齐原版模块语义） */
+const PLACEHOLDERS = {
+  creeper: {
+    name: '采集库 Creeper Library', origin: '血统：原版 chopperbot-creeper · CreeperManager',
+    desc: '爬虫任务模板库：直播检测、弹幕采集、主播信息等任务的定义与复用，由 TaskCenter 统一调度执行、恢复与观察。',
+    plan: ['直播录制任务模板（平台适配：B站 / 抖音 / 斗鱼 / 虎牙）', '任务派发与恢复（借鉴原版 TaskCenter 观察者机制）', '采集任务的定时循环与去重'],
+  },
+  hotguard: {
+    name: '热门守卫 Hot Guard', origin: '血统：原版 chopperbot-hot · HotGuard',
+    desc: '循环值守监控全平台热门直播，热度达标自动进入「录制 → 切片 → 审核」管线——原版 ChopperBot 的核心入口，直播切片自动化的起点。',
+    plan: ['平台热门榜轮询（B站 / 抖音）', '热度阈值与关键词触发', '自动派发录制任务'],
+  },
+  livefollow: {
+    name: '直播关注 Live Follow', origin: '血统：原版 chopperbot-hot · LiverFollower',
+    desc: '关注主播列表：开播自动检测、自动录制、下播自动切片入审核台。适合追固定主播做日常切片内容。',
+    plan: ['主播关注管理（多平台）', '开播检测与自动启停录制', '录制分片与断流重连'],
+  },
+  barrage: {
+    name: '弹幕曲线 Barrage Curve', origin: '血统：原版 chopperbot-barrage · BarrageScoreCurve',
+    desc: '弹幕关键词打分密度曲线：高分区间即高光切片参考。与 ASR 转写 + LLM 评分融合为双信号高光检测——比单信号准得多。',
+    plan: ['弹幕 WebSocket 采集', '打分策略配置（全局词库 + 主播词库 + ban 词，原版 BarrageScore 思想）', '密度曲线可视化', '与转写双信号融合选高光'],
+  },
+  labels: {
+    name: '标签矩阵 Label Manage', origin: '血统：原版 chopperbot-account · LabelManager + 账号路由 RouteRuler',
+    desc: '账号人设标签与切片标签管理：切片打好标签后按人设路由到对应账号发布——矩阵号运营的核心抽象。',
+    plan: ['多账号管理（B站 / 抖音 / 小红书）', '人设标签与路由规则', '错峰发布调度', '播放数据回收与日报'],
+  },
+};
+
+/* ═══════════ 路由 ═══════════ */
+function route() {
+  const h = location.hash.replace('#/', '') || 'board';
+  page = NAV.some(n => n.key === h) ? h : 'board';
+  if (es) { es.close(); es = null; } openId = null;
+  renderNav(); renderPage();
+}
+function renderNav() {
+  const reviewN = jobs.filter(j => j.status === 'review').length;
+  $('#nav').innerHTML = NAV.map(n => n.group
+    ? `<div class="nav-group">${n.group}</div>`
+    : `<a class="nav-item ${page === n.key ? 'active' : ''}" href="#/${n.key}">
+         ${n.name}${n.soon ? `<span class="soon">${n.soon}</span>` : (n.key === 'review' && reviewN ? `<span class="badge-mini">${reviewN}</span>` : '')}
+       </a>`).join('');
+  const eng = stats ? stats.engines : null;
+  $('#side-engines').innerHTML = eng
+    ? Object.entries(eng).map(([k, on]) => `<span class="e ${on ? 'on' : ''}" title="${ENGINE_CN[k] || k}${on ? ' 就绪' : ' 未配置'}"><span class="dot"></span>${ENGINE_CN[k] || k}</span>`).join('')
+    : '';
+}
+function renderPage() {
+  const cur = NAV.find(n => n.key === page);
+  $('#ph-title').textContent = cur.name || '';
+  $('#ph-sub').textContent = cur.sub || (cur.origin ? `对应原版 ${cur.origin}` : '');
+  $('#ph-note').textContent = PLACEHOLDERS[page] ? '— 建设中 —' : '';
+  const el = $('#page');
+  switch (page) {
+    case 'board':     return renderBoard(el);
+    case 'tasks':     return renderTasks(el);
+    case 'review':    return renderReview(el);
+    case 'settings':  return renderSettings(el);
+    default:          return renderPlaceholder(el, page);
+  }
 }
 
-/* ── 引擎状态灯 + 数字带 ── */
-let engineStatus = null;
-async function fetchStats() {
-  try { engineStatus = (await fetchJSON('/api/stats')).engines; renderEngines(); } catch (e) {}
-}
-function renderEngines() {
-  if (!engineStatus) return;
-  const html = Object.entries(engineStatus).map(([k, on]) =>
-    `<span class="e ${on ? 'on' : 'off'}" title="${ENGINE_CN[k] || k}${on ? ' 已就绪' : ' 未配置'}"><span class="dot"></span>${ENGINE_CN[k] || k}</span>`).join('');
-  $('#engines').innerHTML = html;
+/* ═══════════ 页面：总览 ═══════════ */
+function renderBoard(el) {
+  el.innerHTML = `
+    <div class="feed"><input id="input" placeholder="投喂视频链接（YouTube / B站…）或本地文件路径，回车开工"><button id="submit" onclick="submitJob()">创建任务</button></div>
+    <div class="strip" id="strip"></div>
+    <div id="board-jobs"></div>`;
+  bindFeed();
+  renderStrip();
+  renderJobList($('#board-jobs'), jobs.slice(0, 8), true);
 }
 function renderStrip() {
   const today0 = new Date().setHours(0, 0, 0, 0) / 1000;
@@ -322,8 +449,9 @@ function renderStrip() {
   const done = jobs.filter(j => j.status === 'done').length;
   const failed = jobs.filter(j => j.status === 'failed').length;
   const rate = (done + failed) ? Math.round(done / (done + failed) * 100) : null;
-  const ready = engineStatus ? Object.values(engineStatus).filter(Boolean).length + 2 : 0; // +guanclip+chromium
-  const total = engineStatus ? Object.keys(engineStatus).length + 2 : 0;
+  const eng = stats ? stats.engines : null;
+  const ready = eng ? Object.values(eng).filter(Boolean).length + 2 : 0;
+  const total = eng ? Object.keys(eng).length + 2 : 0;
   $('#strip').innerHTML = `
     <div class="s"><span class="n">${today.length}</span><span class="l">今日任务</span></div>
     <div class="s warn ${review ? 'pulse' : ''}"><span class="n">${review}</span><span class="l">待审核</span></div>
@@ -332,16 +460,113 @@ function renderStrip() {
     <div class="s"><span class="n">${rate === null ? '—' : rate + '%'}</span><span class="l">成功率</span></div>
     <div class="s ok"><span class="n">${ready}/${total}</span><span class="l">引擎就绪</span></div>`;
 }
+function bindFeed() { $('#input').addEventListener('keydown', e => { if (e.key === 'Enter') submitJob(); }); }
+async function submitJob() {
+  const input = $('#input').value.trim();
+  if (!input) return;
+  $('#submit').disabled = true;
+  try {
+    await fetchJSON('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input, kind: 'clips' }) });
+    $('#input').value = '';
+    refresh();
+  } catch (e) { alert('创建失败：' + e.message); }
+  $('#submit').disabled = false;
+}
 
-/* ── 任务卡（含流水线轨道） ── */
+/* ═══════════ 页面：任务中心 ═══════════ */
+function renderTasks(el) {
+  const kinds = ['all', 'clips', 'publish', 'subtitle', 'dub'];
+  const cnt = k => k === 'all' ? jobs.length : jobs.filter(j => j.kind === k).length;
+  el.innerHTML = `
+    <div class="chips">${kinds.map(k =>
+      `<button class="chip ${taskFilter === k ? 'on' : ''}" onclick="setFilter('${k}')">${k === 'all' ? '全部' : k}<span class="n">${cnt(k)}</span></button>`).join('')}</div>
+    <div id="task-jobs"></div>`;
+  renderJobList($('#task-jobs'), jobs.filter(j => taskFilter === 'all' || j.kind === taskFilter), true);
+}
+function setFilter(k) { taskFilter = k; renderPage(); }
+
+/* ═══════════ 页面：审核台 ═══════════ */
+function renderReview(el) {
+  const review = jobs.filter(j => j.status === 'review');
+  if (!review.length) {
+    el.innerHTML = `<div class="empty"><span class="arrow">✓</span>
+      <div class="big">审核台空着——没有等你决策的切片</div>
+      <div class="small">切片完成后会自动出现在这里（pushme 会同时提醒你）</div></div>`;
+    return;
+  }
+  el.innerHTML = review.map(j => {
+    let body = '';
+    try {
+      const r = JSON.parse(j.result || '{}');
+      if (j.kind === 'subtitle' && r.subtitled) body = subtitleCard(j, r);
+      else if (j.kind === 'dub' && r.dubbed) body = dubCard(j, r);
+      else if (r.clips && r.clips.length) body = clipsGrid(j, r);
+    } catch (e) {}
+    return `<div style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <span class="kind ${j.kind}">${j.kind}</span><span class="jid">${j.id}</span>
+        <span style="font-size:12px;color:var(--muted)">${esc(jobSummary(j))}</span>
+      </div>${body}</div>`;
+  }).join('');
+}
+
+/* ═══════════ 页面：占位（M4/M5，对齐原版模块）═══════════ */
+function renderPlaceholder(el, key) {
+  const p = PLACEHOLDERS[key];
+  el.innerHTML = `
+    <div class="ph-card">
+      <div class="ph-name">${p.name}<span class="ph-tag">建设中</span></div>
+      <div class="ph-origin">${p.origin}</div>
+      <div class="ph-desc">${p.desc}</div>
+      <ul>${p.plan.map(x => `<li>${x}</li>`).join('')}</ul>
+      <div class="coming"><div class="c1">— OPEN FOR THIS MODULE —</div>
+      <div class="c2">平台路线图：M3 已交付 · M4 直播链接续</div></div>
+    </div>`;
+}
+
+/* ═══════════ 页面：设置 ═══════════ */
+function renderSettings(el) {
+  const eng = stats ? stats.engines : null;
+  const acc = stats ? stats.accounts : null;
+  const engDesc = { 'yt-dlp': '视频下载（数千站点）', 'ffmpeg': '转码 / 切片 / 烧字幕', 'whisper': '离线语音转写 whisper.cpp', 'biliup': 'B站投稿直传', 'deepseek': '高光选择 / 解说稿 / 翻译', 'pushme': '审核 / 发布 / 失败推手机' };
+  el.innerHTML = `
+    <div class="set-grid">
+      <div class="set-card">
+        <h4>引擎</h4>
+        ${eng ? Object.entries(eng).map(([k, on]) => `
+          <div class="kv"><span class="k">${ENGINE_CN[k] || k}</span>
+            <span class="v">${engDesc[k] || ''}</span>
+            <span class="st ${on ? 'on' : 'off'}">${on ? '● 就绪' : '○ 未配置'}</span></div>`).join('') : ''}
+      </div>
+      <div class="set-card">
+        <h4>账号</h4>
+        <div class="kv"><span class="k">B站</span><span class="v">biliup 登录态</span>
+          <span class="st ${acc && acc.bilibili ? 'on' : 'warn'}">${acc && acc.bilibili ? '● 已登录' : '○ 待扫码'}</span></div>
+        <div class="kv"><span class="k">抖音</span><span class="v">浏览器登录态（暂无账号，暂缓）</span>
+          <span class="st off">○ 待登录</span></div>
+        <h4 style="margin-top:16px">通知</h4>
+        <div class="kv"><span class="k">pushme</span><span class="v">审核 / 发布 / 失败推手机</span>
+          <span class="st ${eng && eng.pushme ? 'on' : 'off'}">${eng && eng.pushme ? '● 已启用' : '○ 未启用'}</span></div>
+      </div>
+      <div class="set-card" style="grid-column:1/-1">
+        <h4>常用命令</h4>
+        <div class="cmd"><b>guanclip init</b>                引擎体检与配置生成</div>
+        <div class="cmd"><b>guanclip serve</b>               启动本控制台（127.0.0.1:8899）</div>
+        <div class="cmd"><b>guanclip run -i &lt;URL或路径&gt;</b>        命令行直接跑任务</div>
+        <div class="cmd"><b>guanclip login --platform bilibili|douyin</b> [--account 别名]  平台扫码登录</div>
+        <div class="cmd"><b>guanclip status</b>              任务一览</div>
+      </div>
+    </div>`;
+}
+
+/* ═══════════ 任务列表渲染（总览/任务中心共用）═══════════ */
 function trackHTML(job) {
   const stages = KIND_STAGES[job.kind] || KIND_STAGES.clips;
   const cur = stages.indexOf(job.stage);
-  let nodeState = i => '';
-  let segState = i => '';
+  let nodeState = () => '', segState = () => '';
   if (job.status === 'running' && cur >= 0) {
     nodeState = i => i < cur ? 'done' : i === cur ? 'active' : '';
-    segState  = i => i < cur ? 'done' : i === cur ? 'active' : '';
+    segState = i => i < cur ? 'done' : i === cur ? 'active' : '';
   } else if (job.status === 'review' || job.status === 'done') {
     nodeState = segState = () => 'done';
   } else if (job.status === 'failed') {
@@ -355,17 +580,14 @@ function trackHTML(job) {
   });
   return h + '</div>';
 }
-
-function render() {
-  const list = $('#list');
-  if (!jobs.length) {
-    list.innerHTML = `<div class="empty"><span class="arrow">↓ 投喂链接</span>
-      <div class="big">流水线还没有开工</div>
-      <div class="small">粘贴一个视频链接，回车即开：下载 → 转写 → 选高光 → 切片 → 审核 → 发布</div></div>`;
-    renderStrip();
+function renderJobList(container, list, expandable) {
+  if (!list.length) {
+    container.innerHTML = `<div class="empty"><span class="arrow">↓ 投喂链接</span>
+      <div class="big">${page === 'board' ? '流水线还没有开工' : '没有这类任务'}</div>
+      <div class="small">${page === 'board' ? '粘贴一个视频链接，回车即开：下载 → 转写 → 选高光 → 切片 → 审核 → 发布' : '切个筛选看看其他类型'}</div></div>`;
     return;
   }
-  list.innerHTML = jobs.map(j => `
+  container.innerHTML = list.map(j => `
     <div class="job" id="job-${j.id}">
       <div class="job-row" onclick="toggle('${j.id}')">
         <span class="kind ${j.kind}">${j.kind}</span>
@@ -373,33 +595,30 @@ function render() {
         ${trackHTML(j)}
         <span class="badge ${j.status}">${STATUS_CN[j.status] || j.status}</span>
         <span class="jtime">${fmtClock(j.createdAt)}</span>
-        <span class="jinput" title="${esc(j.input)}">${esc(j.input)}</span>
+        <span class="jinput" title="${esc(j.input)}">${esc(jobSummary(j))}</span>
         <button class="del" title="删除" onclick="event.stopPropagation();delJob('${j.id}')">✕</button>
       </div>
       <div class="detail" id="detail-${j.id}"></div>
     </div>`).join('');
-  renderStrip();
   if (openId) {
     const el = document.getElementById('detail-' + openId);
     const job = jobs.find(j => j.id === openId);
     if (el && job) { el.classList.add('open'); renderDetailBody(el, job); }
-    else closeDetail();
   }
 }
 
-async function refreshList() {
-  try { jobs = await fetchJSON('/api/jobs'); render(); } catch (e) { /* 服务重启中 */ }
-}
-
+/* ═══════════ 详情展开 / SSE ═══════════ */
 async function toggle(id) {
   if (openId === id) { closeDetail(); return; }
   closeDetail();
   openId = id;
-  $('#detail-' + id).classList.add('open');
+  const el = document.getElementById('detail-' + id);
+  if (!el) return;
+  el.classList.add('open');
   const job = jobs.find(j => j.id === id);
-  if (job) renderDetailBody($('#detail-' + id), job);
+  if (job) renderDetailBody(el, job);
   connectSSE(id);
-  try { const fresh = await fetchJSON('/api/jobs/' + id); renderDetailBody($('#detail-' + id), fresh); } catch (e) {}
+  try { const fresh = await fetchJSON('/api/jobs/' + id); renderDetailBody(el, fresh); } catch (e) {}
 }
 function closeDetail() {
   if (es) { es.close(); es = null; }
@@ -413,7 +632,10 @@ function connectSSE(id) {
     try {
       const msg = JSON.parse(ev.data);
       if (msg.type === 'log' && msg.msg) appendLog(id, msg.msg);
-      else if (msg.type === 'job' && msg.job) renderDetailBody($('#detail-' + id), msg.job);
+      else if (msg.type === 'job' && msg.job) {
+        const el = document.querySelector('#detail-' + id);
+        if (el) renderDetailBody(el, msg.job);
+      }
     } catch (e) {}
   };
   es.onerror = () => { /* 轮询兜底，EventSource 自动重连 */ };
@@ -423,7 +645,7 @@ function appendLog(id, line) {
   if (pre) { pre.textContent += line + '\n'; pre.scrollTop = pre.scrollHeight; }
 }
 
-/* ── 详情渲染 ── */
+/* ═══════════ 卡片渲染（详情 & 审核台共用）═══════════ */
 function clipHTML(job, c, idx) {
   const file = '/api/files/' + job.id + '/' + c.file;
   const cover = c.cover ? '/api/files/' + job.id + '/' + c.cover : null;
@@ -444,7 +666,37 @@ function clipHTML(job, c, idx) {
     </div>
   </div>`;
 }
-
+function clipsGrid(job, r) {
+  detailClips = r.clips || [];
+  return '<div class="clips">' + r.clips.map((c, i) => clipHTML(job, c, i)).join('') + '</div>';
+}
+function subtitleCard(job, r) {
+  const src = r.source_job, f = '/api/files/' + src + '/' + r.subtitled;
+  const cover = r.cover ? '/api/files/' + src + '/' + r.cover : null;
+  const c = { file: r.subtitled, cover: r.cover || '', title: r.title };
+  return `<div class="clip oneclip">
+    <video controls preload="metadata" src="${f}" ${cover ? `poster="${cover}"` : ''}></video>
+    <div class="meta">
+      <div class="title">${esc(r.title || '')}</div>
+      <div class="info"><span>字幕成品 · ${r.segments} 条 · ${r.style === 'bilingual' ? '双语' : '纯中文'}</span><a href="${f}" download>下载</a></div>
+      <div class="acts">
+        <button class="b-pub" onclick='openPubModalFor(${JSON.stringify({ jobId: src, clip: c })})'>发布</button>
+        <button class="b-dub" onclick='openDubModal(${JSON.stringify({ jobId: src, clip: c })})'>配音解说</button>
+      </div>
+    </div></div>`;
+}
+function dubCard(job, r) {
+  const src = r.source_job, f = '/api/files/' + src + '/' + r.dubbed;
+  const cover = r.cover ? '/api/files/' + src + '/' + r.cover : null;
+  const c = { file: r.dubbed, cover: r.cover || '', title: r.title };
+  return `<div class="clip oneclip">
+    <video controls preload="metadata" src="${f}" ${cover ? `poster="${cover}"` : ''}></video>
+    <div class="meta">
+      <div class="title">${esc(r.title || '')}</div>
+      <div class="info"><span>配音成品 · ${esc(r.voice)} · 解说稿 ${r.script_len} 字</span><a href="${f}" download>下载</a></div>
+      <div class="acts"><button class="b-pub" onclick='openPubModalFor(${JSON.stringify({ jobId: src, clip: c })})'>发布</button></div>
+    </div></div>`;
+}
 function renderDetailBody(el, job) {
   if (!el || !job) return;
   let extra = '';
@@ -455,39 +707,11 @@ function renderDetailBody(el, job) {
         <div class="pub-result ${pr.ok ? 'ok' : 'fail'}">${pr.ok ? '✔' : '✗'} <b>${esc(pr.platform)}</b>：${esc(pr.detail || '')}
         ${pr.screenshot ? `<img src="/api/files/${job.id}/${pr.screenshot}">` : ''}</div>`).join('');
     } else if (job.kind === 'subtitle' && r.subtitled) {
-      const src = r.source_job, f = '/api/files/' + src + '/' + r.subtitled;
-      const cover = r.cover ? '/api/files/' + src + '/' + r.cover : null;
-      const c = { file: r.subtitled, cover: r.cover || '', title: r.title };
-      extra = `<h4>字幕成品（${r.segments} 条 · ${r.style === 'bilingual' ? '双语' : '纯中文'}）</h4>
-        <div class="clip oneclip">
-          <video controls preload="metadata" src="${f}" ${cover ? `poster="${cover}"` : ''}></video>
-          <div class="meta">
-            <div class="title">${esc(r.title || '')}</div>
-            <div class="info"><span>原片：${esc(r.original)}</span><a href="${f}" download>下载</a></div>
-            ${job.status === 'review' ? `<div class="acts">
-              <button class="b-pub" onclick='openPubModalFor(${JSON.stringify({ jobId: src, clip: c })})'>发布</button>
-              <button class="b-dub" onclick='openDubModal(${JSON.stringify({ jobId: src, clip: c })})'>配音解说</button>
-            </div>` : ''}
-          </div>
-        </div>`;
+      extra = '<h4>字幕成品</h4>' + subtitleCard(job, r);
     } else if (job.kind === 'dub' && r.dubbed) {
-      const src = r.source_job, f = '/api/files/' + src + '/' + r.dubbed;
-      const cover = r.cover ? '/api/files/' + src + '/' + r.cover : null;
-      const c = { file: r.dubbed, cover: r.cover || '', title: r.title };
-      extra = `<h4>配音成品（${esc(r.voice)} · 解说稿 ${r.script_len} 字）</h4>
-        <div class="clip oneclip">
-          <video controls preload="metadata" src="${f}" ${cover ? `poster="${cover}"` : ''}></video>
-          <div class="meta">
-            <div class="title">${esc(r.title || '')}</div>
-            <div class="info"><span>基于：${esc(r.original)}</span><a href="${f}" download>下载</a></div>
-            ${job.status === 'review' ? `<div class="acts">
-              <button class="b-pub" onclick='openPubModalFor(${JSON.stringify({ jobId: src, clip: c })})'>发布</button>
-            </div>` : ''}
-          </div>
-        </div>`;
+      extra = '<h4>配音成品</h4>' + dubCard(job, r);
     } else if (r.clips && r.clips.length) {
-      detailClips = r.clips;
-      extra = '<h4>切片成品（' + r.clips.length + '）</h4><div class="clips">' + r.clips.map((c, i) => clipHTML(job, c, i)).join('') + '</div>';
+      extra = '<h4>切片成品（' + r.clips.length + '）</h4>' + clipsGrid(job, r);
     }
   } catch (e) {}
   el.innerHTML = `
@@ -499,31 +723,14 @@ function renderDetailBody(el, job) {
   if (pre) pre.scrollTop = pre.scrollHeight;
 }
 
-/* ── 新建任务 ── */
-async function submitJob() {
-  const input = $('#input').value.trim();
-  if (!input) return;
-  $('#submit').disabled = true;
-  try {
-    await fetchJSON('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input, kind: 'clips' }) });
-    $('#input').value = '';
-    refreshList();
-  } catch (e) { alert('创建失败：' + e.message); }
-  $('#submit').disabled = false;
-}
-$('#input').addEventListener('keydown', e => { if (e.key === 'Enter') submitJob(); });
-
+/* ═══════════ 删除 ═══════════ */
 async function delJob(id) {
   if (!confirm('删除任务 ' + id + '？（文件保留在 data/jobs/）')) return;
-  try { await fetchJSON('/api/jobs/' + id, { method: 'DELETE' }); if (openId === id) closeDetail(); refreshList(); } catch (e) { alert(e.message); }
+  try { await fetchJSON('/api/jobs/' + id, { method: 'DELETE' }); if (openId === id) closeDetail(); refresh(); } catch (e) { alert(e.message); }
 }
 
-/* ── 发布 ── */
-function openPubModal(jobId, idx) {
-  const c = detailClips[idx];
-  if (!c) return;
-  openPubModalFor({ jobId, clip: c });
-}
+/* ═══════════ 弹窗（发布/字幕/配音）═══════════ */
+function openPubModal(jobId, idx) { const c = detailClips[idx]; if (c) openPubModalFor({ jobId, clip: c }); }
 function openPubModalFor(ctx) {
   pubCtx = ctx;
   const c = ctx.clip;
@@ -550,14 +757,11 @@ async function submitPublish() {
   };
   try {
     await fetchJSON('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'publish', input: JSON.stringify(req) }) });
-    closePubModal(); refreshList();
+    closePubModal(); refresh();
   } catch (e) { alert('创建发布任务失败：' + e.message); }
 }
-
-/* ── 字幕 ── */
 function openSubModal(jobId, idx) {
-  const c = detailClips[idx];
-  if (!c) return;
+  const c = detailClips[idx]; if (!c) return;
   subCtx = { jobId, clip: c };
   $('#sub-meta').textContent = c.file + ' ｜ ' + (c.title || '');
   $('#sub-style-bi').checked = true;
@@ -569,11 +773,9 @@ async function submitSubtitle() {
   const req = { source_job: subCtx.jobId, clip: subCtx.clip.file, style: $('#sub-style-bi').checked ? 'bilingual' : 'zh' };
   try {
     await fetchJSON('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'subtitle', input: JSON.stringify(req) }) });
-    closeSubModal(); refreshList();
+    closeSubModal(); refresh();
   } catch (e) { alert('创建字幕任务失败：' + e.message); }
 }
-
-/* ── 配音 ── */
 function openDubModal(ctx) {
   dubCtx = ctx;
   $('#dub-meta').textContent = ctx.clip.file + ' ｜ ' + (ctx.clip.title || '');
@@ -585,14 +787,28 @@ async function submitDub() {
   const req = { source_job: dubCtx.jobId, clip: dubCtx.clip.file, voice: $('#dub-voice').value, keep_audio: $('#dub-keep').checked };
   try {
     await fetchJSON('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'dub', input: JSON.stringify(req) }) });
-    closeDubModal(); refreshList();
+    closeDubModal(); refresh();
   } catch (e) { alert('创建配音任务失败：' + e.message); }
 }
 
-/* ── 启动 ── */
+/* ═══════════ 刷新循环 ═══════════ */
+async function refresh() {
+  try { jobs = await fetchJSON('/api/jobs'); } catch (e) { return; }
+  renderNav();
+  if (page === 'board') { renderBoard($('#page')); }
+  else if (page === 'tasks') { const c = $('#task-jobs'); if (c) renderJobList(c, jobs.filter(j => taskFilter === 'all' || j.kind === taskFilter), true); }
+  else if (page === 'review') { renderReview($('#page')); }
+}
+async function fetchStats() {
+  try { stats = await fetchJSON('/api/stats'); renderNav(); if (page === 'settings') renderSettings($('#page')); } catch (e) {}
+}
+
+/* ═══════════ 启动 ═══════════ */
+window.addEventListener('hashchange', route);
 fetchStats();
-refreshList();
-setInterval(() => { if (!document.hidden) refreshList(); }, 2500);
+route();
+(async () => { try { jobs = await fetchJSON('/api/jobs'); renderNav(); renderPage(); } catch (e) {} })();
+setInterval(() => { if (!document.hidden) refresh(); }, 2500);
 setInterval(() => { if (!document.hidden) fetchStats(); }, 30000);
 </script>
 </body>

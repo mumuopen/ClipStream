@@ -46,7 +46,7 @@ func (s *Server) Handler() http.Handler {
 	return logRequest(mux)
 }
 
-// stats 引擎配置状态（控制台状态灯数据源；只报配置就绪性，不做运行时探测）
+// stats 引擎/账号配置状态（控制台状态灯与设置页数据源；只报就绪性，不做运行时探测）
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cfg
 	engines := map[string]bool{
@@ -57,7 +57,15 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 		"deepseek": cfg.LLM.APIKey != "",
 		"pushme":   cfg.Notify.Pushme.Enable && cfg.Notify.Pushme.URL != "" && cfg.Notify.Pushme.PushKey != "",
 	}
-	writeJSON(w, map[string]any{"engines": engines})
+	// 账号登录态：B站=biliup cookie 文件存在；抖音=仅能报"配置过浏览器目录"，真实扫码态发布时验证
+	accounts := map[string]bool{
+		"bilibili": false,
+		"douyin":   false,
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "accounts", "bilibili-default", "cookies.json")); err == nil {
+		accounts["bilibili"] = true
+	}
+	writeJSON(w, map[string]any{"engines": engines, "accounts": accounts})
 }
 
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
