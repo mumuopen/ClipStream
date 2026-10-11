@@ -15,6 +15,7 @@ import (
 type WhisperTranscriber struct {
 	Bin   string
 	Model string
+	FF    *FFMPEG // 抽音频用：v1.9 miniaudio 只认裸音频（flac/mp3/ogg/wav），MP4 需先抽 16k 单声道 WAV
 }
 
 func (w *WhisperTranscriber) Transcribe(ctx context.Context, media, workDir string) ([]Segment, error) {
@@ -26,10 +27,27 @@ func (w *WhisperTranscriber) Transcribe(ctx context.Context, media, workDir stri
 			return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 		}
 	}
-	// whisper.cpp v1.9 参数：-of 输出前缀（无扩展名）；-l auto 自动检测语言（默认 en 会把中文当英文转写）；-np 减少日志噪音
+
+	// v1.9 miniaudio 只认裸音频：先抽 16kHz 单声道 WAV（已经是裸音频且 FF 未接时直接用原文件）
+	input := media
+	switch strings.ToLower(filepath.Ext(media)) {
+	case ".flac", ".mp3", ".ogg", ".wav":
+		// 裸音频直接喂
+	default:
+		if w.FF == nil {
+			return nil, fmt.Errorf("whisper 无法直接读取 %s（v1.9 仅支持裸音频），且未接入 ffmpeg 抽音频", filepath.Ext(media))
+		}
+		wav := filepath.Join(workDir, "audio-16k.wav")
+		if err := w.FF.ExtractAudio16k(ctx, media, wav); err != nil {
+			return nil, fmt.Errorf("抽取音频失败（MP4 等容器需先转 WAV）: %w", err)
+		}
+		input = wav
+	}
+
+	// whisper.cpp v1.9 参数：-of 输出前缀（无扩展名）；-l auto 自动检测语言（默认 en 会把中文硬当英文转写）；-np 减少日志噪音
 	args := []string{
 		"-m", w.Model,
-		"-f", media,
+		"-f", input,
 		"-l", "auto",
 		"-oj",
 		"-of", filepath.Join(workDir, "whisper"),

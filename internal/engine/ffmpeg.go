@@ -76,6 +76,24 @@ func (f *FFMPEG) ExtractFrame(ctx context.Context, in, out string, t float64) er
 	return nil
 }
 
+// ExtractAudio16k 抽取 16kHz 单声道 PCM WAV（whisper.cpp v1.9 miniaudio 只认裸音频）
+func (f *FFMPEG) ExtractAudio16k(ctx context.Context, in, out string) error {
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		return err
+	}
+	args := []string{
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-i", in,
+		"-vn", "-ar", "16000", "-ac", "1",
+		"-c:a", "pcm_s16le",
+		out,
+	}
+	if b, err := exec.CommandContext(ctx, f.Bin, args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("ffmpeg 抽音频失败: %v\n%s", err, tail(b, 1500))
+	}
+	return nil
+}
+
 func tail(b []byte, n int) string {
 	s := strings.TrimSpace(string(b))
 	if len(s) > n {

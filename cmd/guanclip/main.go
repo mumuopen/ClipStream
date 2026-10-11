@@ -192,12 +192,13 @@ func setup(cfgPath string, reset bool) (*app, error) {
 		}
 	}
 	bus := core.NewBus()
+	ff := &engine.FFMPEG{Bin: cfg.Engines.FFmpeg, ProbeBin: cfg.Engines.Probe}
 	env := &pipeline.Env{
 		Cfg:    cfg,
 		Store:  st,
 		YTDLP:  &engine.YTDLP{Bin: cfg.Engines.YtDlp},
-		FFMPEG: &engine.FFMPEG{Bin: cfg.Engines.FFmpeg, ProbeBin: cfg.Engines.Probe},
-		ASR:    &engine.WhisperTranscriber{Bin: cfg.Engines.ASR.Binary, Model: cfg.Engines.ASR.Model},
+		FFMPEG: ff,
+		ASR:    &engine.WhisperTranscriber{Bin: cfg.Engines.ASR.Binary, Model: cfg.Engines.ASR.Model, FF: ff},
 		LLM:    engine.NewLLMClient(cfg.LLM.BaseURL, cfg.LLM.APIKey, cfg.LLM.Model, cfg.LLM.Proxy),
 		Bus:    bus,
 		Notify: notify.NewPushme(cfg.Notify.Pushme),
