@@ -42,7 +42,22 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/jobs/{id}", s.deleteJob)
 	mux.HandleFunc("GET /api/jobs/{id}/events", s.events)
 	mux.HandleFunc("GET /api/files/{job}/{file...}", s.serveFile)
+	mux.HandleFunc("GET /api/stats", s.stats)
 	return logRequest(mux)
+}
+
+// stats 引擎配置状态（控制台状态灯数据源；只报配置就绪性，不做运行时探测）
+func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
+	cfg := s.cfg
+	engines := map[string]bool{
+		"yt-dlp":   cfg.Engines.YtDlp != "",
+		"ffmpeg":   cfg.Engines.FFmpeg != "",
+		"biliup":   cfg.Engines.Biliup != "",
+		"whisper":  cfg.Engines.ASR.Binary != "" && cfg.Engines.ASR.Model != "",
+		"deepseek": cfg.LLM.APIKey != "",
+		"pushme":   cfg.Notify.Pushme.Enable && cfg.Notify.Pushme.URL != "" && cfg.Notify.Pushme.PushKey != "",
+	}
+	writeJSON(w, map[string]any{"engines": engines})
 }
 
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
