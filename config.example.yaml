@@ -48,3 +48,10 @@ retention:                       # 磁盘清理（挂机刚需，daemon 定时�
   consumed_seg_days: 1           # 预留：已消费分段更激进清理
   min_free_percent: 10           # 磁盘剩余低于此百分比：预警+自动删最旧
   check_minutes: 60              # 清理检查间隔（分钟）
+
+auto_review:                     # 自动审核（挂机无人值守）
+  enabled: false                 # 开：切片完成自动过闸入池，不再等人工；关：全部进审核台（现状）
+  min_score: 60                  # LLM 评分 ≥ 此值才自动入池（等分回退切片无评分，只会留人工）
+  hard_min_dur_sec: 15           # 硬闸：短于此直接拒发
+  hard_max_dur_sec: 120          # 硬闸：长于此直接拒发
+  banned_words: []               # 质闸：标题含这些词不自动发（进人工审核台），如 ["违禁词A", "违禁词B"]

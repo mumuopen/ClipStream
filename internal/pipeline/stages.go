@@ -413,9 +413,6 @@ func relPath(base, full string) string {
 // ---- finalize ----
 
 func stageFinalize(_ context.Context, job *core.Job, env *Env) error {
-	job.Status = core.StatusReview // 进入审核台，等人工放行
-
-	// pushme 通知：切片待审核
 	var r struct {
 		Clips []struct {
 			Title string `json:"title"`
@@ -426,6 +423,25 @@ func stageFinalize(_ context.Context, job *core.Job, env *Env) error {
 	if env.Cfg.Web.Listen == "" {
 		consoleURL = "http://127.0.0.1:8899"
 	}
+
+	// 自动审核（开关开时）：分级闸门决定切片去向（入池/留审/拒发）
+	auto, manual, rejected := applyAutoReview(job, env)
+	if env.Cfg.AutoReview.Enabled {
+		// 挂机模式的通知：结果导向，早上看手机知道昨晚发生了什么
+		env.notify("ClipStream 自动审核完成",
+			fmt.Sprintf("任务 %s：自动入池 %d｜留人工 %d｜拒发 %d\n控制台：%s",
+				job.ID, auto, manual, rejected, consoleURL))
+		// 全自动过闸：无人工项时不占审核台（保持 done 语义由 pool 接管发布）
+		if manual == 0 {
+			job.Status = core.StatusDone
+		} else {
+			job.Status = core.StatusReview // 留人工项的等早晨处理
+		}
+		return nil
+	}
+
+	// 人工模式（默认）：全部进审核台，等放行
+	job.Status = core.StatusReview
 	env.notify("ClipStream 切片待审核",
 		fmt.Sprintf("任务 %s 完成，%d 个切片进入审核台：%s", job.ID, len(r.Clips), consoleURL))
 	return nil

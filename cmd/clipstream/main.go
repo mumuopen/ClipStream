@@ -263,6 +263,9 @@ func doServe(cfgPath string) error {
 	// 完整错峰发布需接入审核通过的内容池 + 账号路由，后续迭代。
 	go scheduleTicker(app)
 
+	// M5 每日摘要：早上 09:00 pushme 昨天发生了什么（挂机视角）
+	go dailyDigestTicker(app)
+
 	srv := web.NewServer(app.cfg, app.store, app.runner, app.bus)
 	addr := app.cfg.Web.Listen
 	if addr == "" {
@@ -443,6 +446,62 @@ func or(s, d string) string {
 		return d
 	}
 	return s
+}
+
+// dailyDigestTicker 每日 09:00 pushme 摘要：昨天自动发了什么/拦了什么/池里还剩什么。
+// 挂机视角的第二双眼睛——早上看手机一屏了解昨晚全自动流水线的结果。
+func dailyDigestTicker(app *app) {
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	lastDay := ""
+	for range t.C {
+		now := time.Now()
+		day := now.Format("2006-01-02")
+		if lastDay == "" {
+			lastDay = day // 启动当天不发，次日开始
+		}
+		if now.Format("15:04") != "09:00" || day == lastDay {
+			continue
+		}
+		lastDay = day
+		// 统计昨天：切片任务数 / 池状态
+		jobs, err := app.store.ListJobs(500)
+		if err != nil {
+			continue
+		}
+		y0 := now.AddDate(0, 0, -1)
+		yStart := time.Date(y0.Year(), y0.Month(), y0.Day(), 0, 0, 0, 0, time.Local).Unix()
+		yEnd := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local).Unix()
+		var clipsJob, reviewPending, failed int
+		for _, j := range jobs {
+			if j.CreatedAt < yStart || j.CreatedAt >= yEnd || j.Kind != "clips" {
+				continue
+			}
+			clipsJob++
+			switch string(j.Status) {
+			case "review":
+				reviewPending++
+			case "failed":
+				failed++
+			}
+		}
+		pool, _ := app.store.ListPoolItems(false)
+		dispatched := 0
+		if all, err := app.store.ListPoolItems(true); err == nil {
+			for _, it := range all {
+				if it.Status == "dispatched" && it.CreatedAt >= yStart {
+					dispatched++
+				}
+			}
+		}
+		auto := ""
+		if app.cfg.AutoReview.Enabled {
+			auto = "（自动审核开）"
+		}
+		app.notifier.Notify("ClipStream 昨日战报",
+			fmt.Sprintf("昨天：切片任务 %d，调度派出 %d%s\n待人工审核 %d｜失败 %d｜内容池待发 %d\n控制台看详情",
+				clipsJob, dispatched, auto, reviewPending, failed, len(pool)))
+	}
 }
 
 // scanClipQueue 轮询 data/live/queue/ 下的 .seg 队列文件，逐个回调后删除

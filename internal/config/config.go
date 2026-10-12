@@ -17,6 +17,7 @@ type Config struct {
 	Chrome  Chrome  `yaml:"chrome"`
 	Live      Live      `yaml:"live"`
 	Retention Retention `yaml:"retention"`
+	AutoReview AutoReview `yaml:"auto_review"`
 }
 
 type Engines struct {
@@ -83,6 +84,20 @@ type Retention struct {
 	CheckMinutes int `yaml:"check_minutes"` // 默认 60
 }
 
+// AutoReview 自动审核（挂机无人值守：切片完成不再等人工，分级闸门自动入池）
+type AutoReview struct {
+	Enabled bool `yaml:"enabled"` // 总开关（关=全部进人工审核台，现状行为）
+	// 自动入池的信任门槛：LLM 评分 ≥ MinScore（等分回退切片无评分，不会自动过）
+	MinScore int `yaml:"min_score"` // 默认 60
+	// 硬闸——任一命中直接拒绝（不入池也不留审，标记 failed 留档）：
+	HardMinDurSec int `yaml:"hard_min_dur_sec"` // 默认 15：过短的切片无传播价值
+	HardMaxDurSec int `yaml:"hard_max_dur_sec"` // 默认 120：过长超出短视频定位
+	// 质闸——不过不自动发，进人工审核台等早晨处理：
+	//   转写为空（纯音乐/无法识别）→ 内容不明，人看
+	//   敏感词命中 → 发布必翻车，人看
+	BannedWords []string `yaml:"banned_words"` // 敏感词黑名单（标题+转写匹配）
+}
+
 func Default() *Config {
 	return &Config{
 		DataDir: "./data",
@@ -92,6 +107,7 @@ func Default() *Config {
 		Publish: Publish{Headless: false, Screenshots: true, PlatformsDir: "configs/platforms"},
 		Live:      Live{CheckIntervalSec: 60, SegmentSec: 600, AutoClip: true},
 		Retention: Retention{Enabled: true, SegmentsDays: 7, ConsumedSegDays: 1, MinFreePercent: 10, CheckMinutes: 60},
+		AutoReview: AutoReview{Enabled: false, MinScore: 60, HardMinDurSec: 15, HardMaxDurSec: 120, BannedWords: []string{}},
 	}
 }
 
