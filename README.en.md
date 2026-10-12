@@ -2,7 +2,7 @@
 
 > One pipeline for live recording · smart clipping · download & port · translate & dub · multi-platform auto-publishing.
 
-**Credits**: This project is a **Go rewrite & fusion** of [Geniuszy/ChopperBot](https://github.com/Geniuszy/ChopperBot) (Apache-2.0, a Java live-clip robot). Module map (Board / Task Center / Live Follow / Barrage Curve / Label Manage ...), dual-signal highlight ideas, and multi-platform publishing concepts are inspired by the original. The original source is for study only and is **not** distributed with this repo.
+**Credits**: This project is a **Go rewrite & fusion** of [Geniusay/ChopperBot](https://github.com/Geniusay/ChopperBot) (Apache-2.0, a Java live-clip robot). Module map (Board / Task Center / Live Follow / Barrage Curve / Label Manage ...), dual-signal highlight ideas, and multi-platform publishing concepts are inspired by the original. The original source is for study only and is **not** distributed with this repo.
 
 ## Screenshots
 
@@ -100,7 +100,7 @@ Console pages: Dashboard / Tasks / Review / Live Follow / Barrage Curve / Label 
 
 [Apache-2.0](LICENSE).
 
-This project is an **independent rewrite** of ChopperBot: the code is brand-new Go, inspired by [Geniuszy/ChopperBot](https://github.com/Geniuszy/ChopperBot) (Apache-2.0) — thanks to the original author. Third-party engines/libs keep their own licenses (biliup / whisper.cpp / yt-dlp / rod ...).
+This project is an **independent rewrite** of ChopperBot: the code is brand-new Go, inspired by [Geniusay/ChopperBot](https://github.com/Geniusay/ChopperBot) (Apache-2.0) — thanks to the original author. Third-party engines/libs keep their own licenses (biliup / whisper.cpp / yt-dlp / rod ...).
 
 ## Feedback
 

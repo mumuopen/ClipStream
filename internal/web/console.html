@@ -375,6 +375,111 @@
 
 <script>
 'use strict';
+/* ═══════════ 国际化（zh/en）═══════════ */
+const I18N = {
+  zh: {
+    nav_ops: '运营', nav_live: '直播 · M4', nav_matrix: '矩阵 · M5', nav_sys: '系统',
+    nav_board: '总览', nav_board_sub: '流水线概览与投料',
+    nav_tasks: '任务中心', nav_tasks_sub: '全部管线任务',
+    nav_review: '审核台', nav_review_sub: '切片审核与发布决策',
+    nav_creeper: '采集库', nav_hotguard: '热门守卫',
+    nav_livefollow: '直播关注', nav_livefollow_sub: '开播自动录 + 下播自动切片',
+    nav_barrage: '弹幕曲线', nav_barrage_sub: '密度曲线 · 双信号高光',
+    nav_labels: '标签矩阵', nav_labels_sub: '矩阵账号 · 错峰调度',
+    nav_settings: '设置', nav_settings_sub: '引擎 · 账号 · 通知',
+    built: '建设中',
+    lang_switch: 'EN',
+    feed_ph: '投喂视频链接（YouTube / B站…）或本地文件路径，回车开工',
+    btn_create: '创建任务', btn_add: '关注', btn_add_acc: '添加账号', btn_create_sch: '创建调度',
+    btn_refresh: '刷新', btn_del: '删除', btn_zh: '中文', btn_en: 'EN',
+    strip_today: '今日任务', strip_review: '待审核', strip_done: '已完成', strip_failed: '失败',
+    strip_rate: '成功率', strip_engines: '引擎就绪',
+    st_queued: '排队', st_running: '执行中', st_review: '待审核', st_done: '完成', st_failed: '失败', st_canceled: '已取消',
+    eng_ytdlp: '下载', eng_ffmpeg: '转码', eng_whisper: '转写', eng_biliup: 'B站投稿', eng_deepseek: 'LLM', eng_pushme: '通知',
+    board_empty: '流水线未开工 — 投喂链接即可启动「下载 → 转写 → 选高光 → 切片 → 审核 → 发布」全流程',
+    live_ph: '粘贴直播间链接（B站 live.bilibili.com / 虎牙 www.huya.com），回车添加关注',
+    live_idle: '未开播', live_recording: '录制中', live_error: '检测异常',
+    live_empty: '还没有关注的直播间', live_empty2: '添加后自动监控：开播即录、下播自动切片入审核台',
+    live_seg: '段', live_elapsed: '已录',
+    live_hint: '守护器每 60s 轮询一次；开播自动录 FLV → 600s/段 → 下播后每段自动进入切片管线 → pushme 推送。',
+    live_confirm_del: '取消关注并停止该房间的录制？（已录文件保留）',
+    barrage_ph: '请选择直播间（录制中自动采集弹幕）', barrage_nodata: '暂无弹幕数据（直播中才有）',
+    barrage_total: '共', 'barrage_peak': '峰值', 'barrage_cover': '覆盖', 'barrage_per5': '条/5s',
+    'barrage_min30': '近 30 分', 'barrage_min120': '近 2 小时', 'barrage_min360': '近 6 小时',
+    m5_acc: '矩阵账号', m5_acc_hint: '发布时按人设标签路由',
+    m5_plat: '平台', m5_name: '账号名', m5_labels: '人设标签', m5_labels_ph: '游戏,高燃,赛事（逗号分隔）', m5_prio: '优先级',
+    m5_acc_empty: '暂无矩阵账号 — 发布时按人设标签与优先级路由',
+    m5_sch: '发布调度', m5_sch_hint: '每日到点触发（占位）',
+    m5_sch_name: '调度名', m5_time: '触发时间', m5_plat_sel: '发布平台', m5_plat_only: '当前支持 B站',
+    m5_sch_empty: '暂无调度 — 到点触发发布（完整错峰待接内容池与账号路由）',
+    m5_rule: '路由规则（占位）', m5_step1: '切片出审核台', m5_step1b: '标签',
+    m5_step2: '匹配账号人设', m5_step2b: '优先级选号', m5_step3: '按调度错峰', m5_step3b: '多平台分发',
+    m5_acc_name_ph: '如：主号·电竞', m5_sch_name_ph: '如 晚高峰错峰',
+    m5_ok: '可用', m5_login: '待登录', m5_on: '启用', m5_off: '停用', m5_last: '上次', m5_never: '未触发',
+    m5_unlabel: '未设标签', m5_confirm_acc: '删除该矩阵账号？', m5_confirm_sch: '删除该调度？',
+    m5_acc_need: '账号名必填', m5_sch_need: '调度名必填', m5_sch_bad: '调度名与 HH:MM 时间必填',
+    set_engines: '引擎', set_accounts: '账号', set_notify: '通知', set_cmds: '常用命令',
+    set_bsub: 'B站投稿', set_douyin: '抖音', set_bili: 'B站', set_douyin_acc: '浏览器登录态（未接入）',
+    set_bili_login: 'biliup 登录态', set_ok: '已登录', set_scan2: '待扫码', set_enabled: '已启用', set_disabled: '未启用',
+    'set_eng_ytdlp': '视频下载（数千站点）', 'set_eng_ffmpeg': '转码 / 切片 / 烧字幕', 'set_eng_whisper': '离线语音转写 whisper.cpp',
+    'set_eng_biliup': 'B站投稿直传', 'set_eng_deepseek': '高光选择 / 解说稿 / 翻译', 'set_eng_pushme': '审核 / 发布 / 失败推手机',
+    lang_label: '语言', ready: '就绪', not_set: '未配置', nav_tasks_all: '全部', set_cmd_init: '引擎体检与配置生成', set_cmd_serve: '启动本控制台（127.0.0.1:8899）', set_cmd_run: '命令行直接跑任务', set_cmd_login: '[--account 别名] 平台扫码登录', set_cmd_status: '任务一览',
+  },
+  en: {
+    nav_ops: 'Ops', nav_boards: 'Overview',
+    nav_board: 'Board', nav_board_sub: 'Pipeline overview & feed',
+    nav_tasks: 'Tasks', nav_tasks_sub: 'All pipeline jobs',
+    nav_review: 'Review', nav_review_sub: 'Clip review & publish',
+    nav_creeper: 'Crawler', nav_hotguard: 'Hot Guard',
+    nav_livefollow: 'Live Follow', nav_livefollow_sub: 'Auto-record on live, auto-clip after',
+    nav_barrage: 'Barrage', nav_barrage_sub: 'Density curve · dual-signal highlight',
+    nav_labels: 'Label Matrix', nav_labels_sub: 'Accounts · scheduling',
+    nav_settings: 'Settings', nav_settings_sub: 'Engines · accounts · notify',
+    built: 'WIP',
+    lang_switch: '中',
+    feed_ph: 'Paste a video URL (YouTube / Bilibili…) or local file path, press Enter',
+    btn_create: 'Create', btn_add: 'Follow', btn_add_acc: 'Add account', btn_create_sch: 'Create',
+    btn_refresh: 'Refresh', btn_del: 'Delete',
+    strip_today: 'Today', strip_review: 'Review', strip_done: 'Done', strip_failed: 'Failed',
+    strip_rate: 'Success', strip_engines: 'Engines',
+    st_queued: 'Queued', st_running: 'Running', st_review: 'Review', st_done: 'Done', st_failed: 'Failed', st_canceled: 'Canceled',
+    eng_ytdlp: 'Download', eng_ffmpeg: 'Transcode', eng_whisper: 'ASR', eng_biliup: 'Bilibili', eng_deepseek: 'LLM', eng_pushme: 'Notify',
+    board_empty: 'Pipeline idle — feed a URL to start download → transcribe → highlight → clip → review → publish',
+    live_ph: 'Paste a live-room link (Bilibili live.bilibili.com / Huya www.huya.com), press Enter',
+    live_idle: 'Offline', live_recording: 'Recording', live_error: 'Error',
+    live_empty: 'No followed rooms yet', live_empty2: 'Add rooms to auto-record and auto-clip into review',
+    live_seg: 'seg', live_elapsed: 'for',
+    live_hint: 'Guard polls every 60s; auto-record FLV → 600s/seg → auto-clip into review → push notify.',
+    live_confirm_del: 'Unfollow and stop recording this room? (recordings kept)',
+    barrage_ph: 'Select a room (danmaku is auto-collected while live)',
+    barrage_nodata: 'No danmaku yet (appears while live)',
+    barrage_total: 'Total', barrage_peak: 'Peak', barrage_rate: 'count', barrage_per5: 'per 5s',
+    'barrage_min30': '30 min', 'barrage_min120': '2 hours', 'barrage_min360': '6 hours',
+    m5_acc: 'Matrix Accounts', m5_acc_hint: 'route by persona labels at publish',
+    m5_plat: 'Platform', m5_name: 'Account name', m5_labels: 'Labels', m5_labels_ph: 'game,hype,tournament (comma-sep)', m5_prio: 'Priority',
+    m5_acc_empty: 'No accounts yet — routing by labels & priority at publish',
+    m5_sch: 'Publish Schedule', m5_sch_hint: 'daily trigger (placeholder)',
+    m5_sch_name: 'Name', m5_time: 'Time', m5_plat_sel: 'Platforms', m5_plat_only: 'Bilibili only',
+    m5_sch_empty: 'No schedules yet — full staggered publish pending',
+    m5_rule: 'Routing (placeholder)', m5_step1: 'Clip from review', m5_step2: 'Match account persona', m5_step3: 'Scheduled stagger',
+    m5_step1b: 'labels', m5_step2b: 'priority', m5_step3b: 'multi-platform',
+    m5_acc_name_ph: 'e.g. main-account', m5_sch_name_ph: 'e.g. evening peak',
+    m5_ok: 'OK', m5_login: 'login', m5_on: 'ON', m5_off: 'OFF', m5_last: 'last', m5_never: 'never',
+    m5_unlabel: 'no labels', m5_confirm_acc: 'Delete this account?', m5_confirm_sch: 'Delete this schedule?',
+    m5_acc_need: 'Account name required', m5_sch_need: 'Name required', m5_sch_bad: 'Name and HH:MM time required',
+    set_engines: 'Engines', set_accounts: 'Accounts', set_notify: 'Notify', set_cmds: 'Common commands',
+    set_bsub: 'Bilibili upload', set_douyin: 'Douyin', set_bili: 'Bilibili', set_douyin_acc: 'Douyin login (pending)',
+    set_bili_login: 'biliup login state', set_scan2: 'to scan', set_ok: 'logged in', set_enabled: 'enabled', set_disabled: 'disabled',
+    'set_eng_ytdlp': 'video download (thousands of sites)', 'set_eng_ffmpeg': 'transcode / clip / burn subtitles', 'set_eng_whisper': 'offline ASR whisper.cpp',
+    'set_eng_biliup': 'Bilibili upload', 'set_eng_deepseek': 'highlight / script / translate', 'set_eng_pushme': 'review / publish / failure push',
+    lang_label: 'Language', ready: 'ready', not_set: 'not set', nav_tasks_all: 'All', set_cmd_init: 'engine check & config generation', set_cmd_serve: 'start this console (127.0.0.1:8899)', set_cmd_run: 'run a job from CLI', set_cmd_login: '[--account alias] platform QR login', set_cmd_status: 'job overview',
+  },
+};
+let LANG = localStorage.getItem('clipstream_lang') || 'zh';
+function T(key) { return (I18N[LANG] && I18N[LANG][key]) || I18N.zh[key] || key; }
+function setLang(l) { LANG = l; localStorage.setItem('clipstream_lang', l); route(); }
+function statusCN(s) { return T('st_' + s) || s; }
+function engineCN(k) { return T('eng_' + (k || '')) || k; }
 /* ═══════════ 基础 ═══════════ */
 const STATUS_CN = { queued: '排队', running: '执行中', review: '待审核', done: '完成', failed: '失败', canceled: '已取消' };
 const KIND_STAGES = {
@@ -411,18 +516,18 @@ async function fetchJSON(url, opt) { const r = await fetch(url, opt); if (!r.ok)
 /* ═══════════ 模块地图（对齐原版 ChopperBot 菜单 apps.menu.ts）═══════════
    原版核心模块 → 我们的页面；M4/M5 对应模块先占位，届时骨架现成 */
 const NAV = [
-  { group: '运营' },
+  { group: 'ops' },
   { key: 'board',     name: '总览',     sub: '流水线概览与投料',   origin: 'Board' },
   { key: 'tasks',     name: '任务中心', sub: '全部管线任务',       origin: 'Task Center' },
   { key: 'review',    name: '审核台',   sub: '切片审核与发布决策', origin: '—' },
-  { group: '直播 · M4' },
+  { group: 'live' },
   { key: 'creeper',   name: '采集库',   soon: 'M4', origin: 'Creeper Library' },
   { key: 'hotguard',  name: '热门守卫', soon: 'M4', origin: 'Hot Guard' },
   { key: 'livefollow',name: '直播关注', sub: '开播自动录 + 下播自动切片', origin: 'Live Follow' },
   { key: 'barrage',   name: '弹幕曲线', sub: '密度曲线 · 双信号高光', origin: 'Barrage Curve' },
-  { group: '矩阵 · M5' },
+  { group: 'matrix' },
   { key: 'labels',    name: '标签矩阵', sub: '矩阵账号 · 错峰调度', origin: 'Label Manage' },
-  { group: '系统' },
+  { group: 'sys' },
   { key: 'settings',  name: '设置',     sub: '引擎 · 账号 · 通知' },
 ];
 
@@ -465,20 +570,20 @@ function route() {
 function renderNav() {
   const reviewN = (jobs || []).filter(j => j.status === 'review').length;
   $('#nav').innerHTML = NAV.map(n => n.group
-    ? `<div class="nav-group">${n.group}</div>`
+    ? `<div class="nav-group">${T('nav_' + n.group)}</div>`
     : `<a class="nav-item ${page === n.key ? 'active' : ''}" href="#/${n.key}">
-         ${n.name}${n.soon ? `<span class="soon">${n.soon}</span>` : (n.key === 'review' && reviewN ? `<span class="badge-mini">${reviewN}</span>` : '')}
+         ${T('nav_' + n.key)}${n.soon ? `<span class="soon">${n.soon}</span>` : (n.key === 'review' && reviewN ? `<span class="badge-mini">${reviewN}</span>` : '')}
        </a>`).join('');
   const eng = stats ? stats.engines : null;
   $('#side-engines').innerHTML = eng
-    ? Object.entries(eng).map(([k, on]) => `<span class="e ${on ? 'on' : ''}" title="${ENGINE_CN[k] || k}${on ? ' 就绪' : ' 未配置'}"><span class="dot"></span>${ENGINE_CN[k] || k}</span>`).join('')
+    ? Object.entries(eng).map(([k, on]) => `<span class="e ${on ? 'on' : ''}" title="${engineCN(k)} ${on ? T('ready') : T('not_set')}"><span class="dot"></span>${engineCN(k)}</span>`).join('')
     : '';
 }
 function renderPage() {
   const cur = NAV.find(n => n.key === page);
-  $('#ph-title').textContent = cur.name || '';
-  $('#ph-sub').textContent = cur.sub || (cur.origin ? `对应原版 ${cur.origin}` : '');
-  $('#ph-note').textContent = PLACEHOLDERS[page] ? '— 建设中 —' : '';
+  $('#ph-title').textContent = T('nav_' + page);
+  $('#ph-sub').textContent = T(page + '_sub') || (cur.origin ? `Origin: ${cur.origin}` : '');
+  $('#ph-note').textContent = PLACEHOLDERS[page] ? `— ${T('built')} —` : '';
   const el = $('#page');
   switch (page) {
     case 'board':     return renderBoard(el);
@@ -495,7 +600,7 @@ function renderPage() {
 /* ═══════════ 页面：总览 ═══════════ */
 function renderBoard(el) {
   el.innerHTML = `
-    <div class="feed"><input id="input" placeholder="投喂视频链接（YouTube / B站…）或本地文件路径，回车开工"><button id="submit" onclick="submitJob()">创建任务</button></div>
+    <div class="feed"><input id="input" placeholder="${T('feed_ph')}"><button id="submit" onclick="submitJob()">${T('btn_create')}</button></div>
     <div class="strip" id="strip"></div>
     <div id="board-jobs"></div>`;
   bindFeed();
@@ -513,12 +618,12 @@ function renderStrip() {
   const ready = eng ? Object.values(eng).filter(Boolean).length + 2 : 0;
   const total = eng ? Object.keys(eng).length + 2 : 0;
   $('#strip').innerHTML = `
-    <div class="s"><span class="n">${today.length}</span><span class="l">今日任务</span></div>
-    <div class="s warn ${review ? 'pulse' : ''}"><span class="n">${review}</span><span class="l">待审核</span></div>
-    <div class="s"><span class="n">${done}</span><span class="l">已完成</span></div>
-    <div class="s ${failed ? 'err' : ''}"><span class="n">${failed}</span><span class="l">失败</span></div>
-    <div class="s"><span class="n">${rate === null ? '—' : rate + '%'}</span><span class="l">成功率</span></div>
-    <div class="s ok"><span class="n">${ready}/${total}</span><span class="l">引擎就绪</span></div>`;
+    <div class="s"><span class="n">${today.length}</span><span class="l">${T('strip_today')}</span></div>
+    <div class="s warn ${review ? 'pulse' : ''}"><span class="n">${review}</span><span class="l">${T('strip_review')}</span></div>
+    <div class="s"><span class="n">${done}</span><span class="l">${T('strip_done')}</span></div>
+    <div class="s ${failed ? 'err' : ''}"><span class="n">${failed}</span><span class="l">${T('strip_failed')}</span></div>
+    <div class="s"><span class="n">${rate === null ? '—' : rate + '%'}</span><span class="l">${T('strip_rate')}</span></div>
+    <div class="s ok"><span class="n">${ready}/${total}</span><span class="l">${T('strip_engines')}</span></div>`;
 }
 function bindFeed() { $('#input').addEventListener('keydown', e => { if (e.key === 'Enter') submitJob(); }); }
 async function submitJob() {
@@ -539,7 +644,7 @@ function renderTasks(el) {
   const cnt = k => k === 'all' ? jobs.length : jobs.filter(j => j.kind === k).length;
   el.innerHTML = `
     <div class="chips">${kinds.map(k =>
-      `<button class="chip ${taskFilter === k ? 'on' : ''}" onclick="setFilter('${k}')">${k === 'all' ? '全部' : k}<span class="n">${cnt(k)}</span></button>`).join('')}</div>
+      `<button class="chip ${taskFilter === k ? 'on' : ''}" onclick="setFilter('${k}')">${k === 'all' ? T('nav_tasks_all') : k}<span class="n">${cnt(k)}</span></button>`).join('')}</div>
     <div id="task-jobs"></div>`;
   renderJobList($('#task-jobs'), jobs.filter(j => taskFilter === 'all' || j.kind === taskFilter), true);
 }
@@ -577,26 +682,25 @@ async function refreshWatches() {
   if (page === 'livefollow') renderLiveFollow($('#page'));
 }
 function renderLiveFollow(el) {
-  const statusCN = { idle: '未开播', recording: '录制中', error: '检测异常' };
   el.innerHTML = `
-    <div class="feed"><input id="live-url" placeholder="粘贴直播间链接（B站 live.bilibili.com / 虎牙 www.huya.com），回车添加关注">
-    <button onclick="addWatch()">关注</button></div>
+    <div class="feed"><input id="live-url" placeholder="${T('live_ph')}">
+    <button onclick="addWatch()">${T('btn_add')}</button></div>
     ${!watches.length ? `<div class="empty"><span class="arrow">📡</span>
-      <div class="big">还没有关注的直播间</div>
-      <div class="small">添加后自动监控：开播即录、下播自动切片入审核台</div></div>`
+      <div class="big">${T('live_empty')}</div>
+      <div class="small">${T('live_empty2')}</div></div>`
     : watches.map(w => `
       <div class="job">
         <div class="job-row" style="cursor:default">
           <span class="kind ${w.status === 'recording' ? 'clips' : 'publish'}">${w.platform}</span>
-          <span class="jid">房间 ${w.room_id}</span>
-          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--text)">${esc(w.title || '未获取到标题')}</span>
-          <span class="badge ${w.status === 'recording' ? 'running' : w.status === 'error' ? 'failed' : 'queued'}">${statusCN[w.status] || w.status}</span>
-          ${w.status === 'recording' ? `<span class="jtime">段 ${w.seg_count}</span>` : ''}
-          ${w.status === 'recording' ? `<span class="jtime">已录 ${fmtDur((Date.now() / 1000) - w.live_start)}</span>` : ''}
-          <button class="del" title="取消关注" onclick="delWatch(${w.id})">✕</button>
+          <span class="jid">${w.room_id}</span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--text)">${esc(w.title || '—')}</span>
+          <span class="badge ${w.status === 'recording' ? 'running' : w.status === 'error' ? 'failed' : 'queued'}">${statusCN('live_' + w.status)}</span>
+          ${w.status === 'recording' ? `<span class="jtime">${T('live_seg')} ${w.seg_count}</span>` : ''}
+          ${w.status === 'recording' ? `<span class="jtime">${T('live_elapsed')} ${fmtDur((Date.now() / 1000) - w.live_start)}</span>` : ''}
+          <button class="del" title="${T('btn_del')}" onclick="delWatch(${w.id})">✕</button>
         </div>
       </div>`).join('')}
-    <div class="hint" style="margin-top:10px">守护器每 ${60}s 轮询一次；开播自动录 FLV → ${600}s/段 mp4 → 下播后每段自动进入切片管线 → pushme 推送。</div>`;
+    <div class="hint" style="margin-top:10px">${T('live_hint')}</div>`;
   $('#live-url').addEventListener('keydown', e => { if (e.key === 'Enter') addWatch(); });
 }
 function fmtDur(sec) {
@@ -613,7 +717,7 @@ async function addWatch() {
   } catch (e) { alert('添加失败：' + e.message); }
 }
 async function delWatch(id) {
-  if (!confirm('取消关注并停止该房间的录制？（已录文件保留）')) return;
+  if (!confirm(T('live_confirm_del'))) return;
   try { await fetchJSON('/api/live/watches/' + id, { method: 'DELETE' }); refreshWatches(); } catch (e) { alert(e.message); }
 }
 
@@ -635,33 +739,37 @@ function renderPlaceholder(el, key) {
 function renderSettings(el) {
   const eng = stats ? stats.engines : null;
   const acc = stats ? stats.accounts : null;
-  const engDesc = { 'yt-dlp': '视频下载（数千站点）', 'ffmpeg': '转码 / 切片 / 烧字幕', 'whisper': '离线语音转写 whisper.cpp', 'biliup': 'B站投稿直传', 'deepseek': '高光选择 / 解说稿 / 翻译', 'pushme': '审核 / 发布 / 失败推手机' };
+  const engDesc = k => T('set_eng_' + k) || '';
   el.innerHTML = `
     <div class="set-grid">
       <div class="set-card">
-        <h4>引擎</h4>
+        <h4>${T('set_engines')}</h4>
         ${eng ? Object.entries(eng).map(([k, on]) => `
-          <div class="kv"><span class="k">${ENGINE_CN[k] || k}</span>
-            <span class="v">${engDesc[k] || ''}</span>
-            <span class="st ${on ? 'on' : 'off'}">${on ? '● 就绪' : '○ 未配置'}</span></div>`).join('') : ''}
+          <div class="kv"><span class="k">${engineCN(k)}</span>
+            <span class="v">${engDesc(k)}</span>
+            <span class="st ${on ? 'on' : 'off'}">${on ? '● ' + T('ready') : '○ ' + T('not_set')}</span></div>`).join('') : ''}
       </div>
       <div class="set-card">
-        <h4>账号</h4>
-        <div class="kv"><span class="k">B站</span><span class="v">biliup 登录态</span>
-          <span class="st ${acc && acc.bilibili ? 'on' : 'warn'}">${acc && acc.bilibili ? '● 已登录' : '○ 待扫码'}</span></div>
-        <div class="kv"><span class="k">抖音</span><span class="v">浏览器登录态（暂无账号，暂缓）</span>
-          <span class="st off">○ 待登录</span></div>
-        <h4 style="margin-top:16px">通知</h4>
-        <div class="kv"><span class="k">pushme</span><span class="v">审核 / 发布 / 失败推手机</span>
-          <span class="st ${eng && eng.pushme ? 'on' : 'off'}">${eng && eng.pushme ? '● 已启用' : '○ 未启用'}</span></div>
+        <h4>${T('set_accounts')}</h4>
+        <div class="kv"><span class="k">${T('set_bili')}</span><span class="v">${T('set_bili_login')}</span>
+          <span class="st ${acc && acc.bilibili ? 'on' : 'warn'}">${acc && acc.bilibili ? '● ' + T('set_ok') : '○ ' + T('set_scan2')}</span></div>
+        <div class="kv"><span class="k">${T('set_douyin')}</span><span class="v">${T('set_douyin_acc')}</span>
+          <span class="st off">○ ${T('set_scan2')}</span></div>
+        <h4 style="margin-top:16px">${T('set_notify')}</h4>
+        <div class="kv"><span class="k">pushme</span><span class="v">${T('set_eng_pushme')}</span>
+          <span class="st ${eng && eng.pushme ? 'on' : 'off'}">${eng && eng.pushme ? '● ' + T('set_enabled') : '○ ' + T('set_disabled')}</span></div>
       </div>
       <div class="set-card" style="grid-column:1/-1">
-        <h4>常用命令</h4>
-        <div class="cmd"><b>clipstream init</b>                引擎体检与配置生成</div>
-        <div class="cmd"><b>clipstream serve</b>               启动本控制台（127.0.0.1:8899）</div>
-        <div class="cmd"><b>clipstream run -i &lt;URL或路径&gt;</b>        命令行直接跑任务</div>
-        <div class="cmd"><b>clipstream login --platform bilibili|douyin</b> [--account 别名]  平台扫码登录</div>
-        <div class="cmd"><b>clipstream status</b>              任务一览</div>
+        <h4>${T('set_cmds')}</h4>
+        <div class="cmd"><b>clipstream init</b>                ${T('set_cmd_init')}</div>
+        <div class="cmd"><b>clipstream serve</b>               ${T('set_cmd_serve')}</div>
+        <div class="cmd"><b>clipstream run -i &lt;URL或路径&gt;</b>        ${T('set_cmd_run')}</div>
+        <div class="cmd"><b>clipstream login --platform bilibili|douyin</b> ${T('set_cmd_login')}</div>
+        <div class="cmd"><b>clipstream status</b>              ${T('set_cmd_status')}</div>
+        <div style="margin-top:12px">
+          ${T('lang_label')}: <button class="chip ${LANG === 'zh' ? 'on' : ''}" onclick="setLang('zh')">中文</button>
+          <button class="chip ${LANG === 'en' ? 'on' : ''}" onclick="setLang('en')">EN</button>
+        </div>
       </div>
     </div>`;
 }
@@ -679,24 +787,24 @@ async function refreshBarrage() {
 }
 let barrageMinutes = 120;
 function statText() {
-  if (!barrageData.buckets || !barrageData.buckets.length) return '暂无弹幕数据（直播中才有）';
+  if (!barrageData.buckets || !barrageData.buckets.length) return T('barrage_nodata');
   const sum = barrageData.buckets.reduce((a, b) => a + b.count, 0);
   const n = barrageData.buckets.length;
   const max = Math.max(...barrageData.buckets.map(b => b.count));
   const t0 = barrageData.buckets[0].ts, t1 = barrageData.buckets[n - 1].ts;
-  return `共 ${sum} 条弹幕 · 峰值 ${max} 条/5s · 覆盖 ${fmtDur(t1 - t0)}`;
+  return `${T('barrage_total')} ${sum} · ${T('barrage_peak')} ${max} ${T('barrage_per5')} · ${T('barrage_cover')} ${fmtDur(t1 - t0)}`;
 }
 function renderBarrage(el) {
   const w = watches.find(x => x.room_id === barrageRoom);
   el.innerHTML = `
     <div class="feed">
       <select id="barrage-room" style="flex:1;max-width:360px;padding:9px 12px;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px">
-        ${watches.map(x => `<option value="${x.room_id}" ${x.room_id === barrageRoom ? 'selected' : ''}>房间 ${x.room_id} · ${esc(x.title || '')}</option>`).join('')}
+        ${watches.map(x => `<option value="${x.room_id}" ${x.room_id === barrageRoom ? 'selected' : ''}>${x.room_id} · ${esc(x.title || '')}</option>`).join('')}
       </select>
       <select id="barrage-min" style="padding:9px 12px;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px">
-        <option value="30">近 30 分</option><option value="120" ${barrageMinutes === 120 ? 'selected' : ''}>近 2 小时</option><option value="360" ${barrageMinutes === 360 ? 'selected' : ''}>近 6 小时</option>
+        <option value="30">${T('barrage_min30')}</option><option value="120" ${barrageMinutes === 120 ? 'selected' : ''}>${T('barrage_min120')}</option><option value="360" ${barrageMinutes === 360 ? 'selected' : ''}>${T('barrage_min360')}</option>
       </select>
-      <button onclick="refreshBarrage()">刷新</button>
+      <button onclick="refreshBarrage()">${T('btn_refresh')}</button>
     </div>
     <div class="ph-card">
       <div class="ph-name">弹幕密度曲线<span class="ph-tag">M4.2</span></div>
@@ -713,7 +821,7 @@ function renderBarrage(el) {
   const mins = $('#barrage-min');
   if (mins) mins.addEventListener('change', () => { barrageMinutes = +mins.value; refreshBarrage(); });
   if (barrageRoom) refreshBarrage();
-  else { const st = $('#barrage-stat'); if (st) st.textContent = '请选择直播间（录制中自动采集弹幕）'; }
+  else { const st = $('#barrage-stat'); if (st) st.textContent = T('barrage_ph'); }
 }
 function drawBarrage(canvas, buckets) {
   if (!canvas || !buckets || !buckets.length) { return; }
@@ -780,28 +888,28 @@ function platBadge(p) {
   return `<span class="plat" style="background:${m.color}22;color:${m.color};border:1px solid ${m.color}55">${m.cn}</span>`;
 }
 function tagChips(s) {
-  return (s || '').split(',').filter(Boolean).map(t => `<span class="tag">${esc(t)}</span>`).join('') || '<span class="tag dim">未设标签</span>';
+  return (s || '').split(',').filter(Boolean).map(t => `<span class="tag">${esc(t)}</span>`).join('') || `<span class="tag dim">${T('m5_unlabel')}</span>`;
 }
 function renderLabels(el) {
   // 账号卡
   const accCards = accounts.map(a => `
     <div class="acc-card">
       <div class="acc-top">${platBadge(a.platform)}<b>${esc(a.name)}</b>
-        <span class="acc-star" title="发布优先级">${'★'.repeat(Math.max(1, Math.min(5, Math.ceil((a.priority || 0) / 2))))}</span>
-        <span class="dot ${a.status === 'ok' ? 'ok' : 'warn'}" title="${a.status === 'ok' ? '登录态可用' : '待登录'}"></span>
-        <button class="del" title="删除账号" onclick="delAccount(${a.id})">✕</button></div>
+        <span class="acc-star" title="${T('m5_prio')}">${'★'.repeat(Math.max(1, Math.min(5, Math.ceil((a.priority || 0) / 2))))}</span>
+        <span class="dot ${a.status === 'ok' ? 'ok' : 'warn'}" title="${a.status === 'ok' ? T('m5_ok') : T('m5_login')}"></span>
+        <button class="del" title="${T('btn_del')}" onclick="delAccount(${a.id})">✕</button></div>
       <div class="acc-tags">${tagChips(a.labels)}</div>
-    </div>`).join('') || '<div class="hint">暂无矩阵账号 — 发布时按人设标签与优先级路由</div>';
+    </div>`).join('') || `<div class="hint">${T('m5_acc_empty')}</div>`;
 
   // 调度卡
   const schCards = schedules.map(sc => `
     <div class="acc-card">
       <div class="acc-top"><span class="time-badge">${esc(sc.time)}</span><span style="font-size:13px;color:var(--text)">${esc(sc.name)}</span>
-        <span class="badge ${sc.enabled ? 'running' : 'queued'}">${sc.enabled ? '● 启用' : '○ 停用'}</span>
+        <span class="badge ${sc.enabled ? 'running' : 'queued'}">${sc.enabled ? '● ' + T('m5_on') : '○ ' + T('m5_off')}</span>
         <button class="del" onclick="delSchedule(${sc.id})">✕</button></div>
-      <div class="acc-tags">${(sc.platforms || '全部平台').split(',').filter(Boolean).map(p => PLAT_META[p] ? platBadge(p) : `<span class="tag">${esc(p)}</span>`).join('')}
-        <span class="jtime" style="margin-left:auto">上次 ${sc.last_run ? fmtClock(sc.last_run) : '未触发'}</span></div>
-    </div>`).join('') || '<div class="hint">暂无调度 — 到点触发发布（完整错峰待接内容池与账号路由）</div>';
+      <div class="acc-tags">${(sc.platforms || '').split(',').filter(Boolean).map(p => PLAT_META[p] ? platBadge(p) : `<span class="tag">${esc(p)}</span>`).join('')}
+        <span class="jtime" style="margin-left:auto">${T('m5_last')} ${sc.last_run ? fmtClock(sc.last_run) : T('m5_never')}</span></div>
+    </div>`).join('') || `<div class="hint">${T('m5_sch_empty')}</div>`;
 
   // 平台多选 chips（表单用）
   const platChips = Object.entries(PLAT_META).map(([k, v]) =>
@@ -810,41 +918,41 @@ function renderLabels(el) {
   el.innerHTML = `
     <div class="m5-grid">
       <div class="m5-panel">
-        <h4>矩阵账号 <span class="hint">发布时按人设标签路由</span></h4>
+        <h4>${T('m5_acc')} <span class="hint">${T('m5_acc_hint')}</span></h4>
         <div class="m5-form">
-          <label>平台 <select id="acc-plat">
+          <label>${T('m5_plat')} <select id="acc-plat">
             ${Object.entries(PLAT_META).map(([k, v]) => `<option value="${k}">${v.cn}</option>`).join('')}
           </select></label>
-          <label>账号名 <input id="acc-name" placeholder="如：主号·电竞"></label>
-          <label>人设标签 <input id="acc-labels" placeholder="游戏,高燃,赛事（逗号分隔）"></label>
-          <label>优先级
+          <label>${T('m5_name')} <input id="acc-name" placeholder="${T('m5_acc_name_ph')}"></label>
+          <label>${T('m5_labels')} <input id="acc-labels" placeholder="${T('m5_labels_ph')}"></label>
+          <label>${T('m5_prio')}
             <select id="acc-prio">
-              ${[0,1,2,3,4,5,6,7,8,9].map(p => `<option value="${p}">${p}${p===5?'（默认）':''}</option>`).join('')}
+              ${[0,1,2,3,4,5,6,7,8,9].map(p => `<option value="${p}">${p}</option>`).join('')}
             </select></label>
-          <button onclick="addAccount()">添加账号</button>
+          <button onclick="addAccount()">${T('btn_add_acc')}</button>
         </div>
         <div class="acc-list">${accCards}</div>
       </div>
 
       <div class="set-panel">
-        <h4>发布调度 <span class="hint">每日到点触发（占位）</span></h4>
+        <h4>${T('m5_sch')} <span class="hint">${T('m5_sch_hint')}</span></h4>
         <div class="m5-form">
-          <label>调度名 <input id="sch-name" placeholder="如 晚高峰错峰"></label>
-          <label>触发时间 <input id="sch-time" type="time" value="21:00"></label>
-          <label>发布平台 <span class="m5-plats">${platChips}</span><span class="hint">当前支持 B站</span></label>
-          <button onclick="addSchedule()">创建调度</button>
+          <label>${T('m5_sch_name')} <input id="sch-name" placeholder="${T('m5_sch_name_ph')}"></label>
+          <label>${T('m5_time')} <input id="sch-time" type="time" value="21:00"></label>
+          <label>${T('m5_plat_sel')} <span class="m5-plats">${platChips}</span><span class="hint">${T('m5_plat_only')}</span></label>
+          <button onclick="addSchedule()">${T('btn_create_sch')}</button>
         </div>
         <div class="acc-list">${schCards}</div>
       </div>
 
       <div class="set-panel m5-rule">
-        <h4>路由规则（占位）</h4>
+        <h4>${T('m5_rule')}</h4>
         <div class="m5-steps">
-          <div class="step"><span>1</span>切片出审核台<span>标签</span></div>
+          <div class="step"><span>1</span>${T('m5_step1')}<span>${T('m5_step1b')}</span></div>
           <div class="arrow">→</div>
-          <div class="step"><span>2</span>匹配账号人设<span>优先级选号</span></div>
+          <div class="step"><span>2</span>${T('m5_step2')}<span>${T('m5_step2b')}</span></div>
           <div class="arrow">→</div>
-          <div class="step"><span>3</span>按调度错峰<span>多平台分发</span></div>
+          <div class="step"><span>3</span>${T('m5_step3')}<span>${T('m5_step3b')}</span></div>
         </div>
       </div>
     </div>`;
@@ -866,11 +974,11 @@ async function addAccount() {
     labels: $('#acc-labels').value.trim(),
     priority: parseInt($('#acc-prio').value) || 0,
   };
-  if (!payload.name) { alert('账号名必填'); return; }
-  try { await fetchJSON('/api/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); refreshMatrix(); } catch (e) { alert('添加账号失败：' + e.message); }
+  if (!payload.name) { alert(T('m5_acc_need')); return; }
+  try { await fetchJSON('/api/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); refreshMatrix(); } catch (e) { alert(T('m5_acc_need') + ': ' + e.message); }
 }
 async function delAccount(id) {
-  if (!confirm('删除该矩阵账号？')) return;
+  if (!confirm(T('m5_confirm_acc'))) return;
   try { await fetchJSON('/api/accounts/' + id, { method: 'DELETE' }); refreshMatrix(); } catch (e) { alert(e.message); }
 }
 async function addSchedule() {
@@ -879,11 +987,11 @@ async function addSchedule() {
     time: $('#sch-time').value || '21:00',
     platforms: schedPlats.join(','),
   };
-  if (!payload.name) { alert('调度名必填'); return; }
-  try { await fetchJSON('/api/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); refreshMatrix(); } catch (e) { alert('创建调度失败：' + e.message); }
+  if (!payload.name) { alert(T('m5_sch_need')); return; }
+  try { await fetchJSON('/api/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); refreshMatrix(); } catch (e) { alert(e.message); }
 }
 async function delSchedule(id) {
-  if (!confirm('删除该调度？')) return;
+  if (!confirm(T('m5_confirm_sch'))) return;
   try { await fetchJSON('/api/schedules/' + id, { method: 'DELETE' }); refreshMatrix(); } catch (e) { alert(e.message); }
 }
 /* ═══════════ 任务列表渲染（总览/任务中心共用）═══════════ */
@@ -920,7 +1028,7 @@ function renderJobList(container, list, expandable) {
         <span class="kind ${j.kind}">${j.kind}</span>
         <span class="jid">${j.id}</span>
         ${trackHTML(j)}
-        <span class="badge ${j.status}">${STATUS_CN[j.status] || j.status}</span>
+        <span class="badge ${j.status}">${statusCN(j.status)}</span>
         <span class="jtime">${fmtClock(j.createdAt)}</span>
         <span class="jinput" title="${esc(j.input)}">${esc(jobSummary(j))}</span>
         <button class="del" title="删除" onclick="event.stopPropagation();delJob('${j.id}')">✕</button>

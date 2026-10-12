@@ -2,7 +2,7 @@
 
 > 直播录制 · 智能切片 · 搬运下载 · 翻译配音 · 多平台自动发布，一体化流水线。
 
-**致敬与致谢**：本项目是 [Geniuszy/ChopperBot](https://github.com/Geniuszy/ChopperBot)（Apache-2.0，Java 直播切片机器人）的 **Go 重写与融合版**。模块地图（Board / Task Center / Live Follow / Barrage Curve / Label Manage 等）、双信号高光思路、多平台发布思想均借鉴自原版，特此致谢。原版源码仅供研读，未随本仓库分发。
+**致敬与致谢**：本项目是 [Geniusay/ChopperBot](https://github.com/Geniusay/ChopperBot)（Apache-2.0，Java 直播切片机器人）的 **Go 重写与融合版**。模块地图（Board / Task Center / Live Follow / Barrage Curve / Label Manage 等）、双信号高光思路、多平台发布思想均借鉴自原版，特此致谢。原版源码仅供研读，未随本仓库分发。
 
 ## 截图
 
@@ -101,7 +101,7 @@ docs/                   文档与截图
 
 [Apache-2.0](LICENSE)。
 
-- 本项目为 **ChopperBot 的独立重写**：代码为全新 Go 实现，模块设计 / 思路受 [Geniuszy/ChopperBot](https://github.com/Geniuszy/ChopperBot)（Apache-2.0）启发，特此致谢。
+- 本项目为 **ChopperBot 的独立重写**：代码为全新 Go 实现，模块设计 / 思路受 [Geniusay/ChopperBot](https://github.com/Geniusay/ChopperBot)（Apache-2.0）启发，特此致谢。
 - 依赖的引擎与库遵守各自许可证（biliup / whisper.cpp / yt-dlp / rod 等）。
 
 ## 反馈
