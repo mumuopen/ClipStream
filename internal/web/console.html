@@ -230,6 +230,63 @@
     .jinput, .jtime { display: none; }
     .strip { grid-auto-flow: row; grid-template-columns: repeat(3, 1fr); }
   }
+
+  /* M5 矩阵：账号与调度 */
+  .m5-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  .m5-panel, .set-panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px;
+  }
+  .m5-panel h4, .set-panel h4 {
+    font-size: 11px; letter-spacing: .16em; color: var(--muted); margin-bottom: 12px; font-weight: 600;
+  }
+  .m5-panel h4 .hint, .set-panel h4 .hint { letter-spacing: 0; font-weight: 400; margin-left: 8px; }
+  .m5-form { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: flex-end; }
+  .m5-form label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
+  .m5-form input, .m5-form select {
+    padding: 8px 10px; background: var(--card); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px; font-size: 13px;
+  }
+  .m5-form label:has(input[type=time]) { width: 96px; }
+  .m5-form button { padding: 8px 16px; }
+  .acc-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+  .acc-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  }
+  .acc-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .acc-top b { flex: 1; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .acc-star { color: var(--accent); font-size: 11px; letter-spacing: 1px; }
+  .acc-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .plat {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; cursor: default; line-height: 1.5;
+  }
+  .plat.sel { cursor: pointer; opacity: 1; border-width: 2px; }
+  .plat:not(.sel) { opacity: .45; cursor: pointer; }
+  .tag {
+    display: inline-block; padding: 2px 8px; border-radius: 6px;
+    background: var(--line); color: var(--muted); font-size: 11px;
+  }
+  .tag.dim { font-style: italic; }
+  .time-badge {
+    padding: 2px 10px; border-radius: 8px; font-size: 12px; font-weight: 700;
+    background: var(--accent); color: #101820;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.ok { background: #2fd67b; }
+  .dot.warn { background: var(--accent); }
+  .m5-rule { grid-column: 1 / -1; }
+  .m5-steps { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .m5-steps .step {
+    display: flex; align-items: center; gap: 8px; background: var(--card);
+    border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; font-size: 12px; color: var(--text);
+  }
+  .m5-steps .step span:first-child {
+    width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff;
+    display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700;
+  }
+  .m5-steps .step span:last-child { color: var(--muted); }
+  .m5-steps .arrow { color: var(--muted); font-size: 16px; }
+  @media (max-width: 900px) { .m5-grid { grid-template-columns: 1fr; } .m5-rule { grid-column: auto; } }
 </style>
 </head>
 <body>
@@ -708,67 +765,101 @@ function drawBarrage(canvas, buckets) {
 /* ═══════════ 页面：标签矩阵 / M5（矩阵账号 + 错峰调度）═══════════ */
 let accounts = [];
 let schedules = [];
+const PLAT_META = {
+  bilibili:    { cn: 'B站', color: '#fb7299' },
+  douyin:      { cn: '抖音', color: '#26f5fd' },
+  xiaohongshu: { cn: '小红书', color: '#ff2442' },
+  kuaishou:    { cn: '快手', color: '#ff4906' },
+};
+let schedPlats = ['bilibili'];
 async function refreshMatrix() {
   try { accounts = await fetchJSON('/api/accounts'); } catch (e) { accounts = []; }
   try { schedules = await fetchJSON('/api/schedules'); } catch (e) { schedules = []; }
   if (page === 'labels') renderLabels($('#page'));
 }
+function platBadge(p) {
+  const m = PLAT_META[p] || { cn: p, color: '#888' };
+  return `<span class="plat" style="background:${m.color}22;color:${m.color};border:1px solid ${m.color}55">${m.cn}</span>`;
+}
+function tagChips(s) {
+  return (s || '').split(',').filter(Boolean).map(t => `<span class="tag">${esc(t)}</span>`).join('') || '<span class="tag dim">未设标签</span>';
+}
 function renderLabels(el) {
-  const platCN = { bilibili: 'B站', douyin: '抖音', xiaohongshu: '小红书', kuaishou: '快手' };
-  const accRows = accounts.map(a => `
-    <div class="job-row" style="cursor:default">
-      <span class="kind publish">${platCN[a.platform] || a.platform}</span>
-      <span class="jid">${esc(a.name)}</span>
-      <span style="flex:1;font-size:13px;color:var(--muted)">标签：${esc(a.labels || '—')}</span>
-      <span class="jtime">优先级 ${a.priority}</span>
-      <span class="badge ${a.status === 'ok' ? 'running' : 'failed'}">${a.status === 'ok' ? '● 可用' : '○ 待登录'}</span>
-      <button class="del" onclick="delAccount(${a.id})">✕</button>
-    </div>`).join('');
-  const schRows = schedules.map(sc => `
-    <div class="job-row" style="cursor:default">
-      <span class="kind clips">每日 ${esc(sc.time)}</span>
-      <span style="flex:1;font-size:13px;color:var(--text)">${esc(sc.name)}</span>
-      <span class="jtime">平台 ${esc(sc.platforms || '全部')}</span>
-      <span class="jtime">账号 ${esc(sc.account_ids || '路由')}</span>
-      <span class="jtime">上次 ${sc.last_run ? fmtClock(sc.last_run) : '—'}</span>
-      <span class="badge ${sc.enabled ? 'running' : 'queued'}">${sc.enabled ? '● 启用' : '○ 停用'}</span>
-      <button class="del" onclick="delSchedule(${sc.id})">✕</button>
-    </div>`).join('');
+  // 账号卡
+  const accCards = accounts.map(a => `
+    <div class="acc-card">
+      <div class="acc-top">${platBadge(a.platform)}<b>${esc(a.name)}</b>
+        <span class="acc-star" title="发布优先级">${'★'.repeat(Math.max(1, Math.min(5, Math.ceil((a.priority || 0) / 2))))}</span>
+        <span class="dot ${a.status === 'ok' ? 'ok' : 'warn'}" title="${a.status === 'ok' ? '登录态可用' : '待登录'}"></span>
+        <button class="del" title="删除账号" onclick="delAccount(${a.id})">✕</button></div>
+      <div class="acc-tags">${tagChips(a.labels)}</div>
+    </div>`).join('') || '<div class="hint">暂无矩阵账号 — 发布时按人设标签与优先级路由</div>';
+
+  // 调度卡
+  const schCards = schedules.map(sc => `
+    <div class="acc-card">
+      <div class="acc-top"><span class="time-badge">${esc(sc.time)}</span><span style="font-size:13px;color:var(--text)">${esc(sc.name)}</span>
+        <span class="badge ${sc.enabled ? 'running' : 'queued'}">${sc.enabled ? '● 启用' : '○ 停用'}</span>
+        <button class="del" onclick="delSchedule(${sc.id})">✕</button></div>
+      <div class="acc-tags">${(sc.platforms || '全部平台').split(',').filter(Boolean).map(p => PLAT_META[p] ? platBadge(p) : `<span class="tag">${esc(p)}</span>`).join('')}
+        <span class="jtime" style="margin-left:auto">上次 ${sc.last_run ? fmtClock(sc.last_run) : '未触发'}</span></div>
+    </div>`).join('') || '<div class="hint">暂无调度 — 到点触发发布（完整错峰待接内容池与账号路由）</div>';
+
+  // 平台多选 chips（表单用）
+  const platChips = Object.entries(PLAT_META).map(([k, v]) =>
+    `<span class="plat ${schedPlats.includes(k) ? 'sel' : ''}" data-p="${k}" onclick="toggleSchedPlat('${k}')">${v.cn}</span>`).join('');
+
   el.innerHTML = `
-    <div class="set-grid">
-      <div class="set-card" style="grid-column:1/2">
-        <h4>矩阵账号</h4>
-        <div class="feed" style="flex-wrap:wrap">
-          <select id="acc-plat" style="background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px">
-            <option value="bilibili">B站</option><option value="douyin">抖音</option><option value="xiaohongshu">小红书</option><option value="kuaishou">快手</option>
-          </select>
-          <input id="acc-name" placeholder="账号名" style="flex:1;min-width:120px">
-          <input id="acc-labels" placeholder="人设标签,逗号分隔" style="flex:1;min-width:160px">
-          <input id="acc-prio" placeholder="优先级0-9" style="width:76px">
-          <button onclick="addAccount()">添加</button>
+    <div class="m5-grid">
+      <div class="m5-panel">
+        <h4>矩阵账号 <span class="hint">发布时按人设标签路由</span></h4>
+        <div class="m5-form">
+          <label>平台 <select id="acc-plat">
+            ${Object.entries(PLAT_META).map(([k, v]) => `<option value="${k}">${v.cn}</option>`).join('')}
+          </select></label>
+          <label>账号名 <input id="acc-name" placeholder="如：主号·电竞"></label>
+          <label>人设标签 <input id="acc-labels" placeholder="游戏,高燃,赛事（逗号分隔）"></label>
+          <label>优先级
+            <select id="acc-prio">
+              ${[0,1,2,3,4,5,6,7,8,9].map(p => `<option value="${p}">${p}${p===5?'（默认）':''}</option>`).join('')}
+            </select></label>
+          <button onclick="addAccount()">添加账号</button>
         </div>
-        ${accounts.length ? accRows : '<div class="hint">暂无矩阵账号 — 发布时按人设标签与优先级路由</div>'}
+        <div class="acc-list">${accCards}</div>
       </div>
-      <div class="set-card">
-        <h4>发布调度（占位）</h4>
-        <div class="feed" style="flex-wrap:wrap">
-          <input id="sch-name" placeholder="调度名（如 晚高峰错峰）" style="flex:1;min-width:140px">
-          <input id="sch-time" placeholder="HH:MM 每日" style="width:96px">
-          <input id="sch-plats" placeholder="平台,逗号分隔" style="flex:1;min-width:100px">
-          <button onclick="addSchedule()">创建</button>
+
+      <div class="set-panel">
+        <h4>发布调度 <span class="hint">每日到点触发（占位）</span></h4>
+        <div class="m5-form">
+          <label>调度名 <input id="sch-name" placeholder="如 晚高峰错峰"></label>
+          <label>触发时间 <input id="sch-time" type="time" value="21:00"></label>
+          <label>目标平台 <span class="m5-plats">${platChips}</span></label>
+          <button onclick="addSchedule()">创建调度</button>
         </div>
-        ${schedules.length ? schRows : '<div class="hint">暂无调度 — 到点触发发布（完整错峰待接入内容池与账号路由）</div>'}
+        <div class="acc-list">${schCards}</div>
       </div>
-      <div class="set-card" style="grid-column:1/-1">
-        <h4>路由规则（占位说明）</h4>
-        <div class="cmd">切片标签（如 搞笑/游戏/教学）→ 匹配账号人设标签 → 按优先级选号错峰发布</div>
-        <div class="cmd">调度到点后：取审核通过的切片内容池 → 按路由分发 → pushme 通知结果</div>
+
+      <div class="set-panel m5-rule">
+        <h4>路由规则（占位）</h4>
+        <div class="m5-steps">
+          <div class="step"><span>1</span>切片出审核台<span>标签</span></div>
+          <div class="arrow">→</div>
+          <div class="step"><span>2</span>匹配账号人设<span>优先级选号</span></div>
+          <div class="arrow">→</div>
+          <div class="step"><span>3</span>按调度错峰<span>多平台分发</span></div>
+        </div>
       </div>
     </div>`;
-  ['acc-plat', 'acc-name', 'acc-labels', 'acc-prio', 'sch-name', 'sch-time', 'sch-plats'].forEach(id => {
+  // 回车提交
+  ['acc-name', 'acc-labels', 'sch-name'].forEach(id => {
     const e = document.getElementById(id);
-    if (e) e.addEventListener('keydown', ev => { if (ev.key === 'Enter') ev.target === document.getElementById('acc-name') ? addAccount() : addSchedule(); });
+    if (e) e.addEventListener('keydown', ev => { if (ev.key === 'Enter') (id.startsWith('acc-') ? addAccount() : addSchedule()); });
   });
+}
+function toggleSchedPlat(p) {
+  const i = schedPlats.indexOf(p);
+  i >= 0 ? schedPlats.splice(i, 1) : schedPlats.push(p);
+  renderLabels($('#page'));
 }
 async function addAccount() {
   const payload = {
@@ -777,7 +868,7 @@ async function addAccount() {
     labels: $('#acc-labels').value.trim(),
     priority: parseInt($('#acc-prio').value) || 0,
   };
-  if (!payload.name) return;
+  if (!payload.name) { alert('账号名必填'); return; }
   try { await fetchJSON('/api/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); refreshMatrix(); } catch (e) { alert('添加账号失败：' + e.message); }
 }
 async function delAccount(id) {
@@ -787,17 +878,16 @@ async function delAccount(id) {
 async function addSchedule() {
   const payload = {
     name: $('#sch-name').value.trim(),
-    time: $('#sch-time').value.trim(),
-    platforms: $('#sch-plats').value.trim(),
+    time: $('#sch-time').value || '21:00',
+    platforms: schedPlats.join(','),
   };
-  if (!payload.name || !/^\d{2}:\d{2}$/.test(payload.time)) { alert('调度名与 HH:MM 时间必填'); return; }
+  if (!payload.name) { alert('调度名必填'); return; }
   try { await fetchJSON('/api/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); refreshMatrix(); } catch (e) { alert('创建调度失败：' + e.message); }
 }
 async function delSchedule(id) {
   if (!confirm('删除该调度？')) return;
   try { await fetchJSON('/api/schedules/' + id, { method: 'DELETE' }); refreshMatrix(); } catch (e) { alert(e.message); }
 }
-
 /* ═══════════ 任务列表渲染（总览/任务中心共用）═══════════ */
 function trackHTML(job) {
   const stages = KIND_STAGES[job.kind] || KIND_STAGES.clips;

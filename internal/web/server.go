@@ -285,6 +285,9 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
+	// 控制台内嵌 HTML 每次取新：禁止缓存（页面 JS 迭代频繁，浏览器缓存旧版会造成误判）
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(consoleHTML))
 }
