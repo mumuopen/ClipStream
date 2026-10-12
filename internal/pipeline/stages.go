@@ -8,7 +8,11 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"chopperbot/internal/core"
 	"chopperbot/internal/engine"
@@ -73,7 +77,119 @@ func stageTranscribe(ctx context.Context, job *core.Job, env *Env) error {
 	return nil
 }
 
-// ---- highlight ----
+// ---- highlight（双信号：ASR 转写 + 弹幕密度）----
+
+// Hotspot 弹幕热点区间（相对视频时间轴，秒）
+type Hotspot struct {
+	Start   float64 `json:"start"`
+	End     float64 `json:"end"`
+	Density float64 `json:"density"` // 区间内最高弹幕/5s
+}
+
+// liveSegRe 直播分段路径：data/live/<roomID>_<yyyyMMdd_HHmmss>/seg_<NNN>.flv
+var liveSegRe = regexp.MustCompile(`[/\\]live[/\\](\d+)_(\d{8}_\d{6})[/\\]seg_(\d+)\.flv$`)
+
+// barrageHotspots 从视频路径关联直播会话，拉取弹幕密度桶并计算热点区间。
+// 普通视频（非 data/live/ 分段）返回空，行为与原管线一致。
+func barrageHotspots(ctx context.Context, job *core.Job, env *Env) ([]Hotspot, error) {
+	videoPath := job.ParamsMap()["video"]
+	m := liveSegRe.FindStringSubmatch(videoPath)
+	if len(m) != 4 {
+		return nil, nil // 非直播分段，无弹幕信号
+	}
+	roomID := m[1]
+	startUnix, err := time.ParseInLocation("20060102_150405", m[2], time.Local)
+	if err != nil {
+		return nil, nil
+	}
+	segIdx, _ := strconv.Atoi(m[3])
+	segDur := int64(env.Cfg.Live.SegmentSec)
+	if segDur <= 0 {
+		segDur = 600
+	}
+	winStart := startUnix.Unix() + int64(segIdx)*segDur
+	winEnd := winStart + segDur
+
+	buckets, err := env.Store.ListBarrage(roomID, winStart)
+	if err != nil {
+		return nil, err
+	}
+	if len(buckets) < 3 {
+		return nil, nil // 弹幕太稀疏，无热点意义
+	}
+	type pt struct {
+		rel float64 // 相对窗口起点秒
+		cnt int
+	}
+	var pts []pt
+	var sum int
+	for _, b := range buckets {
+		if b.TS < winStart || b.TS >= winEnd {
+			continue
+		}
+		pts = append(pts, pt{rel: float64(b.TS-winStart) + 2.5, cnt: b.Count})
+		sum += b.Count
+	}
+	if len(pts) < 3 {
+		return nil, nil
+	}
+	avg := float64(sum) / float64(len(pts))
+	threshold := avg * 1.6 // 显著高于平均才算热点
+	if threshold < 4 {
+		threshold = 4
+	}
+	// 合并相邻热点桶（间隔 ≤12s 视为同一波）
+	sort.Slice(pts, func(i, j int) bool { return pts[i].rel < pts[j].rel })
+	var hotspots []Hotspot
+	cur := Hotspot{}
+	open := false
+	for _, p := range pts {
+		if float64(p.cnt) < threshold {
+			if open {
+				hotspots = append(hotspots, cur)
+				open = false
+			}
+			continue
+		}
+		if !open {
+			cur = Hotspot{Start: p.rel, End: p.rel + 5, Density: float64(p.cnt)}
+			open = true
+		} else if p.rel-cur.End <= 12 {
+			cur.End = p.rel + 5
+			if float64(p.cnt) > cur.Density {
+				cur.Density = float64(p.cnt)
+			}
+		} else {
+			hotspots = append(hotspots, cur)
+			cur = Hotspot{Start: p.rel, End: p.rel + 5, Density: float64(p.cnt)}
+		}
+	}
+	if open {
+		hotspots = append(hotspots, cur)
+	}
+	// 过滤过短/过长热点（对齐最终切片过滤 8-300s）
+	var kept []Hotspot
+	for _, h := range hotspots {
+		if d := h.End - h.Start; d >= 8 && d <= 300 {
+			kept = append(kept, h)
+		}
+	}
+	return kept, nil
+}
+
+// hotspotsToClips 弹幕热点直接作为高光候选（无 LLM 时的规则回退）
+func hotspotsToClips(hs []Hotspot) []engine.Clip {
+	var clips []engine.Clip
+	for _, h := range hs {
+		clips = append(clips, engine.Clip{
+			Start: h.Start,
+			End:   h.End,
+			Title: fmt.Sprintf("弹幕爆点 %.0f 条/5s", h.Density),
+			Score: math.Min(99, h.Density*10),
+		})
+	}
+	return clips
+}
 
 func stageHighlight(ctx context.Context, job *core.Job, env *Env) error {
 	var segs []engine.Segment
@@ -90,15 +206,25 @@ func stageHighlight(ctx context.Context, job *core.Job, env *Env) error {
 
 	var clips []engine.Clip
 	fromLLM := false
+	// 双信号：先取弹幕热点（直播分段专属，普通视频为空）
+	hotspots, herr := barrageHotspots(ctx, job, env)
+	if herr != nil {
+		env.log(job, "弹幕热点分析失败（忽略，继续单信号）：%v", herr)
+	}
 	if len(segs) > 0 && env.LLM != nil && env.LLM.Available() {
-		llmClips, err := llmHighlight(ctx, env.LLM, segs)
+		llmClips, err := llmHighlight(ctx, env.LLM, segs, hotspots)
 		if err != nil {
 			env.log(job, "LLM 高光分析失败（回退等分切片）：%v", err)
 		} else if len(llmClips) > 0 {
 			clips = llmClips
 			fromLLM = true
-			env.log(job, "LLM 高光分析完成：%d 段候选", len(llmClips))
+			env.log(job, "LLM 高光分析完成：%d 段候选（弹幕热点参考 %d 个）", len(llmClips), len(hotspots))
 		}
+	}
+	// 无 LLM/LLM 失败但有弹幕热点：弹幕规则回退（纯等分仅剩最终兜底）
+	if len(clips) == 0 && len(hotspots) > 0 {
+		clips = hotspotsToClips(hotspots)
+		env.log(job, "使用弹幕热点切片：%d 段（无 LLM 回退）", len(clips))
 	}
 	if len(clips) == 0 {
 		if duration <= 0 {
@@ -131,8 +257,8 @@ func stageHighlight(ctx context.Context, job *core.Job, env *Env) error {
 	return nil
 }
 
-// llmHighlight 用 LLM 从转写文本中选出高光区间
-func llmHighlight(ctx context.Context, llm *engine.LLMClient, segs []engine.Segment) ([]engine.Clip, error) {
+// llmHighlight 用 LLM 从转写文本 + 弹幕热点（双信号）选出高光区间
+func llmHighlight(ctx context.Context, llm *engine.LLMClient, segs []engine.Segment, hotspots []Hotspot) ([]engine.Clip, error) {
 	var sb strings.Builder
 	for _, s := range segs {
 		text := strings.TrimSpace(s.Text)
@@ -145,12 +271,31 @@ func llmHighlight(ctx context.Context, llm *engine.LLMClient, segs []engine.Segm
 		}
 	}
 	system := `你是一个短视频高光剪辑师。根据带时间戳的直播/视频转写文本，挑选最有传播潜力的高光片段（爆点、金句、名场面、高能操作）。只输出 JSON 数组，不要任何其他文字，格式：[{"start":秒,"end":秒,"title":"爆款标题","score":0-100}]。要求：每段 15-120 秒，区间互不重叠，最多 6 段，时间必须严格取自文本时间戳。`
-	reply, err := llm.Chat(ctx, system, "转写文本：\n"+sb.String())
+	user := "转写文本：\n" + sb.String()
+	// 双信号：弹幕互动峰值作为第二信号注入（观众真实反应验证过的效果点，优先采纳）
+	if len(hotspots) > 0 {
+		var hs strings.Builder
+		for _, h := range hotspots {
+			fmt.Fprintf(&hs, "[%.1f-%.1f] 平均 %.0f 条/5s\n", h.Start, h.End, h.Density)
+		}
+		system += ` 补充信号：以下为观众弹幕互动高峰区间（同一视频时间轴），代表真实效果爆点，命中区间优先纳入（可微调起止）。`
+		user := "转写文本：\n" + sb.String() + "\n\n观众互动高峰：\n" + hs.String()
+		reply, err := llm.Chat(ctx, system, user)
+		if err != nil {
+			return nil, err
+		}
+		return parseClipsReply(reply)
+	}
+	reply, err := llm.Chat(ctx, system, user)
 	if err != nil {
 		return nil, err
 	}
+	return parseClipsReply(reply)
+}
+
+// parseClipsReply 解析 LLM 输出的 JSON 数组（去 ```json 包裹）
+func parseClipsReply(reply string) ([]engine.Clip, error) {
 	reply = strings.TrimSpace(reply)
-	// 去掉可能包裹的 ```json ... ```
 	if i := strings.Index(reply, "["); i >= 0 {
 		reply = reply[i:]
 	}
