@@ -86,7 +86,7 @@ func (s *Store) migrate() error {
 		return err
 	}
 	// 发布调度（M5：定时错峰占位）
-	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS schedules (
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schedules (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name TEXT NOT NULL,
 		time TEXT NOT NULL,          -- HH:MM 每日触发
@@ -95,6 +95,21 @@ func (s *Store) migrate() error {
 		labels TEXT NOT NULL DEFAULT '',  -- 内容标签筛选（逗号分隔）
 		enabled INTEGER NOT NULL DEFAULT 1,
 		last_run INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER
+	)`); err != nil {
+		return err
+	}
+	// 内容池（M5：审核通过待发布的切片）
+	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS content_pool (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		source_job TEXT NOT NULL,    -- 源剪辑任务 ID
+		clip TEXT NOT NULL,          -- 切片相对路径 clips/clip_01.mp4
+		cover TEXT NOT NULL DEFAULT '',
+		title TEXT NOT NULL,
+		desc TEXT NOT NULL DEFAULT '',
+		tags TEXT NOT NULL DEFAULT '',       -- 内容标签（逗号分隔，用于账号路由）
+		platforms TEXT NOT NULL DEFAULT '',  -- 目标平台（逗号分隔，空=全部）
+		status TEXT NOT NULL DEFAULT 'pending', -- pending | dispatched | failed
 		created_at INTEGER
 	)`)
 	return err
@@ -397,5 +412,70 @@ func (s *Store) UpdateScheduleLastRun(id int64) error {
 
 func (s *Store) DeleteSchedule(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM schedules WHERE id=?`, id)
+	return err
+}
+
+// ── 内容池（M5：审核通过待发布）──
+
+// PoolItem 内容池条目（待发布切片）
+type PoolItem struct {
+	ID        int64  `json:"id"`
+	SourceJob string `json:"source_job"`
+	Clip      string `json:"clip"`
+	Cover     string `json:"cover"`
+	Title     string `json:"title"`
+	Desc      string `json:"desc"`
+	Tags      string `json:"tags"`      // 内容标签（逗号分隔）
+	Platforms string `json:"platforms"` // 目标平台（逗号分隔，空=全部）
+	Status    string `json:"status"`    // pending | dispatched | failed
+	CreatedAt int64  `json:"created_at"`
+}
+
+// AddPoolItem 切片入池（审核通过）
+func (s *Store) AddPoolItem(it *PoolItem) (int64, error) {
+	if it.Status == "" {
+		it.Status = "pending"
+	}
+	res, err := s.db.Exec(`INSERT INTO content_pool (source_job,clip,cover,title,desc,tags,platforms,status,created_at)
+		VALUES (?,?,?,?,?,?,?,?,?)`,
+		it.SourceJob, it.Clip, it.Cover, it.Title, it.Desc, it.Tags, it.Platforms, it.Status, time.Now().Unix())
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// ListPoolItems 列内容池（默认只看待发布）
+func (s *Store) ListPoolItems(all bool) ([]*PoolItem, error) {
+	q := `SELECT id,source_job,clip,cover,title,desc,tags,platforms,status,created_at FROM content_pool`
+	if !all {
+		q += ` WHERE status='pending'`
+	}
+	q += ` ORDER BY id`
+	rows, err := s.db.Query(q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*PoolItem
+	for rows.Next() {
+		var it PoolItem
+		if err := rows.Scan(&it.ID, &it.SourceJob, &it.Clip, &it.Cover, &it.Title, &it.Desc, &it.Tags, &it.Platforms, &it.Status, &it.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &it)
+	}
+	return out, rows.Err()
+}
+
+// SetPoolItemStatus 标记池条目状态（dispatched/failed）
+func (s *Store) SetPoolItemStatus(id int64, status string) error {
+	_, err := s.db.Exec(`UPDATE content_pool SET status=? WHERE id=?`, status, id)
+	return err
+}
+
+// DeletePoolItem 删除池条目
+func (s *Store) DeletePoolItem(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM content_pool WHERE id=?`, id)
 	return err
 }

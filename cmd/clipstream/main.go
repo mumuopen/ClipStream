@@ -291,8 +291,8 @@ func doServe(cfgPath string) error {
 	return httpSrv.Serve(listener)
 }
 
-// scheduleTicker M5 发布调度占位：每分钟检查一次每日 HH:MM 调度，
-// 到点且当天未执行则登记 last_run 并打日志（完整错峰发布留待接入内容池与账号路由）
+// scheduleTicker M5 发布调度：每分钟检查每日 HH:MM 调度，到点且当天未执行则
+// 取内容池待发布条目 → 按账号路由（平台+标签匹配+优先级）→ 创建 publish 任务 → pushme 通知
 func scheduleTicker(app *app) {
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
@@ -307,19 +307,135 @@ func scheduleTicker(app *app) {
 			if !sc.Enabled || sc.Time != hhmm {
 				continue
 			}
-			// 当天已执行过则跳过（last_run 与今天同一天）
+			// 当天已执行过则跳过
 			if sc.LastRun > 0 && time.Unix(sc.LastRun, 0).Format("2006-01-02") == now.Format("2006-01-02") {
 				continue
 			}
 			_ = app.store.UpdateScheduleLastRun(sc.ID)
-			fmt.Printf("[schedule] 触发《%s》（每日 %s，平台 %s，账号 %s）——占位：待接入内容池与账号路由\n",
-				sc.Name, sc.Time, or(sc.Platforms, "全部"), or(sc.AccountIDs, "按路由"))
+			dispatchSchedule(app, sc)
 		}
 	}
 	check()
 	for range t.C {
 		check()
 	}
+}
+
+// dispatchSchedule 调度触发：取内容池 → 账号路由 → 逐条创建发布任务
+// 平台筛选优先级：调度.Platforms > 条目.Platforms > 全部配置平台（当前 bilibili）
+func dispatchSchedule(app *app, sc *store.Schedule) {
+	items, err := app.store.ListPoolItems(false)
+	if err != nil {
+		fmt.Printf("[schedule] 《%s》读取内容池失败: %v\n", sc.Name, err)
+		return
+	}
+	if len(items) == 0 {
+		fmt.Printf("[schedule] 《%s》触发（每日 %s）——内容池为空，无待发布内容\n", sc.Name, sc.Time)
+		return
+	}
+
+	accounts, _ := app.store.ListAccounts()
+	dispatched, skipped := 0, 0
+	for _, it := range items {
+		// 平台取交集：调度限定 > 条目携带；都空则默认 bilibili
+		platforms := sc.Platforms
+		if platforms == "" {
+			platforms = it.Platforms
+		}
+		if platforms == "" {
+			platforms = "bilibili"
+		}
+		platSet := commaSet(platforms)
+
+		// 账号路由：同平台 + 标签交集（条目 tags 命中账号人设标签）+ 可用状态 → 优先级降序取最高
+		acc := routeAccount(accounts, platSet, it.Tags)
+		if acc == nil {
+			// 无匹配账号：跳过并标记（不 fail，等账号补齐后下轮调度可重新入池场景少，直接留池）
+			skipped++
+			fmt.Printf("[schedule] 《%s》条目 %s《%s》无匹配账号（标签 %s），暂留池中\n", sc.Name, it.Clip, it.Title, it.Tags)
+			continue
+		}
+
+		req := map[string]any{
+			"source_job": it.SourceJob,
+			"clip":       it.Clip,
+			"cover":      it.Cover,
+			"title":      it.Title,
+			"desc":       it.Desc,
+			"tags":       commaSlice(it.Tags),
+			"platforms":  platSlice(platforms), // Request.platforms 是 []string，不能传 map
+			"account":    acc.Name,
+			"dry_run":    false,
+		}
+		reqJSON, _ := json.Marshal(req)
+		job, err := app.newJob(string(reqJSON), "publish")
+		if err != nil {
+			fmt.Printf("[schedule] 《%s》创建发布任务失败 %s: %v\n", sc.Name, it.Clip, err)
+			continue
+		}
+		app.runner.Enqueue(job.ID)
+		_ = app.store.SetPoolItemStatus(it.ID, "dispatched")
+		dispatched++
+		fmt.Printf("[schedule] 《%s》已派发：《%s》→ 账号「%s」(优先级 %d) 任务 %s\n",
+			sc.Name, it.Title, acc.Name, acc.Priority, job.ID)
+	}
+	if dispatched+skipped > 0 {
+		app.notifier.Notify("ClipStream 调度派发",
+			fmt.Sprintf("《%s》（每日 %s）：派发 %d 条，%d 条无匹配账号暂留池", sc.Name, sc.Time, dispatched, skipped))
+	}
+}
+
+// routeAccount 账号路由：平台匹配 + 标签命中（任一）+ 状态 ok，按优先级降序取第一个
+func routeAccount(accounts []*store.Account, platforms map[string]bool, itemTags string) *store.Account {
+	itemTagSet := commaSet(itemTags)
+	var best *store.Account
+	for _, a := range accounts {
+		if a.Status != "ok" || !platforms[a.Platform] {
+			continue
+		}
+		// 标签匹配：条目标签与账号人设标签有交集（账号无标签视为通配）
+		accTags := commaSet(a.Labels)
+		if len(accTags) > 0 && !hasIntersection(accTags, itemTagSet) {
+			continue
+		}
+		if best == nil || a.Priority > best.Priority {
+			best = a
+		}
+	}
+	return best
+}
+
+func commaSet(s string) map[string]bool {
+	out := map[string]bool{}
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out[p] = true
+		}
+	}
+	return out
+}
+
+func commaSlice(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func platSlice(s string) []string {
+	return commaSlice(s)
+}
+
+func hasIntersection(a, b map[string]bool) bool {
+	for k := range a {
+		if b[k] {
+			return true
+		}
+	}
+	return false
 }
 
 func or(s, d string) string {

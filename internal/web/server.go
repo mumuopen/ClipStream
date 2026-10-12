@@ -59,6 +59,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/schedules", s.listSchedules)
 	mux.HandleFunc("POST /api/schedules", s.createSchedule)
 	mux.HandleFunc("DELETE /api/schedules/{id}", s.deleteSchedule)
+	// M5 内容池（审核通过待发布）
+	mux.HandleFunc("GET /api/pool", s.listPool)
+	mux.HandleFunc("POST /api/pool", s.addPool)
+	mux.HandleFunc("DELETE /api/pool/{id}", s.deletePool)
 	return logRequest(mux)
 }
 
@@ -138,6 +142,49 @@ func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err := s.store.DeleteSchedule(id); err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, map[string]string{"ok": "true"})
+}
+
+// ── 内容池 API（M5：审核通过入池，调度到点派发）──
+
+func (s *Server) listPool(w http.ResponseWriter, r *http.Request) {
+	all := r.URL.Query().Get("all") == "1"
+	items, err := s.store.ListPoolItems(all)
+	if err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	if items == nil {
+		items = []*store.PoolItem{}
+	}
+	writeJSON(w, items)
+}
+
+func (s *Server) addPool(w http.ResponseWriter, r *http.Request) {
+	var it store.PoolItem
+	if err := json.NewDecoder(r.Body).Decode(&it); err != nil {
+		httpError(w, 400, "参数错误: "+err.Error())
+		return
+	}
+	if it.SourceJob == "" || it.Clip == "" {
+		httpError(w, 400, "source_job 与 clip 必填")
+		return
+	}
+	id, err := s.store.AddPoolItem(&it)
+	if err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	it.ID = id
+	writeJSON(w, it)
+}
+
+func (s *Server) deletePool(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err := s.store.DeletePoolItem(id); err != nil {
 		httpError(w, 500, err.Error())
 		return
 	}

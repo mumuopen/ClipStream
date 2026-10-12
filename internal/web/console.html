@@ -332,6 +332,22 @@
   </div>
 </div>
 
+<!-- 入池弹窗（错峰发布） -->
+<div id="pool-bg" class="modal-bg" onclick="if(event.target===this)closePoolModal()">
+  <div class="modal">
+    <h3>入池待发（错峰调度）</h3>
+    <div id="pool-meta" class="mmeta"></div>
+    <label>标题<input type="text" id="pool-title" maxlength="80"></label>
+    <label>描述<textarea id="pool-desc" rows="2"></textarea></label>
+    <label>内容标签（逗号分隔，用于匹配账号人设路由，如：游戏,高燃）<input type="text" id="pool-tags" placeholder="游戏,高燃"></label>
+    <div class="hint">入池后由「标签矩阵」的发布调度在设定时间自动派发：按标签匹配账号、按优先级选号、pushme 通知结果。</div>
+    <div class="modal-actions">
+      <button class="ghost" onclick="closePoolModal()">取消</button>
+      <button class="go" onclick="submitPool()">入池</button>
+    </div>
+  </div>
+</div>
+
 <!-- 字幕弹窗 -->
 <div id="sub-bg" class="modal-bg" onclick="if(event.target===this)closeSubModal()">
   <div class="modal">
@@ -873,15 +889,19 @@ function drawBarrage(canvas, buckets) {
 /* ═══════════ 页面：标签矩阵 / M5（矩阵账号 + 错峰调度）═══════════ */
 let accounts = [];
 let schedules = [];
-const PLAT_META = {
-  bilibili: { cn: 'B站', color: '#fb7299' },
-  // 其他平台（抖音/小红书/快手）尚未接入，按需在 issue 中提出
-};
-let schedPlats = ['bilibili'];
+let poolItems = [];
 async function refreshMatrix() {
   try { accounts = await fetchJSON('/api/accounts'); } catch (e) { accounts = []; }
   try { schedules = await fetchJSON('/api/schedules'); } catch (e) { schedules = []; }
+  try { poolItems = await fetchJSON('/api/pool'); } catch (e) { poolItems = []; }
   if (page === 'labels') renderLabels($('#page'));
+}
+function platChipsFor(plats) {
+  return (plats || '').split(',').filter(Boolean).map(p => platBadge(p)).join('') || '<span class="tag">全部</span>';
+}
+async function delPoolItem(id) {
+  if (!confirm('移出内容池？（不影响源切片）')) return;
+  try { await fetchJSON('/api/pool/' + id, { method: 'DELETE' }); refreshMatrix(); } catch (e) { alert(e.message); }
 }
 function platBadge(p) {
   const m = PLAT_META[p] || { cn: p, color: '#888' };
@@ -943,6 +963,20 @@ function renderLabels(el) {
           <button onclick="addSchedule()">${T('btn_create_sch')}</button>
         </div>
         <div class="acc-list">${schCards}</div>
+      </div>
+
+      <div class="set-panel m5-rule">
+        <h4>内容池（待发布 / Content Pool）</h4>
+        <div class="acc-list">
+          ${(poolItems||[]).map(it => `
+          <div class="acc-card">
+            <div class="acc-top"><span class="time-badge">待发</span><b title="${esc(it.clip)}">${esc(it.title)}</b>
+              <span class="jtime">${platChipsFor(it.platforms)}</span>
+              <span class="tag">${esc(it.tags || '无标签')}</span>
+              <button class="del" title="移出池" onclick="delPoolItem(${it.id})">✕</button></div>
+            <div class="acc-tags"><span class="jtime">${esc(it.source_job)} / ${esc(it.clip)}</span></div>
+          </div>`).join('') || '<div class="hint">池空 — 审核台点「入池待发」，调度到点自动按账号路由发布</div>'}
+        </div>
       </div>
 
       <div class="set-panel m5-rule">
@@ -1088,8 +1122,9 @@ function clipHTML(job, c, idx) {
   const acts = job.status === 'review' ? `
     <div class="acts">
       <button class="b-pub" onclick="openPubModal('${job.id}', ${idx})">发布</button>
+      <button class="b-pool" onclick='openPoolModal(${JSON.stringify({ jobId: job.id, clip: { file: c.file, cover: c.cover || '', title: c.title } })})'>入池待发</button>
       <button class="b-sub" onclick="openSubModal('${job.id}', ${idx})">加字幕</button>
-      <button class="b-dub" onclick='openDubModal(${JSON.stringify({ jobId: job.id, clip: { file: c.file, cover: c.cover || '', title: c.title } })})">配音</button>
+      <button class="b-dub" onclick='openDubModal(${JSON.stringify({ jobId: job.id, clip: { file: c.file, cover: c.cover || '', title: c.title } })})'>配音</button>
     </div>` : '';
   return `<div class="clip">
     <video controls preload="metadata" src="${file}" ${cover ? `poster="${cover}"` : ''}></video>
@@ -1194,6 +1229,35 @@ async function submitPublish() {
     await fetchJSON('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'publish', input: JSON.stringify(req) }) });
     closePubModal(); refresh();
   } catch (e) { alert('创建发布任务失败：' + e.message); }
+}
+/* ═══════════ 入池（错峰调度）═══════════ */
+let poolCtx = null;
+function openPoolModal(ctx) {
+  poolCtx = ctx;
+  $('#pool-meta').textContent = ctx.clip.file + (ctx.clip.cover ? ' ｜ 封面 ' + ctx.clip.cover : ' ｜ 无封面');
+  $('#pool-title').value = ctx.clip.title || '';
+  $('#pool-desc').value = '';
+  $('#pool-tags').value = '';
+  $('#pool-bg').style.display = 'flex';
+}
+function closePoolModal() { $('#pool-bg').style.display = 'none'; poolCtx = null; }
+async function submitPool() {
+  if (!poolCtx) return;
+  const item = {
+    source_job: poolCtx.jobId,
+    clip: poolCtx.clip.file,
+    cover: poolCtx.clip.cover || '',
+    title: $('#pool-title').value.trim() || (poolCtx.clip.title || ''),
+    desc: $('#pool-desc').value.trim(),
+    tags: $('#pool-tags').value.trim(),
+    platforms: 'bilibili',
+  };
+  if (!item.title) { alert('标题必填'); return; }
+  try {
+    await fetchJSON('/api/pool', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item) });
+    closePoolModal(); refreshMatrix();
+    alert('已入池：调度到点将自动按账号路由发布');
+  } catch (e) { alert('入池失败：' + e.message); }
 }
 function openSubModal(jobId, idx) {
   const c = detailClips[idx]; if (!c) return;
