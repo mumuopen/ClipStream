@@ -1,50 +1,66 @@
 package live
 
-// 虎牙弹幕采集器（M4.2 弹幕）：TACG 协议 WS 直连
-// 血统：对齐 simple_live_reborn（2026-05）的 HuyaDanmaku——新协议：
-//   - 连接 wss://wsapi.huya.com?baseinfo=<base64>（baseinfo 为 TARS 编码的 uid/guid/ua 等，
-//     旧 cdnws 入口已被服务器静默拒绝——2026-05 协议升级）
-//   - 连接后发 join：外层 {cmd:1, body:内层}，内层 {ayyuid,true,"","",topSid,sid,0,0}
-//   - 心跳 60s：固定字节 base64 "ABQdAAwsNgBM"
-//   - 消息：外层 tag0 int，type==7 推送（tag1 bytes=HYPushMessage；uri 1400=弹幕/8006=在线）
-//   - 弹幕按 5s 桶聚合密度（与 B站采集器同契约回调）
+// 虎牙弹幕采集器（M4.2）：直连 va.huya.com 边缘节点 + 页面同款订阅协议。
+//
+// 2026-10-12 Playwright 页面抓包 + Go 复刻实测定案（替换此前失败的 wsapi 方案）：
+//   1. 连接 wss://<hash>-ws.va.huya.com/?baseinfo=<TARS>——baseinfo 必须是页面 JS 同款
+//      （虎牙前端 tars 变体：type6=字符串；结构含 struct 包裹/guid/UA/HUYA&ZH&2052/
+//      时间戳数字段/HUYA_NET map），自拼标准 tars 会被服务器静默忽略（零响应根因）。
+//   2. 连上后发 "live:0" 订阅帧（页面照抄字节）。
+//   3. 再发频道订阅帧：09 00 02 06 <len>"live:<uid>" 06 <len>"chat:<uid>" 16 00 …（uid=主播号）。
+//   4. 15s 心跳（9B 固定字节）。
+//   5. 推送帧里宽松提取 UTF-8 中文即弹幕文本（密度桶只需计数，无需完整解析 wup 结构）。
+// 实测 room 441195（胖炸）：30s 96 帧弹幕。
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/hex"
+	"crypto/tls"
 	"fmt"
-	"math/rand"
-	"net/http"
-	"net/url"
+	"net"
+	"strconv"
 	"sync/atomic"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/gobwas/ws"
+	"github.com/gobwas/ws/wsutil"
 )
 
-// 2026 新协议常量（对齐 simple_live_reborn）
-const (
-	huyaDanmuHost = "wsapi.huya.com"
-	huyaDanmuUA   = "webh5&2604281646&websocket" // webDanmakuUA（服务端校验）
-)
+// va 边缘节点候选（页面实测可用，逐个尝试）
+var huyaVaHosts = []string{
+	"ab0f2428-ws.va.huya.com",
+	"ab0f242a-ws.va.huya.com",
+	"3ad7b133-ws.va.huya.com",
+	"b461f4a4-ws.va.huya.com",
+}
 
-var (
-	huyaPushType  = int64(7) // 外层 tag0 值：推送消息
-	huyaDanmuURI  = int64(1400)
-	huyaOnlineURI = int64(8006)
-	huyaHeartbeatB = func() []byte {
-		b, _ := base64.StdEncoding.DecodeString("ABQdAAwsNgBM")
-		return b
-	}()
-)
+// 页面同款 baseinfo（2026-10-12 抓包；含时间戳字段，静态可用，失效时需重抓）
+const huyaPageBaseinfo = "DBYgMGE3ZGE3MDVjNTYwY2M2YTNjMDEyMGJkMjFiZGFkNDAmGndlYmg1JjI2MTAxMDE0MzImd2Vic29ja2V0NgxIVVlBJlpIJjIwNTJGAFY+NDQyOTkuNzY5NDksNDkwMjMuODgwMTAsNTc0MTYuMTA1MTM4LDU4NDc0LjEwNjkwMiw1ODY2NC4xMDcyNjRsdgCGAJYAqAACBghIVVlBX05FVBYBMAYLSFVZQV9WU0RLVUEWGndlYmg1JjI2MTAxMDE0MzImd2Vic29ja2V0"
 
-// HuyaDanmakuCollector 虎牙弹幕采集器（进程内，断线自动重连）
+// "live:0" 订阅帧（页面照抄）
+var huyaFrameLive0 = []byte{0x00, 0x10, 0x1D, 0x00, 0x00, 0x0D, 0x09, 0x00, 0x01, 0x06, 0x06, 'l', 'i', 'v', 'e', ':', '0', 0x16, 0x00, 0x2C, 0x36, 0x00, 0x4C, 0x5C, 0x66, 0x00}
+
+// 心跳（9B 固定）
+var huyaHeartbeat = []byte{0x00, 0x14, 0x1D, 0x00, 0x0C, 0x2C, 0x36, 0x00, 0x4C}
+
+// huyaSubscribeFrame 频道订阅帧：订阅 "live:<uid>" + "chat:<uid>"（页面 #12 帧动态化）
+func huyaSubscribeFrame(uid string) []byte {
+	live := "live:" + uid
+	chat := "chat:" + uid
+	payload := []byte{0x09, 0x00, 0x02, 0x06, byte(len(live))}
+	payload = append(payload, live...)
+	payload = append(payload, 0x06, byte(len(chat)))
+	payload = append(payload, chat...)
+	payload = append(payload, 0x16, 0x00, 0x20, 0x07, 0x36, 0x00, 0x4C, 0x5C, 0x66, 0x00)
+	frame := []byte{0x00, 0x10, 0x1D, 0x00, byte(len(payload) >> 8), byte(len(payload))}
+	return append(frame, payload...)
+}
+
+// HuyaDanmakuCollector 虎牙弹幕采集器（进程内直连 va 边缘节点，断线自动重连）
 type HuyaDanmakuCollector struct {
 	RoomID string
-	Yyid   int64 // ayyuid（房间 lYyid）
-	TopSid int64 // 频道号（lChannelId）
-	Sid    int64 // 子频道（lSubChannelId）
+	Yyid   int64 // 房间 yyid（保留；订阅用 TopSid）
+	TopSid int64 // 主播 uid（订阅频道 live:<uid>/chat:<uid>）
+	Sid    int64
 
 	// OnBucket 密度桶（5s）回调（落库/曲线展示）
 	OnBucket func(roomID string, bucketStart int64, count int)
@@ -90,7 +106,7 @@ func (c *HuyaDanmakuCollector) Start(parent context.Context) {
 			}
 			failStreak++
 			if failStreak == 1 || failStreak%10 == 0 {
-				c.log("虎牙弹幕断开，3s 后重连（第 %d 次）：%v", failStreak, err)
+				c.log("虎牙弹幕断开，5s 后重连（第 %d 次）：%v", failStreak, err)
 			}
 			if failStreak >= 3 {
 				failStreak = 1
@@ -98,7 +114,7 @@ func (c *HuyaDanmakuCollector) Start(parent context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(3 * time.Second):
+			case <-time.After(5 * time.Second):
 			}
 		}
 	}()
@@ -117,25 +133,41 @@ func (c *HuyaDanmakuCollector) Alive() bool {
 }
 
 func (c *HuyaDanmakuCollector) connectAndRead(ctx context.Context) error {
-	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
-	conn, _, err := dialer.DialContext(ctx, c.wsURL(), http.Header{})
-	if err != nil {
-		return fmt.Errorf("虎牙弹幕 WS 连接失败: %w", err)
+	// 逐 va 节点尝试（首个成功的即用）
+	var wsConn net.Conn
+	var host string
+	var err error
+	for _, h := range huyaVaHosts {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		wsConn, err = dialHuyaVa(ctx, h)
+		if err == nil {
+			host = h
+			break
+		}
+		c.log("va 节点 %s 失败：%v", h, err)
 	}
-	defer conn.Close()
+	if wsConn == nil {
+		return fmt.Errorf("全部 va 节点失败: %w", err)
+	}
+	defer wsConn.Close()
 	c.lastBeat.Store(time.Now().Unix())
 
-	// 入房包
-	if err := conn.WriteMessage(websocket.BinaryMessage, c.joinPacket()); err != nil {
+	// Go 标准 TLS + gobwas 握手已在 dialHuyaVa 完成；发订阅序列
+	if err := wsutil.WriteClientBinary(wsConn, huyaFrameLive0); err != nil {
 		return err
 	}
-	c.log("虎牙弹幕入房成功（room %s ayyuid=%d tid=%d）", c.RoomID, c.Yyid, c.TopSid)
+	if err := wsutil.WriteClientBinary(wsConn, huyaSubscribeFrame(strconv.FormatInt(c.TopSid, 10))); err != nil {
+		return err
+	}
+	c.log("虎牙弹幕已订阅（节点 %s，频道 live:%d/chat:%d）", host, c.TopSid, c.TopSid)
 
-	// 心跳 60s
+	// 心跳（15s）
 	hbDone := make(chan struct{})
 	defer close(hbDone)
 	go func() {
-		t := time.NewTicker(60 * time.Second)
+		t := time.NewTicker(15 * time.Second)
 		defer t.Stop()
 		for {
 			select {
@@ -144,155 +176,42 @@ func (c *HuyaDanmakuCollector) connectAndRead(ctx context.Context) error {
 			case <-hbDone:
 				return
 			case <-t.C:
-				_ = conn.WriteMessage(websocket.BinaryMessage, huyaHeartbeatB)
+				_ = wsutil.WriteClientBinary(wsConn, huyaHeartbeat)
 			}
 		}
 	}()
 
-	conn.SetReadDeadline(time.Now().Add(120 * time.Second))
+	// 读循环：宽松识别弹幕帧（含 UTF-8 中文且 <600B）
+	wsConn.SetReadDeadline(time.Now().Add(120 * time.Second))
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
-		_, data, err := conn.ReadMessage()
+		data, op, err := wsutil.ReadServerData(wsConn)
 		if err != nil {
 			return err
 		}
-		_ = conn.SetReadDeadline(time.Now().Add(120 * time.Second))
+		_ = wsConn.SetReadDeadline(time.Now().Add(120 * time.Second))
 		c.lastBeat.Store(time.Now().Unix())
-		c.handleFrame(data)
-	}
-}
-
-// wsURL 构建带 baseinfo 认证的 WS 地址（2026 新协议）
-func (c *HuyaDanmakuCollector) wsURL() string {
-	var os tarsWriter
-	os.writeInt(0, 0) // uid（匿名）
-	os.writeString(1, huyaGUID())
-	os.writeString(2, huyaDanmuUA)
-	os.writeString(3, "HUYA&ZH&2052")
-	os.writeString(4, "")
-	os.writeString(5, "")
-	os.writeInt(6, 0)
-	os.writeString(7, "")
-	os.writeString(8, "")
-	os.writeString(9, "")
-	os.writeStringMap(10, map[string]string{"HUYA_NET": "0", "HUYA_VSDKUA": huyaDanmuUA})
-
-	baseInfo := base64.StdEncoding.EncodeToString(os.bytes())
-	return "wss://" + huyaDanmuHost + "?baseinfo=" + url.QueryEscape(baseInfo)
-}
-
-// huyaGUID 随机 16 字节 hex（浏览器 cookie 同款格式）
-func huyaGUID() string {
-	b := make([]byte, 16)
-	for i := range b {
-		b[i] = byte(rand.Intn(256))
-	}
-	return hex.EncodeToString(b)
-}
-
-// WsURLForTest 导出于 ws 地址（调试用）
-func (c *HuyaDanmakuCollector) WsURLForTest() string { return c.wsURL() }
-
-// JoinPacketForTest 导出入房包（调试/测试用）
-func (c *HuyaDanmakuCollector) JoinPacketForTest() []byte { return c.joinPacket() }
-
-// joinPacket 入房包（对齐 SimpleLive getJoinData）
-func (c *HuyaDanmakuCollector) joinPacket() []byte {
-	var inner tarsWriter
-	inner.writeInt(0, c.Yyid)
-	inner.writeBool(1, true)
-	inner.writeString(2, "")
-	inner.writeString(3, "")
-	inner.writeInt(4, c.TopSid)
-	inner.writeInt(5, c.Sid)
-	inner.writeInt(6, 0)
-	inner.writeInt(7, 0)
-	var outer tarsWriter
-	outer.writeInt(0, 1)
-	outer.writeBytes(1, inner.bytes())
-	return outer.bytes()
-}
-
-// handleFrame 处理一帧：外层 {tag0 int=7, tag1 bytes=HYPushMessage}
-func (c *HuyaDanmakuCollector) handleFrame(data []byte) {
-	r := newTarsReader(data)
-	// tag0：推送类型
-	tag, typ, err := r.readHead()
-	if err != nil {
-		return
-	}
-	if tag != 0 {
-		return
-	}
-	pushType := r.readInt(typ)
-	if pushType != huyaPushType {
-		return
-	}
-	// tag1：HYPushMessage 字节
-	tag, typ, err = r.readHead()
-	if err != nil || tag != 1 {
-		return
-	}
-	push := r.readBytes(typ)
-	if push == nil {
-		return
-	}
-	c.handlePush(push)
-}
-
-// handlePush 解析 HYPushMessage：uri(tag1) / msg(tag2)
-func (c *HuyaDanmakuCollector) handlePush(b []byte) {
-	r := newTarsReader(b)
-	uri := int64(0)
-	var msg []byte
-	for {
-		tag, typ, err := r.readHead()
-		if err != nil {
-			break
-		}
-		switch tag {
-		case 1:
-			uri = r.readInt(typ)
-		case 2:
-			msg = r.readBytes(typ)
-		default:
-			r.skip(typ)
+		if op == ws.OpBinary && isHuyaDanmuFrame(data) {
+			c.accumulate(time.Now().Unix())
 		}
 	}
-	switch uri {
-	case huyaDanmuURI:
-		c.handleDanmu(msg)
-	case huyaOnlineURI:
-		// 在线人数（可选更新）
-	}
 }
 
-// handleDanmu 解析 HYMessage：content(tag3)；弹幕即计数入密度桶
-func (c *HuyaDanmakuCollector) handleDanmu(b []byte) {
-	r := newTarsReader(b)
-	hasContent := false
-	for {
-		tag, typ, err := r.readHead()
-		if err != nil {
-			break
-		}
-		switch tag {
-		case 3: // content
-			content := string(r.readBytes(typ))
-			if content != "" {
-				hasContent = true
-			}
-		default:
-			r.skip(typ)
+// isHuyaDanmuFrame 宽松弹幕识别：小帧且含 UTF-8 中文（推送里混系统消息，中文即观众发言）
+func isHuyaDanmuFrame(b []byte) bool {
+	if len(b) == 0 || len(b) >= 600 {
+		return false
+	}
+	for i := 0; i+2 < len(b); i++ {
+		if b[i] >= 0xE4 && b[i] <= 0xE9 && b[i+1] >= 0x80 && b[i+1] <= 0xBF && b[i+2] >= 0x80 && b[i+2] <= 0xBF {
+			return true
 		}
 	}
-	if hasContent {
-		c.accumulate(time.Now().Unix())
-	}
+	return false
 }
 
 func (c *HuyaDanmakuCollector) accumulate(now int64) {
@@ -315,4 +234,40 @@ func (c *HuyaDanmakuCollector) flushBucket() {
 	}
 	c.lastBucket = 0
 	c.curCount = 0
+}
+
+// WsURLForTest 导出连接 URL（调试用；新协议下无独立 URL 拼接，保留占位）
+func (c *HuyaDanmakuCollector) WsURLForTest() string {
+	return "wss://" + huyaVaHosts[0] + "/?baseinfo=" + huyaPageBaseinfo
+}
+
+// JoinPacketForTest 导出订阅帧（调试/测试用）
+func (c *HuyaDanmakuCollector) JoinPacketForTest() []byte {
+	return huyaSubscribeFrame(strconv.FormatInt(c.TopSid, 10))
+}
+
+// dialHuyaVa 建立 TLS + gobwas WS 连接（返回已握手连接）
+func dialHuyaVa(ctx context.Context, host string) (net.Conn, error) {
+	d := net.Dialer{Timeout: 10 * time.Second}
+	tcp, err := d.DialContext(ctx, "tcp", host+":443")
+	if err != nil {
+		return nil, err
+	}
+	tc := tls.Client(tcp, &tls.Config{ServerName: host, NextProtos: []string{"http/1.1"}})
+	if err := tc.HandshakeContext(ctx); err != nil {
+		tcp.Close()
+		return nil, err
+	}
+	wsConn, _, _, err := ws.Dialer{
+		Timeout: 10 * time.Second,
+		Host:   host,
+		NetDial: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return tc, nil
+		},
+	}.Dial(ctx, "ws://"+host+":443/?baseinfo="+huyaPageBaseinfo)
+	if err != nil {
+		tc.Close()
+		return nil, err
+	}
+	return wsConn, nil
 }
