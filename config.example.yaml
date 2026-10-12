@@ -41,3 +41,10 @@ live:
   check_interval: 60             # 开播检测轮询秒
   segment_time: 600              # 录制分段秒
   auto_clip: true                # 下播后自动送切片管线
+
+retention:                       # 磁盘清理（挂机刚需，daemon 定时执行）
+  enabled: true
+  segments_days: 7               # 录制会话保留天数（超期整目录删）
+  consumed_seg_days: 1           # 预留：已消费分段更激进清理
+  min_free_percent: 10           # 磁盘剩余低于此百分比：预警+自动删最旧
+  check_minutes: 60              # 清理检查间隔（分钟）

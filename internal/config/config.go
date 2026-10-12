@@ -15,7 +15,8 @@ type Config struct {
 	Publish Publish `yaml:"publish"`
 	Notify  Notify  `yaml:"notify"`
 	Chrome  Chrome  `yaml:"chrome"`
-	Live    Live    `yaml:"live"`
+	Live      Live      `yaml:"live"`
+	Retention Retention `yaml:"retention"`
 }
 
 type Engines struct {
@@ -69,6 +70,19 @@ type Live struct {
 	AutoClip         bool `yaml:"auto_clip"`      // 下播后自动将分段送入切片管线
 }
 
+// Retention 磁盘清理策略（挂机刚需：数据流入-流出平衡）
+type Retention struct {
+	Enabled bool `yaml:"enabled"`  // 总开关（daemon 内定时清理）
+	// 保留天数：超过的直播分段目录整个删除（挂机磁盘有限的最重要防线）
+	SegmentsDays int `yaml:"segments_days"` // data/live/ 会话目录，默认 7 天
+	// 已入池/已派发的源分段：切片已完成使命，更积极清理（默认 1 天）
+	ConsumedSegDays int `yaml:"consumed_seg_days"`
+	// 磁盘水位：剩余百分比低于阈值时预警 + 自动清理最旧会话
+	MinFreePercent int `yaml:"min_free_percent"` // 默认 10
+	// 清理检查间隔（分钟）
+	CheckMinutes int `yaml:"check_minutes"` // 默认 60
+}
+
 func Default() *Config {
 	return &Config{
 		DataDir: "./data",
@@ -76,7 +90,8 @@ func Default() *Config {
 		Engines: Engines{YtDlp: "yt-dlp", FFmpeg: "ffmpeg", Probe: "ffprobe"},
 		Web:     Web{Listen: "127.0.0.1:8899"},
 		Publish: Publish{Headless: false, Screenshots: true, PlatformsDir: "configs/platforms"},
-		Live:    Live{CheckIntervalSec: 60, SegmentSec: 600, AutoClip: true},
+		Live:      Live{CheckIntervalSec: 60, SegmentSec: 600, AutoClip: true},
+		Retention: Retention{Enabled: true, SegmentsDays: 7, ConsumedSegDays: 1, MinFreePercent: 10, CheckMinutes: 60},
 	}
 }
 

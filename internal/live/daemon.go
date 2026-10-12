@@ -102,6 +102,37 @@ func (d *Daemon) Start() {
 			}
 		}
 	}()
+	// 磁盘清理定时（挂机刚需）：超期会话/队列残留/低水位兜底
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		mins := d.cfg.Retention.CheckMinutes
+		if mins <= 0 {
+			mins = 60
+		}
+		// 启动即清一次（顺带得到水位基线）
+		if d.cfg.Retention.Enabled {
+			if st, err := RunCleanup(d.cfg, d.notify); err == nil {
+				fmt.Printf("[cleanup] 启动清理：%d 个超期会话，剩余 %.0f%%\n", st.DeletedSessions, st.FreePercent)
+			}
+		}
+		t := time.NewTicker(time.Duration(mins) * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-d.ctx.Done():
+				return
+			case <-t.C:
+				if !d.cfg.Retention.Enabled {
+					continue
+				}
+				if st, err := RunCleanup(d.cfg, d.notify); err == nil && (st.DeletedSessions > 0 || st.LowDisk) {
+					fmt.Printf("[cleanup] 清理完成：删除 %d 会话，释放 %.2f GB，磁盘剩余 %.0f%%\n",
+						st.DeletedSessions, float64(st.FreedBytes)/1e9, st.FreePercent)
+				}
+			}
+		}
+	}()
 }
 
 // Stop 停止轮询与全部录制会话（daemon 退出时调用）
