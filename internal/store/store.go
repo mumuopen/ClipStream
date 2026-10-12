@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	_ "modernc.org/sqlite"
-
 	"chopperbot/internal/core"
+
+	_ "modernc.org/sqlite"
 )
 
 // Store SQLite 持久化（modernc 纯 Go 驱动，无 cgo）
@@ -69,6 +69,33 @@ func (s *Store) migrate() error {
 		bucket_ts INTEGER NOT NULL,
 		count INTEGER NOT NULL DEFAULT 0,
 		PRIMARY KEY (room_id, bucket_ts)
+	)`)
+	if err != nil {
+		return err
+	}
+	// 多账号（M5：矩阵账号与人设标签路由）
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS accounts (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		platform TEXT NOT NULL,      -- bilibili | douyin | xiaohongshu ...
+		name TEXT NOT NULL,          -- 账号名
+		labels TEXT NOT NULL DEFAULT '', -- 人设标签（逗号分隔）
+		status TEXT NOT NULL DEFAULT 'ok', -- ok | login_expired
+		priority INTEGER NOT NULL DEFAULT 0, -- 发布优先级（大优先）
+		created_at INTEGER
+	)`); err != nil {
+		return err
+	}
+	// 发布调度（M5：定时错峰占位）
+	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS schedules (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		time TEXT NOT NULL,          -- HH:MM 每日触发
+		platforms TEXT NOT NULL DEFAULT '',  -- 目标平台（逗号分隔，空=全部）
+		account_ids TEXT NOT NULL DEFAULT '', -- 账号筛选（逗号分隔，空=按路由）
+		labels TEXT NOT NULL DEFAULT '',  -- 内容标签筛选（逗号分隔）
+		enabled INTEGER NOT NULL DEFAULT 1,
+		last_run INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER
 	)`)
 	return err
 }
@@ -268,4 +295,107 @@ func (s *Store) DeleteJob(id string) error {
 		return fmt.Errorf("任务不存在: %s", id)
 	}
 	return nil
+}
+
+// ── 多账号（M5 矩阵）──
+
+// Account 平台矩阵账号
+type Account struct {
+	ID       int64  `json:"id"`
+	Platform string `json:"platform"` // bilibili | douyin | xiaohongshu ...
+	Name     string `json:"name"`
+	Labels   string `json:"labels"`  // 人设标签（逗号分隔）
+	Status   string `json:"status"`  // ok | login_expired
+	Priority int    `json:"priority"` // 发布优先级
+}
+
+func (s *Store) ListAccounts() ([]*Account, error) {
+	rows, err := s.db.Query(`SELECT id,platform,name,labels,status,priority FROM accounts ORDER BY priority DESC, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Account
+	for rows.Next() {
+		var a Account
+		if err := rows.Scan(&a.ID, &a.Platform, &a.Name, &a.Labels, &a.Status, &a.Priority); err != nil {
+			return nil, err
+		}
+		out = append(out, &a)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CreateAccount(a *Account) (int64, error) {
+	if a.Status == "" {
+		a.Status = "ok"
+	}
+	res, err := s.db.Exec(`INSERT INTO accounts (platform,name,labels,status,priority,created_at) VALUES (?,?,?,?,?,?)`,
+		a.Platform, a.Name, a.Labels, a.Status, a.Priority, time.Now().Unix())
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) DeleteAccount(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM accounts WHERE id=?`, id)
+	return err
+}
+
+// ── 发布调度（M5 错峰占位）──
+
+// Schedule 定时发布调度（每日 HH:MM）
+type Schedule struct {
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	Time       string `json:"time"` // HH:MM
+	Platforms  string `json:"platforms"`
+	AccountIDs string `json:"account_ids"`
+	Labels     string `json:"labels"`
+	Enabled    bool   `json:"enabled"`
+	LastRun    int64  `json:"last_run"`
+	CreatedAt  int64  `json:"created_at"`
+}
+
+func (s *Store) ListSchedules() ([]*Schedule, error) {
+	rows, err := s.db.Query(`SELECT id,name,time,platforms,account_ids,labels,enabled,last_run,created_at FROM schedules ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Schedule
+	for rows.Next() {
+		var sc Schedule
+		var en int
+		if err := rows.Scan(&sc.ID, &sc.Name, &sc.Time, &sc.Platforms, &sc.AccountIDs, &sc.Labels, &en, &sc.LastRun, &sc.CreatedAt); err != nil {
+			return nil, err
+		}
+		sc.Enabled = en == 1
+		out = append(out, &sc)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CreateSchedule(sc *Schedule) (int64, error) {
+	en := 1
+	if !sc.Enabled {
+		en = 0
+	}
+	res, err := s.db.Exec(`INSERT INTO schedules (name,time,platforms,account_ids,labels,enabled,created_at) VALUES (?,?,?,?,?,?,?)`,
+		sc.Name, sc.Time, sc.Platforms, sc.AccountIDs, sc.Labels, en, time.Now().Unix())
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) UpdateScheduleLastRun(id int64) error {
+	_, err := s.db.Exec(`UPDATE schedules SET last_run=? WHERE id=?`, time.Now().Unix(), id)
+	return err
+}
+
+func (s *Store) DeleteSchedule(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM schedules WHERE id=?`, id)
+	return err
 }

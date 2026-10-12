@@ -52,7 +52,90 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/live/watches/{id}", s.deleteWatch)
 	mux.HandleFunc("GET /api/live/daemon", s.liveDaemon)
 	mux.HandleFunc("GET /api/live/barrage", s.liveBarrage)
+	// M5 矩阵：多账号 + 发布调度（占位骨架）
+	mux.HandleFunc("GET /api/accounts", s.listAccounts)
+	mux.HandleFunc("POST /api/accounts", s.createAccount)
+	mux.HandleFunc("DELETE /api/accounts/{id}", s.deleteAccount)
+	mux.HandleFunc("GET /api/schedules", s.listSchedules)
+	mux.HandleFunc("POST /api/schedules", s.createSchedule)
+	mux.HandleFunc("DELETE /api/schedules/{id}", s.deleteSchedule)
 	return logRequest(mux)
+}
+
+// ── M5 矩阵账号 / 发布调度 API（占位骨架）──
+
+func (s *Server) listAccounts(w http.ResponseWriter, r *http.Request) {
+	as, err := s.store.ListAccounts()
+	if err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, as)
+}
+
+func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
+	var a store.Account
+	if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
+		httpError(w, 400, "参数错误: "+err.Error())
+		return
+	}
+	if a.Platform == "" || a.Name == "" {
+		httpError(w, 400, "platform 与 name 必填")
+		return
+	}
+	id, err := s.store.CreateAccount(&a)
+	if err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	a.ID = id
+	writeJSON(w, a)
+}
+
+func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err := s.store.DeleteAccount(id); err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, map[string]string{"ok": "true"})
+}
+
+func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
+	scs, err := s.store.ListSchedules()
+	if err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, scs)
+}
+
+func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
+	var sc store.Schedule
+	if err := json.NewDecoder(r.Body).Decode(&sc); err != nil {
+		httpError(w, 400, "参数错误: "+err.Error())
+		return
+	}
+	if sc.Name == "" || sc.Time == "" {
+		httpError(w, 400, "name 与 time(HH:MM) 必填")
+		return
+	}
+	id, err := s.store.CreateSchedule(&sc)
+	if err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	sc.ID = id
+	writeJSON(w, sc)
+}
+
+func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err := s.store.DeleteSchedule(id); err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, map[string]string{"ok": "true"})
 }
 
 // ── 直播关注 API ──

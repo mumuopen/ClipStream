@@ -259,6 +259,10 @@ func doServe(cfgPath string) error {
 		fmt.Printf("[live] 分段已送入切片管线：%s → 任务 %s（《%s》）\n", segPath, job.ID, roomTitle)
 	})
 
+	// M5 发布调度（占位骨架）：每分钟检查，到点登记 last_run 并打日志。
+	// 完整错峰发布需接入审核通过的内容池 + 账号路由，后续迭代。
+	go scheduleTicker(app)
+
 	srv := web.NewServer(app.cfg, app.store, app.runner, app.bus)
 	addr := app.cfg.Web.Listen
 	if addr == "" {
@@ -285,6 +289,44 @@ func doServe(cfgPath string) error {
 	fmt.Println("数据目录：", app.cfg.DataDir)
 	fmt.Println("直播录制：由 guanclip-daemon 独立守护（若未启动，直播不会自动录制）")
 	return httpSrv.Serve(listener)
+}
+
+// scheduleTicker M5 发布调度占位：每分钟检查一次每日 HH:MM 调度，
+// 到点且当天未执行则登记 last_run 并打日志（完整错峰发布留待接入内容池与账号路由）
+func scheduleTicker(app *app) {
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	check := func() {
+		now := time.Now()
+		hhmm := now.Format("15:04")
+		scs, err := app.store.ListSchedules()
+		if err != nil {
+			return
+		}
+		for _, sc := range scs {
+			if !sc.Enabled || sc.Time != hhmm {
+				continue
+			}
+			// 当天已执行过则跳过（last_run 与今天同一天）
+			if sc.LastRun > 0 && time.Unix(sc.LastRun, 0).Format("2006-01-02") == now.Format("2006-01-02") {
+				continue
+			}
+			_ = app.store.UpdateScheduleLastRun(sc.ID)
+			fmt.Printf("[schedule] 触发《%s》（每日 %s，平台 %s，账号 %s）——占位：待接入内容池与账号路由\n",
+				sc.Name, sc.Time, or(sc.Platforms, "全部"), or(sc.AccountIDs, "按路由"))
+		}
+	}
+	check()
+	for range t.C {
+		check()
+	}
+}
+
+func or(s, d string) string {
+	if s == "" {
+		return d
+	}
+	return s
 }
 
 // scanClipQueue 轮询 data/live/queue/ 下的 .seg 队列文件，逐个回调后删除

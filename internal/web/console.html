@@ -364,7 +364,7 @@ const NAV = [
   { key: 'livefollow',name: '直播关注', sub: '开播自动录 + 下播自动切片', origin: 'Live Follow' },
   { key: 'barrage',   name: '弹幕曲线', sub: '密度曲线 · 双信号高光', origin: 'Barrage Curve' },
   { group: '矩阵 · M5' },
-  { key: 'labels',    name: '标签矩阵', soon: 'M5', origin: 'Label Manage' },
+  { key: 'labels',    name: '标签矩阵', sub: '矩阵账号 · 错峰调度', origin: 'Label Manage' },
   { group: '系统' },
   { key: 'settings',  name: '设置',     sub: '引擎 · 账号 · 通知' },
 ];
@@ -430,6 +430,7 @@ function renderPage() {
     case 'settings':  return renderSettings(el);
 	case 'livefollow': return renderLiveFollow(el);
     case 'barrage':    return renderBarrage(el);
+    case 'labels':     return renderLabels(el);
     default:          return renderPlaceholder(el, page);
   }
 }
@@ -704,6 +705,99 @@ function drawBarrage(canvas, buckets) {
   ctx.fillText('弹幕/5s', 4, 12);
 }
 
+/* ═══════════ 页面：标签矩阵 / M5（矩阵账号 + 错峰调度）═══════════ */
+let accounts = [];
+let schedules = [];
+async function refreshMatrix() {
+  try { accounts = await fetchJSON('/api/accounts'); } catch (e) { accounts = []; }
+  try { schedules = await fetchJSON('/api/schedules'); } catch (e) { schedules = []; }
+  if (page === 'labels') renderLabels($('#page'));
+}
+function renderLabels(el) {
+  const platCN = { bilibili: 'B站', douyin: '抖音', xiaohongshu: '小红书', kuaishou: '快手' };
+  const accRows = accounts.map(a => `
+    <div class="job-row" style="cursor:default">
+      <span class="kind publish">${platCN[a.platform] || a.platform}</span>
+      <span class="jid">${esc(a.name)}</span>
+      <span style="flex:1;font-size:13px;color:var(--muted)">标签：${esc(a.labels || '—')}</span>
+      <span class="jtime">优先级 ${a.priority}</span>
+      <span class="badge ${a.status === 'ok' ? 'running' : 'failed'}">${a.status === 'ok' ? '● 可用' : '○ 待登录'}</span>
+      <button class="del" onclick="delAccount(${a.id})">✕</button>
+    </div>`).join('');
+  const schRows = schedules.map(sc => `
+    <div class="job-row" style="cursor:default">
+      <span class="kind clips">每日 ${esc(sc.time)}</span>
+      <span style="flex:1;font-size:13px;color:var(--text)">${esc(sc.name)}</span>
+      <span class="jtime">平台 ${esc(sc.platforms || '全部')}</span>
+      <span class="jtime">账号 ${esc(sc.account_ids || '路由')}</span>
+      <span class="jtime">上次 ${sc.last_run ? fmtClock(sc.last_run) : '—'}</span>
+      <span class="badge ${sc.enabled ? 'running' : 'queued'}">${sc.enabled ? '● 启用' : '○ 停用'}</span>
+      <button class="del" onclick="delSchedule(${sc.id})">✕</button>
+    </div>`).join('');
+  el.innerHTML = `
+    <div class="set-grid">
+      <div class="set-card" style="grid-column:1/2">
+        <h4>矩阵账号</h4>
+        <div class="feed" style="flex-wrap:wrap">
+          <select id="acc-plat" style="background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px">
+            <option value="bilibili">B站</option><option value="douyin">抖音</option><option value="xiaohongshu">小红书</option><option value="kuaishou">快手</option>
+          </select>
+          <input id="acc-name" placeholder="账号名" style="flex:1;min-width:120px">
+          <input id="acc-labels" placeholder="人设标签,逗号分隔" style="flex:1;min-width:160px">
+          <input id="acc-prio" placeholder="优先级0-9" style="width:76px">
+          <button onclick="addAccount()">添加</button>
+        </div>
+        ${accounts.length ? accRows : '<div class="hint">暂无矩阵账号 — 发布时按人设标签与优先级路由</div>'}
+      </div>
+      <div class="set-card">
+        <h4>发布调度（占位）</h4>
+        <div class="feed" style="flex-wrap:wrap">
+          <input id="sch-name" placeholder="调度名（如 晚高峰错峰）" style="flex:1;min-width:140px">
+          <input id="sch-time" placeholder="HH:MM 每日" style="width:96px">
+          <input id="sch-plats" placeholder="平台,逗号分隔" style="flex:1;min-width:100px">
+          <button onclick="addSchedule()">创建</button>
+        </div>
+        ${schedules.length ? schRows : '<div class="hint">暂无调度 — 到点触发发布（完整错峰待接入内容池与账号路由）</div>'}
+      </div>
+      <div class="set-card" style="grid-column:1/-1">
+        <h4>路由规则（占位说明）</h4>
+        <div class="cmd">切片标签（如 搞笑/游戏/教学）→ 匹配账号人设标签 → 按优先级选号错峰发布</div>
+        <div class="cmd">调度到点后：取审核通过的切片内容池 → 按路由分发 → pushme 通知结果</div>
+      </div>
+    </div>`;
+  ['acc-plat', 'acc-name', 'acc-labels', 'acc-prio', 'sch-name', 'sch-time', 'sch-plats'].forEach(id => {
+    const e = document.getElementById(id);
+    if (e) e.addEventListener('keydown', ev => { if (ev.key === 'Enter') ev.target === document.getElementById('acc-name') ? addAccount() : addSchedule(); });
+  });
+}
+async function addAccount() {
+  const payload = {
+    platform: $('#acc-plat').value,
+    name: $('#acc-name').value.trim(),
+    labels: $('#acc-labels').value.trim(),
+    priority: parseInt($('#acc-prio').value) || 0,
+  };
+  if (!payload.name) return;
+  try { await fetchJSON('/api/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); refreshMatrix(); } catch (e) { alert('添加账号失败：' + e.message); }
+}
+async function delAccount(id) {
+  if (!confirm('删除该矩阵账号？')) return;
+  try { await fetchJSON('/api/accounts/' + id, { method: 'DELETE' }); refreshMatrix(); } catch (e) { alert(e.message); }
+}
+async function addSchedule() {
+  const payload = {
+    name: $('#sch-name').value.trim(),
+    time: $('#sch-time').value.trim(),
+    platforms: $('#sch-plats').value.trim(),
+  };
+  if (!payload.name || !/^\d{2}:\d{2}$/.test(payload.time)) { alert('调度名与 HH:MM 时间必填'); return; }
+  try { await fetchJSON('/api/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); refreshMatrix(); } catch (e) { alert('创建调度失败：' + e.message); }
+}
+async function delSchedule(id) {
+  if (!confirm('删除该调度？')) return;
+  try { await fetchJSON('/api/schedules/' + id, { method: 'DELETE' }); refreshMatrix(); } catch (e) { alert(e.message); }
+}
+
 /* ═══════════ 任务列表渲染（总览/任务中心共用）═══════════ */
 function trackHTML(job) {
   const stages = KIND_STAGES[job.kind] || KIND_STAGES.clips;
@@ -945,6 +1039,7 @@ async function refresh() {
   else if (page === 'review') { renderReview($('#page')); }
 	else if (page === 'livefollow') { refreshWatches(); }
   else if (page === 'barrage') { refreshBarrage(); }
+  else if (page === 'labels') { refreshMatrix(); }
 }
 async function fetchStats() {
   try { stats = await fetchJSON('/api/stats'); renderNav(); if (page === 'settings') renderSettings($('#page')); } catch (e) {}
