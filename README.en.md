@@ -10,6 +10,10 @@
 |---|---|---|
 | ![board](docs/screenshots/shot-board.png) | ![live](docs/screenshots/shot-livefollow.png) | ![barrage](docs/screenshots/shot-barrage.png) |
 
+The console UI supports **English / Chinese** (switch in Settings, choice is remembered):
+
+![board-en](docs/screenshots/shot-board-en.png)
+
 | Review (human gate before publish) | Label Matrix (accounts & scheduling) |
 |---|---|
 | ![review](docs/screenshots/shot-review.png) | ![labels](docs/screenshots/shot-labels.png) |

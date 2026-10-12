@@ -10,6 +10,10 @@
 |---|---|---|
 | ![board](docs/screenshots/shot-board.png) | ![live](docs/screenshots/shot-livefollow.png) | ![barrage](docs/screenshots/shot-barrage.png) |
 
+界面支持中英双语（右上/设置页切换，记忆选择）：
+
+![board-en](docs/screenshots/shot-board-en.png)
+
 | 审核台（发布前人工过审） | 标签矩阵（账号 + 错峰调度） |
 |---|---|
 | ![review](docs/screenshots/shot-review.png) | ![labels](docs/screenshots/shot-labels.png) |
