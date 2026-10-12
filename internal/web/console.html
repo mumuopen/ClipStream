@@ -361,8 +361,7 @@ const NAV = [
   { group: '直播 · M4' },
   { key: 'creeper',   name: '采集库',   soon: 'M4', origin: 'Creeper Library' },
   { key: 'hotguard',  name: '热门守卫', soon: 'M4', origin: 'Hot Guard' },
-  { key: 'livefollow',name: '直播关注', soon: 'M4', origin: 'Live Follow' },
-  { key: 'barrage',   name: '弹幕曲线', soon: 'M4', origin: 'Barrage Curve' },
+  { key: 'livefollow',name: '直播关注', sub: '开播自动录 + 下播自动切片', origin: 'Live Follow' },
   { group: '矩阵 · M5' },
   { key: 'labels',    name: '标签矩阵', soon: 'M5', origin: 'Label Manage' },
   { group: '系统' },
@@ -428,6 +427,7 @@ function renderPage() {
     case 'tasks':     return renderTasks(el);
     case 'review':    return renderReview(el);
     case 'settings':  return renderSettings(el);
+    case 'livefollow': return renderLiveFollow(el);
     default:          return renderPlaceholder(el, page);
   }
 }
@@ -510,7 +510,54 @@ function renderReview(el) {
   }).join('');
 }
 
-/* ═══════════ 页面：占位（M4/M5，对齐原版模块）═══════════ */
+/* ═══════════ 页面：直播关注（M4，对齐原版 Live Follow/LiverFollower）═══════════ */
+let watches = [];
+async function refreshWatches() {
+  try { watches = await fetchJSON('/api/live/watches'); } catch (e) { return; }
+  if (page === 'livefollow') renderLiveFollow($('#page'));
+}
+function renderLiveFollow(el) {
+  const statusCN = { idle: '未开播', recording: '录制中', error: '检测异常' };
+  el.innerHTML = `
+    <div class="feed"><input id="live-url" placeholder="粘贴 B站直播间链接（如 https://live.bilibili.com/6），回车添加关注">
+    <button onclick="addWatch()">关注</button></div>
+    ${!watches.length ? `<div class="empty"><span class="arrow">📡</span>
+      <div class="big">还没有关注的直播间</div>
+      <div class="small">添加后自动监控：开播即录、下播自动切片入审核台</div></div>`
+    : watches.map(w => `
+      <div class="job">
+        <div class="job-row" style="cursor:default">
+          <span class="kind ${w.status === 'recording' ? 'clips' : 'publish'}">${w.platform}</span>
+          <span class="jid">房间 ${w.room_id}</span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--text)">${esc(w.title || '未获取到标题')}</span>
+          <span class="badge ${w.status === 'recording' ? 'running' : w.status === 'error' ? 'failed' : 'queued'}">${statusCN[w.status] || w.status}</span>
+          ${w.status === 'recording' ? `<span class="jtime">段 ${w.seg_count}</span>` : ''}
+          ${w.status === 'recording' ? `<span class="jtime">已录 ${fmtDur((Date.now() / 1000) - w.live_start)}</span>` : ''}
+          <button class="del" title="取消关注" onclick="delWatch(${w.id})">✕</button>
+        </div>
+      </div>`).join('')}
+    <div class="hint" style="margin-top:10px">守护器每 ${60}s 轮询一次；开播自动录 FLV → ${600}s/段 mp4 → 下播后每段自动进入切片管线 → pushme 推送。</div>`;
+  $('#live-url').addEventListener('keydown', e => { if (e.key === 'Enter') addWatch(); });
+}
+function fmtDur(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60);
+  return h ? h + 'h' + m + 'm' : m + 'm' + (sec % 60) + 's';
+}
+async function addWatch() {
+  const url = $('#live-url').value.trim();
+  if (!url) return;
+  try {
+    await fetchJSON('/api/live/watches', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+    refreshWatches();
+  } catch (e) { alert('添加失败：' + e.message); }
+}
+async function delWatch(id) {
+  if (!confirm('取消关注并停止该房间的录制？（已录文件保留）')) return;
+  try { await fetchJSON('/api/live/watches/' + id, { method: 'DELETE' }); refreshWatches(); } catch (e) { alert(e.message); }
+}
+
+/* ═══════════ 页面：占位（M4 建设中，对齐原版模块）═══════════ */
 function renderPlaceholder(el, key) {
   const p = PLACEHOLDERS[key];
   el.innerHTML = `
@@ -798,6 +845,7 @@ async function refresh() {
   if (page === 'board') { renderBoard($('#page')); }
   else if (page === 'tasks') { const c = $('#task-jobs'); if (c) renderJobList(c, jobs.filter(j => taskFilter === 'all' || j.kind === taskFilter), true); }
   else if (page === 'review') { renderReview($('#page')); }
+  else if (page === 'livefollow') { refreshWatches(); }
 }
 async function fetchStats() {
   try { stats = await fetchJSON('/api/stats'); renderNav(); if (page === 'settings') renderSettings($('#page')); } catch (e) {}
@@ -807,8 +855,9 @@ async function fetchStats() {
 window.addEventListener('hashchange', route);
 fetchStats();
 route();
-(async () => { try { jobs = await fetchJSON('/api/jobs'); renderNav(); renderPage(); } catch (e) {} })();
+refreshWatches();
 setInterval(() => { if (!document.hidden) refresh(); }, 2500);
+setInterval(() => { if (!document.hidden) refreshWatches(); }, 8000);
 setInterval(() => { if (!document.hidden) fetchStats(); }, 30000);
 </script>
 </body>

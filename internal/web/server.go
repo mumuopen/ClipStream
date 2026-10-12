@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -9,11 +10,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"chopperbot/internal/config"
 	"chopperbot/internal/core"
+	"chopperbot/internal/live"
 	"chopperbot/internal/pipeline"
 	"chopperbot/internal/publish"
 	"chopperbot/internal/store"
@@ -27,10 +30,11 @@ type Server struct {
 	store  *store.Store
 	runner *pipeline.Runner
 	bus    *core.Bus
+	guard  *live.Guard
 }
 
-func NewServer(cfg *config.Config, st *store.Store, r *pipeline.Runner, bus *core.Bus) *Server {
-	return &Server{cfg: cfg, store: st, runner: r, bus: bus}
+func NewServer(cfg *config.Config, st *store.Store, r *pipeline.Runner, bus *core.Bus, guard *live.Guard) *Server {
+	return &Server{cfg: cfg, store: st, runner: r, bus: bus, guard: guard}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -43,7 +47,77 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/jobs/{id}/events", s.events)
 	mux.HandleFunc("GET /api/files/{job}/{file...}", s.serveFile)
 	mux.HandleFunc("GET /api/stats", s.stats)
+	// M4 直播关注
+	mux.HandleFunc("GET /api/live/watches", s.listWatches)
+	mux.HandleFunc("POST /api/live/watches", s.addWatch)
+	mux.HandleFunc("DELETE /api/live/watches/{id}", s.deleteWatch)
 	return logRequest(mux)
+}
+
+// ── 直播关注 API ──
+
+func (s *Server) listWatches(w http.ResponseWriter, r *http.Request) {
+	ws, err := s.store.ListWatches()
+	if err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, ws)
+}
+
+func (s *Server) addWatch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpError(w, 400, "参数错误: "+err.Error())
+		return
+	}
+	roomID, err := live.ExtractRoomID(req.URL)
+	if err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	// 立即拉一次房间信息（标题校验 + 提前报错）
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	info, err := live.GetRoomInfo(ctx, roomID)
+	if err != nil {
+		httpError(w, 400, "房间号识别成功但信息获取失败: "+err.Error())
+		return
+	}
+	wt := &store.Watch{
+		URL:    req.URL,
+		RoomID: roomID,
+		Title:  info.Title,
+	}
+	id, err := s.store.AddWatch(wt)
+	if err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	wt.ID = id
+	if s.guard != nil {
+		s.guard.Kick() // 立即触发一轮检测
+	}
+	writeJSON(w, wt)
+}
+
+func (s *Server) deleteWatch(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		httpError(w, 400, "无效 id")
+		return
+	}
+	// 若在录制，先停
+	if s.guard != nil {
+		s.guard.StopRoomByID(id)
+	}
+	if err := s.store.DeleteWatch(id); err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, map[string]string{"ok": "true"})
 }
 
 // stats 引擎/账号配置状态（控制台状态灯与设置页数据源；只报就绪性，不做运行时探测）

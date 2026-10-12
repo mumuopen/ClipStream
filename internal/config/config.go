@@ -15,6 +15,7 @@ type Config struct {
 	Publish Publish `yaml:"publish"`
 	Notify  Notify  `yaml:"notify"`
 	Chrome  Chrome  `yaml:"chrome"`
+	Live    Live    `yaml:"live"`
 }
 
 type Engines struct {
@@ -62,6 +63,12 @@ type Chrome struct {
 	Path string `yaml:"path"` // 本机 Chrome 可执行路径，留空则 rod 自动探测
 }
 
+type Live struct {
+	CheckIntervalSec int  `yaml:"check_interval"` // 开播检测轮询间隔，默认 60
+	SegmentSec       int  `yaml:"segment_time"`   // 录制分段时长，默认 600
+	AutoClip         bool `yaml:"auto_clip"`      // 下播后自动将分段送入切片管线
+}
+
 func Default() *Config {
 	return &Config{
 		DataDir: "./data",
@@ -69,6 +76,7 @@ func Default() *Config {
 		Engines: Engines{YtDlp: "yt-dlp", FFmpeg: "ffmpeg", Probe: "ffprobe"},
 		Web:     Web{Listen: "127.0.0.1:8899"},
 		Publish: Publish{Headless: false, Screenshots: true, PlatformsDir: "configs/platforms"},
+		Live:    Live{CheckIntervalSec: 60, SegmentSec: 600, AutoClip: true},
 	}
 }
 

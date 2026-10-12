@@ -21,6 +21,7 @@ import (
 	"chopperbot/internal/config"
 	"chopperbot/internal/core"
 	"chopperbot/internal/engine"
+	"chopperbot/internal/live"
 	"chopperbot/internal/notify"
 	"chopperbot/internal/pipeline"
 	"chopperbot/internal/publish"
@@ -167,10 +168,11 @@ func base(u string) string {
 // ---- 公共装配 ----
 
 type app struct {
-	cfg    *config.Config
-	store  *store.Store
-	bus    *core.Bus
-	runner *pipeline.Runner
+	cfg      *config.Config
+	store    *store.Store
+	bus      *core.Bus
+	runner   *pipeline.Runner
+	notifier *notify.Pushme
 }
 
 func setup(cfgPath string, reset bool) (*app, error) {
@@ -193,6 +195,7 @@ func setup(cfgPath string, reset bool) (*app, error) {
 	}
 	bus := core.NewBus()
 	ff := &engine.FFMPEG{Bin: cfg.Engines.FFmpeg, ProbeBin: cfg.Engines.Probe}
+	notifier := notify.NewPushme(cfg.Notify.Pushme)
 	env := &pipeline.Env{
 		Cfg:    cfg,
 		Store:  st,
@@ -201,9 +204,9 @@ func setup(cfgPath string, reset bool) (*app, error) {
 		ASR:    &engine.WhisperTranscriber{Bin: cfg.Engines.ASR.Binary, Model: cfg.Engines.ASR.Model, FF: ff},
 		LLM:    engine.NewLLMClient(cfg.LLM.BaseURL, cfg.LLM.APIKey, cfg.LLM.Model, cfg.LLM.Proxy),
 		Bus:    bus,
-		Notify: notify.NewPushme(cfg.Notify.Pushme),
+		Notify: notifier,
 	}
-	return &app{cfg: cfg, store: st, bus: bus, runner: pipeline.NewRunner(env)}, nil
+	return &app{cfg: cfg, store: st, bus: bus, runner: pipeline.NewRunner(env), notifier: notifier}, nil
 }
 
 func (a *app) newJob(input, kind string) (*core.Job, error) {
@@ -235,7 +238,21 @@ func doServe(cfgPath string) error {
 	}
 	defer app.store.Close()
 
-	srv := web.NewServer(app.cfg, app.store, app.runner, app.bus)
+	// M4 直播守护器：开播监控 + 录制 + 下播自动接切片管线
+	guard := live.NewGuard(app.cfg, app.store, app.notifier)
+	guard.OnSegQueued = func(segPath, roomTitle string) {
+		job, err := app.newJob(segPath, "clips")
+		if err != nil {
+			fmt.Printf("[live] 分段送入切片管线失败 %s: %v\n", segPath, err)
+			return
+		}
+		app.runner.Enqueue(job.ID)
+		fmt.Printf("[live] 分段已送入切片管线：%s → 任务 %s（《%s》）\n", segPath, job.ID, roomTitle)
+	}
+	guard.Start()
+	defer guard.Stop()
+
+	srv := web.NewServer(app.cfg, app.store, app.runner, app.bus, guard)
 	addr := app.cfg.Web.Listen
 	if addr == "" {
 		addr = "127.0.0.1:8899"

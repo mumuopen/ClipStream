@@ -40,12 +40,89 @@ func Open(path string) (*Store, error) {
 }
 
 func (s *Store) migrate() error {
-	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS jobs (
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS jobs (
 		id TEXT PRIMARY KEY,
 		kind TEXT, status TEXT, stage TEXT, progress INTEGER,
 		input TEXT, params TEXT, result TEXT, error TEXT, log TEXT,
 		dir TEXT, created_at INTEGER, updated_at INTEGER
+	)`); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS watches (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		platform TEXT NOT NULL DEFAULT 'bilibili',
+		url TEXT NOT NULL,
+		room_id TEXT NOT NULL,
+		title TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL DEFAULT 'idle',
+		last_error TEXT NOT NULL DEFAULT '',
+		live_start INTEGER NOT NULL DEFAULT 0,
+		seg_dir TEXT NOT NULL DEFAULT '',
+		seg_count INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER
 	)`)
+	return err
+}
+
+// ── 直播关注（watches）──
+
+// Watch 关注的直播间
+type Watch struct {
+	ID        int64  `json:"id"`
+	Platform  string `json:"platform"`
+	URL       string `json:"url"`
+	RoomID    string `json:"room_id"`
+	Title     string `json:"title"`
+	Status    string `json:"status"` // idle | recording | error
+	LastError string `json:"last_error"`
+	LiveStart int64  `json:"live_start"`
+	SegDir    string `json:"seg_dir"`
+	SegCount  int    `json:"seg_count"`
+	CreatedAt int64  `json:"created_at"`
+}
+
+func (s *Store) AddWatch(w *Watch) (int64, error) {
+	if w.Platform == "" {
+		w.Platform = "bilibili"
+	}
+	if w.Status == "" {
+		w.Status = "idle"
+	}
+	w.CreatedAt = time.Now().Unix()
+	res, err := s.db.Exec(`INSERT INTO watches (platform,url,room_id,title,status,last_error,live_start,seg_dir,seg_count,created_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		w.Platform, w.URL, w.RoomID, w.Title, w.Status, w.LastError, w.LiveStart, w.SegDir, w.SegCount, w.CreatedAt)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) ListWatches() ([]*Watch, error) {
+	rows, err := s.db.Query(`SELECT id,platform,url,room_id,title,status,last_error,live_start,seg_dir,seg_count,created_at FROM watches ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Watch
+	for rows.Next() {
+		var w Watch
+		if err := rows.Scan(&w.ID, &w.Platform, &w.URL, &w.RoomID, &w.Title, &w.Status, &w.LastError, &w.LiveStart, &w.SegDir, &w.SegCount, &w.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &w)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpdateWatch(w *Watch) error {
+	_, err := s.db.Exec(`UPDATE watches SET title=?,status=?,last_error=?,live_start=?,seg_dir=?,seg_count=? WHERE id=?`,
+		w.Title, w.Status, w.LastError, w.LiveStart, w.SegDir, w.SegCount, w.ID)
+	return err
+}
+
+func (s *Store) DeleteWatch(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM watches WHERE id=?`, id)
 	return err
 }
 
