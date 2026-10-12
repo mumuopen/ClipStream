@@ -1,11 +1,11 @@
-// guanclip-daemon: 直播录制守护进程（独立于 serve 进程树运行）
+// clipstream-daemon: 直播录制守护进程（独立于 serve 进程树运行）
 //
 // 背景：Windows 上 serve 进程（rod/stealth 重依赖）拉起的子进程无法做 FLV 流式 IO
 //（实测全部 0KB），独立进程则 100% 正常。因此录制职责拆到此独立进程：
 // 自行轮询 watches 表 → 开播进程内拉流 → 状态/心跳落盘 → 下播分段入切片队列。
 //
 // 用法:
-//   guanclip-daemon [-config config.yaml]     # 常驻运行
+//   clipstream-daemon [-config config.yaml]     # 常驻运行
 //
 // 与 serve 的关系：两者共享 SQLite（WAL 多进程安全）；serve 只读 watches 展示，
 // 并消费 data/live/queue/ 队列文件把直播分段送入切片管线。daemon 需与 serve 一并
@@ -45,7 +45,7 @@ func main() {
 		log.Fatalf("创建 live 目录失败: %v", err)
 	}
 
-	st, err := store.Open(filepath.Join(cfg.DataDir, "guanclip.db"))
+	st, err := store.Open(filepath.Join(cfg.DataDir, "clipstream.db"))
 	if err != nil {
 		log.Fatalf("打开数据库失败: %v", err)
 	}
@@ -81,7 +81,7 @@ func main() {
 	d.Start()
 	defer d.Stop()
 
-	fmt.Printf("GuanClip 录制守护进程已启动（每 %ds 轮询，分段 %ds）\n",
+	fmt.Printf("ClipStream 录制守护进程已启动（每 %ds 轮询，分段 %ds）\n",
 		cfg.Live.CheckIntervalSec, cfg.Live.SegmentSec)
 	fmt.Println("心跳文件：", d.HeartbeatFile())
 	fmt.Println("切片队列：", d.QueueDir())

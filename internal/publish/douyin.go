@@ -16,7 +16,7 @@ import (
 
 // DouyinPublish 抖音发布：rod 驱动创作者中心（选择器全部来自 configs/platforms/douyin.yaml）
 //
-// 前置：guanclip login --platform douyin 生成登录态目录（user-data-dir 长期复用）
+// 前置：clipstream login --platform douyin 生成登录态目录（user-data-dir 长期复用）
 func DouyinPublish(ctx context.Context, cfg *config.Config, pc *PlatformConfig, req *Request, videoPath, coverPath, workDir string, logf LogFunc) (PlatformResult, error) {
 	res := PlatformResult{Platform: "douyin"}
 	sel := pc.Selectors
@@ -47,12 +47,12 @@ func DouyinPublish(ctx context.Context, cfg *config.Config, pc *PlatformConfig, 
 	// 登录态检测：URL 未进入 creator-micro 或出现登录标记 → 需要扫码
 	time.Sleep(3 * time.Second)
 	if !strings.Contains(PageURL(page), pc.LoggedInURLContains) {
-		res.Detail = fmt.Sprintf("未登录（当前 URL: %s）：请先执行 guanclip login --platform douyin --account %s", PageURL(page), req.Account)
+		res.Detail = fmt.Sprintf("未登录（当前 URL: %s）：请先执行 clipstream login --platform douyin --account %s", PageURL(page), req.Account)
 		return res, fmt.Errorf("%s", res.Detail)
 	}
 	for _, m := range pc.LoginMarkers {
 		if HasText(page, m) {
-			res.Detail = fmt.Sprintf("登录态已失效（检测到“%s”）：请重新执行 guanclip login --platform douyin", m)
+			res.Detail = fmt.Sprintf("登录态已失效（检测到“%s”）：请重新执行 clipstream login --platform douyin", m)
 			return res, fmt.Errorf("%s", res.Detail)
 		}
 	}
@@ -198,7 +198,7 @@ func DouyinLogin(ctx context.Context, cfg *config.Config, pc *PlatformConfig, ac
 	_ = page.WaitLoad()
 
 	if !URLContains(page, []string{pc.LoggedInURLContains}, 8*time.Minute) {
-		return fmt.Errorf("8 分钟内未完成扫码登录，请重试 guanclip login --platform douyin")
+		return fmt.Errorf("8 分钟内未完成扫码登录，请重试 clipstream login --platform douyin")
 	}
 	fmt.Println("✔ 登录成功，登录态已保存，后续发布自动复用")
 	return nil

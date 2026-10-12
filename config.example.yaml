@@ -1,4 +1,4 @@
-# GuanClip 配置示例（复制为 config.yaml 后按需修改）
+# ClipStream 配置示例（复制为 config.yaml 后按需修改）
 # 注意：config.yaml 已加入 .gitignore，不会提交到 GitHub——请勿在本文件中填写真实密钥
 # 引擎默认取 PATH 中的命令；未配置的引擎对应功能自动降级（详见 README）
 

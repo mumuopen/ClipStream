@@ -225,7 +225,7 @@ func stageSubtitleFinalize(_ context.Context, job *core.Job, env *Env) error {
 	job.SetResult(res)
 	job.Status = core.StatusReview // 字幕切片回审核台，发布决策权在用户
 
-	env.notify("GuanClip 字幕切片待审核",
+	env.notify("ClipStream 字幕切片待审核",
 		fmt.Sprintf("任务 %s 完成：《%s》双语/中文字幕版进入审核台，可在控制台预览与发布", job.ID, res.Title))
 	return nil
 }

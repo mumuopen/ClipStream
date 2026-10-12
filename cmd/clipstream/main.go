@@ -1,4 +1,4 @@
-// GuanClip（暂用名）—— ChopperBot 融合平台单二进制入口
+// ClipStream（暂用名）—— ChopperBot 融合平台单二进制入口
 //
 // 致敬来源：Geniusay/ChopperBot（Java 版智能直播切片机器人，2023 后停更）。
 // 本平台用 Go 重写其思想：直播录制 + 搬运下载 + 智能切片 + 翻译配音 + 多平台发布。
@@ -46,7 +46,7 @@ func main() {
 
 	switch sub {
 	case "version":
-		fmt.Println("guanclip", version)
+		fmt.Println("clipstream", version)
 	case "init":
 		doInit(cfgPath)
 	case "serve":
@@ -71,17 +71,17 @@ func main() {
 }
 
 func usage(cfgPath string) {
-	fmt.Printf(`guanclip %s —— ChopperBot 融合平台（Go 重写版）
+	fmt.Printf(`clipstream %s —— ChopperBot 融合平台（Go 重写版）
 
 用法：
-  guanclip init                              初始化配置（%s）并检查引擎
-  guanclip serve                             启动 Web 控制台（默认 127.0.0.1:8899）
-  guanclip-daemon                            直播录制守护进程（独立运行，勿从 serve 拉起）
-  guanclip run -i <URL或本地文件>             创建任务并前台执行，实时打印日志
-  guanclip run -i <URL> -kind publish ...    发布任务（一般从审核台发起）
-  guanclip login --platform douyin|bilibili  首次登录平台（扫码，登录态长期复用）
-  guanclip status                            查看任务列表
-  guanclip version                           版本
+  clipstream init                              初始化配置（%s）并检查引擎
+  clipstream serve                             启动 Web 控制台（默认 127.0.0.1:8899）
+  clipstream-daemon                            直播录制守护进程（独立运行，勿从 serve 拉起）
+  clipstream run -i <URL或本地文件>             创建任务并前台执行，实时打印日志
+  clipstream run -i <URL> -kind publish ...    发布任务（一般从审核台发起）
+  clipstream login --platform douyin|bilibili  首次登录平台（扫码，登录态长期复用）
+  clipstream status                            查看任务列表
+  clipstream version                           版本
 
 管线（M1 剪切）：download(yt-dlp) → transcribe(whisper.cpp) → highlight(LLM/等分回退) → cut(ffmpeg) → review(审核台)
 管线（M2 发布）：prepare → publish(B站=biliup直传 / 抖音=rod浏览器) → finalize(推送通知)
@@ -152,7 +152,7 @@ func doInit(cfgPath string) {
 		fmt.Println("  △ pushme 未启用（配置 notify.pushme 的 enable/url/push_key，审核/发布结果推手机）")
 	}
 	fmt.Println()
-	fmt.Println("下一步：guanclip serve 打开控制台，或 guanclip run -i <视频地址> 直接跑")
+	fmt.Println("下一步：clipstream serve 打开控制台，或 clipstream run -i <视频地址> 直接跑")
 }
 
 func checkBin(name, bin string) {
@@ -188,7 +188,7 @@ func setup(cfgPath string, reset bool) (*app, error) {
 	if err := os.MkdirAll(filepath.Join(cfg.DataDir, "jobs"), 0o755); err != nil {
 		return nil, err
 	}
-	st, err := store.Open(filepath.Join(cfg.DataDir, "guanclip.db"))
+	st, err := store.Open(filepath.Join(cfg.DataDir, "clipstream.db"))
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +243,7 @@ func doServe(cfgPath string) error {
 	}
 	defer app.store.Close()
 
-	// 直播录制由独立守护进程 guanclip-daemon 负责（Windows 进程树网络问题的解法）。
+	// 直播录制由独立守护进程 clipstream-daemon 负责（Windows 进程树网络问题的解法）。
 	// serve 只消费下播分段队列：把 data/live/queue/*.seg 送入切片管线
 	queueDir := filepath.Join(app.cfg.DataDir, "live", "queue")
 	if err := os.MkdirAll(queueDir, 0o755); err != nil {
@@ -285,9 +285,9 @@ func doServe(cfgPath string) error {
 		_ = httpSrv.Shutdown(ctx)
 	}()
 
-	fmt.Printf("GuanClip %s 控制台已启动：%s  （Ctrl+C 停止）\n", version, "http://"+addr)
+	fmt.Printf("ClipStream %s 控制台已启动：%s  （Ctrl+C 停止）\n", version, "http://"+addr)
 	fmt.Println("数据目录：", app.cfg.DataDir)
-	fmt.Println("直播录制：由 guanclip-daemon 独立守护（若未启动，直播不会自动录制）")
+	fmt.Println("直播录制：由 clipstream-daemon 独立守护（若未启动，直播不会自动录制）")
 	return httpSrv.Serve(listener)
 }
 
@@ -372,7 +372,7 @@ func doRun(cfgPath string, args []string) error {
 		*input = fs.Arg(0)
 	}
 	if *input == "" {
-		return fmt.Errorf("缺少输入：guanclip run -i <URL或本地文件>")
+		return fmt.Errorf("缺少输入：clipstream run -i <URL或本地文件>")
 	}
 
 	app, err := setup(cfgPath, false)
@@ -413,7 +413,7 @@ func doRun(cfgPath string, args []string) error {
 			fmt.Printf("任务结束：%s（进度 %d%%）\n", statusCN(string(j.Status)), j.Progress)
 			if j.Status == core.StatusReview {
 				printClips(j)
-				fmt.Println("已进入审核台：guanclip serve 打开控制台预览/下载切片")
+				fmt.Println("已进入审核台：clipstream serve 打开控制台预览/下载切片")
 			}
 			if j.Error != "" {
 				fmt.Println("错误：", j.Error)
@@ -521,10 +521,10 @@ func doLogin(cfgPath string, args []string) error {
 }
 
 // doRecordTest 直录制测试（绕过 guard/pipeline/bus，隔离排查网络问题）
-// 用法: guanclip record-test <room_id> <输出目录>
+// 用法: clipstream record-test <room_id> <输出目录>
 func doRecordTest(args []string) {
 	if len(args) < 2 {
-		fmt.Println("用法: guanclip record-test <room_id> <输出目录>")
+		fmt.Println("用法: clipstream record-test <room_id> <输出目录>")
 		os.Exit(1)
 	}
 	roomID := args[0]
@@ -542,7 +542,7 @@ func doRecordTest(args []string) {
 
 	// 启动录制器
 	exe, _ := os.Executable()
-	recordBin := filepath.Join(filepath.Dir(exe), "guanclip-record.exe")
+	recordBin := filepath.Join(filepath.Dir(exe), "clipstream-record.exe")
 	if _, err := os.Stat(recordBin); err != nil {
 		fmt.Printf("找不到录制器: %v\n", err)
 		os.Exit(1)

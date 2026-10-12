@@ -1,5 +1,5 @@
-// guanclip-record: 独立 FLV 录制器进程（从 serve 拉起，避免主进程 runtime 干扰）
-// 用法: guanclip-record <FLV_URL> <输出目录> <分段秒数>
+// clipstream-record: 独立 FLV 录制器进程（从 serve 拉起，避免主进程 runtime 干扰）
+// 用法: clipstream-record <FLV_URL> <输出目录> <分段秒数>
 package main
 
 import (
@@ -16,7 +16,7 @@ const ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 
 func main() {
 	if len(os.Args) < 4 {
-		fmt.Println("用法: guanclip-record <FLV_URL> <输出目录> <分段秒数>")
+		fmt.Println("用法: clipstream-record <FLV_URL> <输出目录> <分段秒数>")
 		os.Exit(1)
 	}
 	playURL := os.Args[1]

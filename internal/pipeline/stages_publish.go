@@ -91,9 +91,9 @@ func stagePublishFinalize(_ context.Context, job *core.Job, env *Env) error {
 		lines += fmt.Sprintf("\n%s %s：%s", status, r.Platform, r.Detail)
 	}
 	if result.DryRun {
-		env.notify("GuanClip 发布演练完成", "任务 "+job.ID+"（dry-run，未真发）"+lines)
+		env.notify("ClipStream 发布演练完成", "任务 "+job.ID+"（dry-run，未真发）"+lines)
 	} else {
-		env.notify("GuanClip 发布结果", "任务 "+job.ID+lines)
+		env.notify("ClipStream 发布结果", "任务 "+job.ID+lines)
 	}
 	return nil
 }

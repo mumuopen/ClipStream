@@ -94,7 +94,7 @@ func (r *Runner) run(id string) {
 			_ = r.env.Store.UpdateJob(job)
 			r.env.publishStatus(job)
 			// pushme 通知：任务失败
-			r.env.notify("GuanClip 任务失败",
+			r.env.notify("ClipStream 任务失败",
 				fmt.Sprintf("任务 %s 在 %s 阶段失败：%s", job.ID, st.Name, job.Error))
 			return
 		}

@@ -162,7 +162,7 @@ func stageDubFinalize(_ context.Context, job *core.Job, env *Env) error {
 	job.SetResult(res)
 	job.Status = core.StatusReview // 发布决策权在用户
 
-	env.notify("GuanClip 配音切片待审核",
+	env.notify("ClipStream 配音切片待审核",
 		fmt.Sprintf("任务 %s 完成：《%s》解说配音版进入审核台", job.ID, res.Title))
 	return nil
 }

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GuanClip 控制台</title>
+<title>ClipStream 控制台</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230B0E14'/%3E%3Ccircle cx='8' cy='8' r='4' fill='%23F5A524'/%3E%3C/svg%3E">
 <style>
   /* ── 设计令牌：视频工厂控制室（模块地图对齐原版 ChopperBot）── */
@@ -294,8 +294,8 @@
 
   <aside class="side">
     <div class="brand">
-      <div class="logo">GUANCLIP</div>
-      <div class="tag">视频内容流水线 · ChopperBot 血统</div>
+      <div class="logo">ClipStream</div>
+      <div class="tag">直播切片流水线 · 致敬 ChopperBot</div>
     </div>
     <nav id="nav"></nav>
     <div class="status" id="side-engines"></div>
@@ -463,7 +463,7 @@ function route() {
   renderNav(); renderPage();
 }
 function renderNav() {
-  const reviewN = jobs.filter(j => j.status === 'review').length;
+  const reviewN = (jobs || []).filter(j => j.status === 'review').length;
   $('#nav').innerHTML = NAV.map(n => n.group
     ? `<div class="nav-group">${n.group}</div>`
     : `<a class="nav-item ${page === n.key ? 'active' : ''}" href="#/${n.key}">
@@ -657,11 +657,11 @@ function renderSettings(el) {
       </div>
       <div class="set-card" style="grid-column:1/-1">
         <h4>常用命令</h4>
-        <div class="cmd"><b>guanclip init</b>                引擎体检与配置生成</div>
-        <div class="cmd"><b>guanclip serve</b>               启动本控制台（127.0.0.1:8899）</div>
-        <div class="cmd"><b>guanclip run -i &lt;URL或路径&gt;</b>        命令行直接跑任务</div>
-        <div class="cmd"><b>guanclip login --platform bilibili|douyin</b> [--account 别名]  平台扫码登录</div>
-        <div class="cmd"><b>guanclip status</b>              任务一览</div>
+        <div class="cmd"><b>clipstream init</b>                引擎体检与配置生成</div>
+        <div class="cmd"><b>clipstream serve</b>               启动本控制台（127.0.0.1:8899）</div>
+        <div class="cmd"><b>clipstream run -i &lt;URL或路径&gt;</b>        命令行直接跑任务</div>
+        <div class="cmd"><b>clipstream login --platform bilibili|douyin</b> [--account 别名]  平台扫码登录</div>
+        <div class="cmd"><b>clipstream status</b>              任务一览</div>
       </div>
     </div>`;
 }
@@ -1121,6 +1121,7 @@ async function submitDub() {
 /* ═══════════ 刷新循环 ═══════════ */
 async function refresh() {
   try { jobs = await fetchJSON('/api/jobs'); } catch (e) { return; }
+  if (!Array.isArray(jobs)) jobs = []; // 请求异常/返回 null 时兜底为空数组，避免 renderNav 崩溃
   renderNav();
   if (page === 'board') { renderBoard($('#page')); }
   else if (page === 'tasks') { const c = $('#task-jobs'); if (c) renderJobList(c, jobs.filter(j => taskFilter === 'all' || j.kind === taskFilter), true); }

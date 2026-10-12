@@ -9,7 +9,7 @@ publish_url_contains:
   - "creator.douyin.com/creator-micro/content/post/video"
 # 发布成功后跳转
 success_url_contains: "creator.douyin.com/creator-micro/content/manage"
-# 命中即视为未登录（需要 guanclip login --platform douyin）
+# 命中即视为未登录（需要 clipstream login --platform douyin）
 login_markers: ["扫码登录", "手机号登录"]
 # 登录成功标志（URL 含此片段）
 logged_in_url_contains: "creator.douyin.com/creator-micro"

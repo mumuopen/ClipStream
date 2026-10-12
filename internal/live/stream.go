@@ -1,7 +1,7 @@
 package live
 
 // 进程内 FLV 拉流核心（daemon 用）。
-// 血统：从 cmd/guanclip-record 提炼，去掉子进程依赖——
+// 血统：从 cmd/clipstream-record 提炼，去掉子进程依赖——
 // Windows 上 serve 进程拉起的子进程无法做 FLV 流式 IO（实测），
 // 独立进程内直接拉流则 100% 正常，因此录制守护进程在自身进程内完成拉流。
 

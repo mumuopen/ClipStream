@@ -70,6 +70,9 @@ func (s *Server) listAccounts(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 500, err.Error())
 		return
 	}
+	if as == nil {
+		as = []*store.Account{}
+	}
 	writeJSON(w, as)
 }
 
@@ -106,6 +109,9 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpError(w, 500, err.Error())
 		return
+	}
+	if scs == nil {
+		scs = []*store.Schedule{}
 	}
 	writeJSON(w, scs)
 }
@@ -145,6 +151,9 @@ func (s *Server) listWatches(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpError(w, 500, err.Error())
 		return
+	}
+	if ws == nil {
+		ws = []*store.Watch{}
 	}
 	writeJSON(w, ws)
 }
@@ -357,6 +366,9 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpError(w, 500, err.Error())
 		return
+	}
+	if jobs == nil {
+		jobs = []*core.Job{} // 空列表返回 [] 而非 null（前端 jobs.filter 依赖数组）
 	}
 	writeJSON(w, jobs)
 }

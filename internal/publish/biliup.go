@@ -24,7 +24,7 @@ func BiliupPublish(ctx context.Context, cfg *config.Config, pc *PlatformConfig, 
 	}
 	cookie := filepath.Join(AccountDir(cfg.DataDir, "bilibili", req.Account), "cookies.json")
 	if _, err := os.Stat(cookie); err != nil {
-		return res, fmt.Errorf("B站登录态缺失（%s）：请先执行 guanclip login --platform bilibili --account %s", cookie, req.Account)
+		return res, fmt.Errorf("B站登录态缺失（%s）：请先执行 clipstream login --platform bilibili --account %s", cookie, req.Account)
 	}
 
 	args := []string{"-u", cookie, "upload", videoPath,

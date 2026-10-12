@@ -264,7 +264,7 @@ func (d *Daemon) startSession(w *store.Watch, info *RoomInfo) {
 		d.runLoop(ctx, s)
 	}()
 
-	d.notify.Send("GuanClip 开播提醒",
+	d.notify.Send("ClipStream 开播提醒",
 		fmt.Sprintf("《%s》开播了，已开始自动录制（房间 %s）", info.Title, w.RoomID))
 }
 
@@ -339,13 +339,13 @@ func (d *Daemon) endSession(s *liveSession) {
 		w.SegCount = len(segs)
 		_ = d.store.UpdateWatch(w)
 	}
-	d.notify.Send("GuanClip 直播录制结束",
+	d.notify.Send("ClipStream 直播录制结束",
 		fmt.Sprintf("《%s》结束（房间 %s）；分段 %d 个", s.title, s.roomID, len(segs)))
 
 	if d.cfg.Live.AutoClip {
 		for _, seg := range segs {
 			if err := d.queueClip(seg, s.title); err != nil {
-				d.notify.Send("GuanClip 切片排队失败",
+				d.notify.Send("ClipStream 切片排队失败",
 					fmt.Sprintf("分段 %s 送入切片队列失败：%v", seg, err))
 			}
 		}

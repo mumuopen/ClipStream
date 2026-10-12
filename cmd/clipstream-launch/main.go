@@ -1,5 +1,5 @@
-// guanclip-launch: 干净的进程启动器（无重依赖，隔离 serve 进程的 runtime 状态对子进程网络的影响）
-// 用法: guanclip-launch <录制器路径> <FLV_URL> <输出目录> <分段秒数>
+// clipstream-launch: 干净的进程启动器（无重依赖，隔离 serve 进程的 runtime 状态对子进程网络的影响）
+// 用法: clipstream-launch <录制器路径> <FLV_URL> <输出目录> <分段秒数>
 package main
 
 import (
@@ -11,7 +11,7 @@ import (
 
 func main() {
 	if len(os.Args) < 5 {
-		fmt.Fprintf(os.Stderr, "用法: guanclip-launch <录制器> <URL> <目录> <分段秒>\n")
+		fmt.Fprintf(os.Stderr, "用法: clipstream-launch <录制器> <URL> <目录> <分段秒>\n")
 		os.Exit(1)
 	}
 	recordBin := os.Args[1]

@@ -426,7 +426,7 @@ func stageFinalize(_ context.Context, job *core.Job, env *Env) error {
 	if env.Cfg.Web.Listen == "" {
 		consoleURL = "http://127.0.0.1:8899"
 	}
-	env.notify("GuanClip 切片待审核",
+	env.notify("ClipStream 切片待审核",
 		fmt.Sprintf("任务 %s 完成，%d 个切片进入审核台：%s", job.ID, len(r.Clips), consoleURL))
 	return nil
 }
