@@ -521,7 +521,7 @@ async function refreshWatches() {
 function renderLiveFollow(el) {
   const statusCN = { idle: '未开播', recording: '录制中', error: '检测异常' };
   el.innerHTML = `
-    <div class="feed"><input id="live-url" placeholder="粘贴 B站直播间链接（如 https://live.bilibili.com/6），回车添加关注">
+    <div class="feed"><input id="live-url" placeholder="粘贴直播间链接（B站 live.bilibili.com / 虎牙 www.huya.com），回车添加关注">
     <button onclick="addWatch()">关注</button></div>
     ${!watches.length ? `<div class="empty"><span class="arrow">📡</span>
       <div class="big">还没有关注的直播间</div>

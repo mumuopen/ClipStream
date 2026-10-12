@@ -17,12 +17,13 @@ import (
 )
 
 // StreamFLV 拉取 FLV 流并分段写入 segDir，阻塞直到 ctx 取消或流结束。
+//   - startSeq 起始段序号（断流重连时续写，避免覆盖已有段文件）
 //   - onSeg 在每段开始写前回调（携带分段序号与累计字节数），用于上报 SegCount
 //   - 返回累计分段数；err==nil 表示流正常 EOF 结束
 //
 // 注意：调用方需自行保证 playURL 已是最新可用地址；本函数不做 302 预解析
 //（Go http.Client 自动跟重定向并保留 Referer/UA，预解析会额外消耗 CDN 会话）。
-func StreamFLV(ctx context.Context, playURL, segDir string, segSec int, onSeg func(segIdx int, totalBytes int64)) (segCount int, total int64, err error) {
+func StreamFLV(ctx context.Context, playURL, segDir string, segSec int, startSeq int, onSeg func(segIdx int, totalBytes int64)) (segCount int, total int64, err error) {
 	if err := os.MkdirAll(segDir, 0o755); err != nil {
 		return 0, 0, err
 	}
@@ -65,7 +66,7 @@ func StreamFLV(ctx context.Context, playURL, segDir string, segSec int, onSeg fu
 		return 0, 0, fmt.Errorf("CDN 返回 %d（需要换节点重试）", resp.StatusCode)
 	}
 
-	segIdx := 0
+	segIdx := startSeq
 	segFile, err := os.Create(filepath.Join(segDir, fmt.Sprintf("seg_%03d.flv", segIdx)))
 	if err != nil {
 		return 0, 0, fmt.Errorf("创建段文件失败: %w", err)

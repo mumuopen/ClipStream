@@ -41,6 +41,7 @@ type Daemon struct {
 // liveSession 单场直播录制会话（进程内拉流 + 弹幕采集）
 type liveSession struct {
 	roomID   string
+	platform string
 	segDir   string
 	title    string
 	segCount atomic.Int32
@@ -167,7 +168,7 @@ func (d *Daemon) check(w *store.Watch) {
 	// 空闲/error：开播检测（API 失败标 error 留状态，下轮重试不判死）
 	ctx, cancel := context.WithTimeout(d.ctx, 20*time.Second)
 	defer cancel()
-	info, err := GetRoomInfo(ctx, w.RoomID)
+	info, err := d.roomInfo(ctx, w.Platform, w.RoomID)
 	if err != nil {
 		if w.Status != "error" {
 			w.Status = "error"
@@ -202,11 +203,12 @@ func (d *Daemon) startSession(w *store.Watch, info *RoomInfo) {
 
 	ctx, cancel := context.WithCancel(d.ctx)
 	s := &liveSession{
-		roomID: w.RoomID,
-		segDir: segDir,
-		title:  info.Title,
-		cancel: cancel,
-		done:   make(chan struct{}),
+		roomID:   w.RoomID,
+		platform: w.Platform,
+		segDir:   segDir,
+		title:    info.Title,
+		cancel:   cancel,
+		done:     make(chan struct{}),
 	}
 	d.mu.Lock()
 	if old := d.sessions[w.RoomID]; old != nil {
@@ -223,19 +225,20 @@ func (d *Daemon) startSession(w *store.Watch, info *RoomInfo) {
 	w.LastError = ""
 	_ = d.store.UpdateWatch(w)
 
-	// 弹幕采集（M4.2）：5s 密度桶落库，供曲线展示与双信号高光
-	dc := NewDanmakuCollector(info.RoomID)
-	dc.OnLog = func(format string, args ...any) {
-		fmt.Printf("[danmaku %s] %s\n", w.RoomID, fmt.Sprintf(format, args...))
-	}
-	dc.OnBucket = func(roomID string, bucketStart int64, count int) {
-		if err := d.store.AddBarrage(roomID, bucketStart, count); err != nil {
-			dc.log("弹幕桶落库失败：%v", err)
+	// 弹幕采集（M4.2，仅 B站）：5s 密度桶落库，供曲线展示与双信号高光
+	if w.Platform == "" || w.Platform == "bilibili" {
+		dc := NewDanmakuCollector(info.RoomID)
+		dc.OnLog = func(format string, args ...any) {
+			fmt.Printf("[danmaku %s] %s\n", w.RoomID, fmt.Sprintf(format, args...))
 		}
+		dc.OnBucket = func(roomID string, bucketStart int64, count int) {
+			if err := d.store.AddBarrage(roomID, bucketStart, count); err != nil {
+				dc.log("弹幕桶落库失败：%v", err)
+			}
+		}
+		s.danmaku = dc
+		dc.Start(ctx)
 	}
-	s.danmaku = dc
-	dc.Start(ctx)
-
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
@@ -255,13 +258,13 @@ func (d *Daemon) runLoop(ctx context.Context, s *liveSession) {
 			return
 		}
 		// API 调用用独立 ctx，避免会话取消误伤检测
-		playURL, err := GetPlayURL(context.Background(), s.roomID)
+		playURL, err := d.playURL(context.Background(), s.platform, s.roomID)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
 			if attempt >= 3 {
-				info, err2 := GetRoomInfo(context.Background(), s.roomID)
+				info, err2 := d.roomInfo(context.Background(), s.platform, s.roomID)
 				if err2 != nil || info.LiveStatus == 0 {
 					return // 下播
 				}
@@ -273,8 +276,8 @@ func (d *Daemon) runLoop(ctx context.Context, s *liveSession) {
 			continue
 		}
 
-		// 进程内拉流（分段写 segDir，onSeg 回调更新段计数；首段即算 1）
-		_, _, err = StreamFLV(ctx, playURL, s.segDir, d.cfg.Live.SegmentSec,
+		// 进程内拉流（分段写 segDir，onSeg 回调更新段计数；首段即算 1；重连续写段号）
+		_, _, err = StreamFLV(ctx, playURL, s.segDir, d.cfg.Live.SegmentSec, countSegFiles(s.segDir),
 			func(segIdx int, _ int64) { s.segCount.Store(int32(segIdx + 1)) })
 		if ctx.Err() != nil {
 			return
@@ -282,7 +285,7 @@ func (d *Daemon) runLoop(ctx context.Context, s *liveSession) {
 		// 流断后探测直播间状态：API 失败 ≠ 下播，连续 3 次才收工
 		down := false
 		for probe := 0; probe < 3; probe++ {
-			info, err2 := GetRoomInfo(context.Background(), s.roomID)
+			info, err2 := d.roomInfo(context.Background(), s.platform, s.roomID)
 			if err2 == nil {
 				down = info.LiveStatus == 0
 				break
@@ -367,4 +370,48 @@ func listSegFiles(dir string) []string {
 		}
 	}
 	return out
+}
+
+// countSegFiles 统计目录下已有段文件数（含残段，重连续写用）
+func countSegFiles(dir string) int {
+	matches, _ := filepath.Glob(filepath.Join(dir, "seg_*.flv"))
+	return len(matches)
+}
+
+// ── 平台分发（M4 多平台：bilibili / huya）──
+
+// roomInfo 按平台获取直播间状态（统一转成 RoomInfo 结构）
+func (d *Daemon) roomInfo(ctx context.Context, platform, roomID string) (*RoomInfo, error) {
+	switch platform {
+	case "huya":
+		h, err := GetHuyaRoomInfo(ctx, roomID)
+		if err != nil {
+			return nil, err
+		}
+		st := 0
+		if h.LiveStatus == 2 {
+			st = 1
+		}
+		return &RoomInfo{RoomID: h.RoomID, Title: h.Title, LiveStatus: st}, nil
+	default: // bilibili
+		return GetRoomInfo(ctx, roomID)
+	}
+}
+
+// playURL 获取平台 FLV 播放地址（虎牙优先选第一条线路）
+func (d *Daemon) playURL(ctx context.Context, platform, roomID string) (string, error) {
+	switch platform {
+	case "huya":
+		h, err := GetHuyaRoomInfo(ctx, roomID)
+		if err != nil {
+			return "", err
+		}
+		urls, err := HuyaPlayURLs(h)
+		if err != nil {
+			return "", err
+		}
+		return urls[0], nil
+	default: // bilibili
+		return GetPlayURL(ctx, roomID)
+	}
 }
