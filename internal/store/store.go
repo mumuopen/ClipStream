@@ -126,6 +126,23 @@ func (s *Store) DeleteWatch(id int64) error {
 	return err
 }
 
+// WatchByRoomID 按房间号查关注（录制守护进程 endSession 回写状态用）
+func (s *Store) WatchByRoomID(roomID string) (*Watch, error) {
+	row := s.db.QueryRow(`SELECT id,platform,url,room_id,title,status,last_error,live_start,seg_dir,seg_count,created_at
+		FROM watches WHERE room_id=?`, roomID)
+	return scanWatch(row)
+}
+
+func scanWatch(r scanner) (*Watch, error) {
+	var w Watch
+	err := r.Scan(&w.ID, &w.Platform, &w.URL, &w.RoomID, &w.Title, &w.Status,
+		&w.LastError, &w.LiveStart, &w.SegDir, &w.SegCount, &w.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) CreateJob(j *core.Job) error {

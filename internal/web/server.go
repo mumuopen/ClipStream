@@ -30,11 +30,10 @@ type Server struct {
 	store  *store.Store
 	runner *pipeline.Runner
 	bus    *core.Bus
-	guard  *live.Guard
 }
 
-func NewServer(cfg *config.Config, st *store.Store, r *pipeline.Runner, bus *core.Bus, guard *live.Guard) *Server {
-	return &Server{cfg: cfg, store: st, runner: r, bus: bus, guard: guard}
+func NewServer(cfg *config.Config, st *store.Store, r *pipeline.Runner, bus *core.Bus) *Server {
+	return &Server{cfg: cfg, store: st, runner: r, bus: bus}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -47,10 +46,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/jobs/{id}/events", s.events)
 	mux.HandleFunc("GET /api/files/{job}/{file...}", s.serveFile)
 	mux.HandleFunc("GET /api/stats", s.stats)
-	// M4 直播关注
+	// M4 直播关注（录制由独立 daemon 进程负责，serve 只读状态）
 	mux.HandleFunc("GET /api/live/watches", s.listWatches)
 	mux.HandleFunc("POST /api/live/watches", s.addWatch)
 	mux.HandleFunc("DELETE /api/live/watches/{id}", s.deleteWatch)
+	mux.HandleFunc("GET /api/live/daemon", s.liveDaemon)
 	return logRequest(mux)
 }
 
@@ -97,9 +97,7 @@ func (s *Server) addWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wt.ID = id
-	if s.guard != nil {
-		s.guard.Kick() // 立即触发一轮检测
-	}
+	// 录制检测由独立 daemon 轮询负责（默认周期内即可感知，无需踢一脚）
 	writeJSON(w, wt)
 }
 
@@ -109,15 +107,27 @@ func (s *Server) deleteWatch(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 400, "无效 id")
 		return
 	}
-	// 若在录制，先停
-	if s.guard != nil {
-		s.guard.StopRoomByID(id)
-	}
+	// 删关注即停止录制；若录制中由 daemon 兜底（会话下轮 tick 检测到关注已删即停）
 	if err := s.store.DeleteWatch(id); err != nil {
 		httpError(w, 500, err.Error())
 		return
 	}
 	writeJSON(w, map[string]string{"ok": "true"})
+}
+
+// liveDaemon 录制守护进程存活探测（心跳文件距今未超过轮询间隔 3 倍视为运行中）
+func (s *Server) liveDaemon(w http.ResponseWriter, r *http.Request) {
+	beatPath := filepath.Join(s.cfg.DataDir, "live", "daemon.heartbeat")
+	running := false
+	lastBeat := int64(0)
+	if b, err := os.ReadFile(beatPath); err == nil {
+		if v, err2 := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64); err2 == nil {
+			lastBeat = v
+			threshold := int64(s.cfg.Live.CheckIntervalSec)*3 + 30
+			running = time.Now().Unix()-lastBeat < threshold
+		}
+	}
+	writeJSON(w, map[string]any{"running": running, "last_beat": lastBeat})
 }
 
 // stats 引擎/账号配置状态（控制台状态灯与设置页数据源；只报就绪性，不做运行时探测）
