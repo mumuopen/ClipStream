@@ -766,10 +766,8 @@ function drawBarrage(canvas, buckets) {
 let accounts = [];
 let schedules = [];
 const PLAT_META = {
-  bilibili:    { cn: 'B站', color: '#fb7299' },
-  douyin:      { cn: '抖音', color: '#26f5fd' },
-  xiaohongshu: { cn: '小红书', color: '#ff2442' },
-  kuaishou:    { cn: '快手', color: '#ff4906' },
+  bilibili: { cn: 'B站', color: '#fb7299' },
+  // 其他平台（抖音/小红书/快手）尚未接入，按需在 issue 中提出
 };
 let schedPlats = ['bilibili'];
 async function refreshMatrix() {
@@ -833,7 +831,7 @@ function renderLabels(el) {
         <div class="m5-form">
           <label>调度名 <input id="sch-name" placeholder="如 晚高峰错峰"></label>
           <label>触发时间 <input id="sch-time" type="time" value="21:00"></label>
-          <label>目标平台 <span class="m5-plats">${platChips}</span></label>
+          <label>发布平台 <span class="m5-plats">${platChips}</span><span class="hint">当前支持 B站</span></label>
           <button onclick="addSchedule()">创建调度</button>
         </div>
         <div class="acc-list">${schCards}</div>

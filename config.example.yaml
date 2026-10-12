@@ -1,0 +1,43 @@
+# GuanClip 配置示例（复制为 config.yaml 后按需修改）
+# 注意：config.yaml 已加入 .gitignore，不会提交到 GitHub——请勿在本文件中填写真实密钥
+# 引擎默认取 PATH 中的命令；未配置的引擎对应功能自动降级（详见 README）
+
+data_dir: ./data
+proxy: "http://127.0.0.1:7897"   # 仅海外源走代理；B站/虎牙等国内平台自动直连
+
+engines:
+  ytdlp: "yt-dlp"                # 视频下载
+  ffmpeg: "ffmpeg"
+  ffprobe: "ffprobe"
+  biliup: ""                     # B站投稿引擎：从 github.com/biliup/biliup release 下载后填绝对路径
+  asr:
+    binary: ""                   # whisper.cpp 可执行文件（whisper-cli）
+    model: ""                    # ggml 模型路径（如 ggml-medium.bin）
+    language: auto
+
+llm:
+  base_url: "https://api.deepseek.com/v1"  # OpenAI 兼容端点
+  api_key: ""                    # 你的 API Key（必填才启用 LLM 高光/解说/翻译）
+  model: "deepseek-chat"
+  proxy: ""
+
+web:
+  listen: "127.0.0.1:8899"
+
+publish:
+  headless: false                # 抖音浏览器发布是否无头（当前平台规划中）
+  screenshots: true
+  platforms_dir: "configs/platforms"
+
+notify:
+  enable: true
+  url: ""                        # 自建 pushme 服务地址，如 http://server:3100/
+  push_key: ""                   # 手机 PushMe App 的 push_key（订阅用）
+
+chrome:
+  path: ""                       # 本机 Chrome 可执行路径，留空则自动探测
+
+live:
+  check_interval: 60             # 开播检测轮询秒
+  segment_time: 600              # 录制分段秒
+  auto_clip: true                # 下播后自动送切片管线
