@@ -44,11 +44,17 @@ type liveSession struct {
 	platform string
 	segDir   string
 	title    string
-	segCount atomic.Int32
-	danmaku  *DanmakuCollector
+segCount atomic.Int32
+	danmaku  danmakuCollector
 
 	cancel context.CancelFunc
 	done   chan struct{}
+}
+
+// danmakuCollector 弹幕采集器公共接口（B站 WS / 虎牙 TACG 共用）
+type danmakuCollector interface {
+	Start(parent context.Context)
+	Stop()
 }
 
 func (s *liveSession) SegCount() int32 { return s.segCount.Load() }
@@ -225,7 +231,7 @@ func (d *Daemon) startSession(w *store.Watch, info *RoomInfo) {
 	w.LastError = ""
 	_ = d.store.UpdateWatch(w)
 
-	// 弹幕采集（M4.2，仅 B站）：5s 密度桶落库，供曲线展示与双信号高光
+	// 弹幕采集（M4.2）：5s 密度桶落库，供曲线展示与双信号高光（B站 WS / 虎牙 TACG）
 	if w.Platform == "" || w.Platform == "bilibili" {
 		dc := NewDanmakuCollector(info.RoomID)
 		dc.OnLog = func(format string, args ...any) {
@@ -238,6 +244,18 @@ func (d *Daemon) startSession(w *store.Watch, info *RoomInfo) {
 		}
 		s.danmaku = dc
 		dc.Start(ctx)
+	} else if w.Platform == "huya" {
+		hc := NewHuyaDanmakuCollector(info.RoomID, info.Yyid, info.TopSid, info.Sid)
+		hc.OnLog = func(format string, args ...any) {
+			fmt.Printf("[danmaku-hy %s] %s\n", w.RoomID, fmt.Sprintf(format, args...))
+		}
+		hc.OnBucket = func(roomID string, bucketStart int64, count int) {
+			if err := d.store.AddBarrage(roomID, bucketStart, count); err != nil {
+				hc.log("弹幕桶落库失败：%v", err)
+			}
+		}
+		s.danmaku = hc
+		hc.Start(ctx)
 	}
 	d.wg.Add(1)
 	go func() {
@@ -392,7 +410,8 @@ func (d *Daemon) roomInfo(ctx context.Context, platform, roomID string) (*RoomIn
 		if h.LiveStatus == 2 {
 			st = 1
 		}
-		return &RoomInfo{RoomID: h.RoomID, Title: h.Title, LiveStatus: st}, nil
+		return &RoomInfo{RoomID: h.RoomID, Title: h.Title, LiveStatus: st,
+			Yyid: h.Yyid, TopSid: h.TopSid, Sid: h.SubSid}, nil
 	default: // bilibili
 		return GetRoomInfo(ctx, roomID)
 	}

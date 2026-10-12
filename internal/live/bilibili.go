@@ -33,6 +33,11 @@ type RoomInfo struct {
 	Title      string
 	LiveStatus int // 1=直播中 0=未开播 2=轮播中
 	Cover      string
+
+	// 弹幕采集参数（虎牙用）：lYyid / lChannelId / lSubChannelId
+	Yyid   int64
+	TopSid int64
+	Sid    int64
 }
 
 // GetRoomInfo 开播检测（API：room/v1/Room/get_info，国内直连）
