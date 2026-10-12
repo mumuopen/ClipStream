@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"regexp"
+	"sync"
 	"time"
 )
 
@@ -161,6 +163,58 @@ func resolveRedirect(ctx context.Context, rawURL string) (string, error) {
 	return resp.Request.URL.String(), nil
 }
 
+// DanmuServer 弹幕 WS 接入点（getDanmuInfo 返回）
+type DanmuServer struct {
+	Host    string
+	WssPort int
+	Token   string
+}
+
+// GetDanmuInfo 获取弹幕 WS 接入信息（M4.2）
+// 2026 实测契约：必须带真实房间号（short_id 无效）+ wbi 签名（缺 w_rid → -352），
+// 返回全部 host 节点供逐点尝试（个别节点可能 1006）。
+func GetDanmuInfo(ctx context.Context, roomID string) ([]*DanmuServer, error) {
+	// 对齐页面真实请求参数：id=<realID>&type=0&web_location=444.8 + wbi 签名
+	q, err := signedQuery(ctx, map[string]string{
+		"id": roomID, "type": "0", "web_location": "444.8",
+	})
+	if err != nil {
+		return nil, err
+	}
+	u := "https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?" + q
+	var out struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Token    string `json:"token"`
+			HostList []struct {
+				Host    string `json:"host"`
+				WssPort int    `json:"wss_port"`
+			} `json:"host_list"`
+		} `json:"data"`
+	}
+	if err := apiJSON(ctx, u, &out); err != nil {
+		return nil, err
+	}
+	if out.Code != 0 {
+		return nil, fmt.Errorf("B站 getDanmuInfo code=%d: %s", out.Code, out.Message)
+	}
+	if len(out.Data.HostList) == 0 || out.Data.Token == "" {
+		return nil, fmt.Errorf("房间 %s 未返回弹幕接入点", roomID)
+	}
+	var servers []*DanmuServer
+	for _, h := range out.Data.HostList {
+		if h.Host == "" || h.WssPort <= 0 {
+			continue
+		}
+		servers = append(servers, &DanmuServer{Host: h.Host, WssPort: h.WssPort, Token: out.Data.Token})
+	}
+	if len(servers) == 0 {
+		return nil, fmt.Errorf("房间 %s 的弹幕接入点无可用 wss 节点", roomID)
+	}
+	return servers, nil
+}
+
 // Referer 返回请求流地址时应带的 Referer
 func Referer(roomID string) string {
 	return "https://live.bilibili.com/" + roomID
@@ -173,6 +227,8 @@ func apiJSON(ctx context.Context, u string, out any) error {
 	}
 	req.Header.Set("User-Agent", bilibiliUA)
 	req.Header.Set("Referer", "https://live.bilibili.com")
+	// buvid3 cookie：B站 API 风控基线（getDanmuInfo 缺它返回 -352）
+	req.Header.Set("Cookie", "buvid3="+buvid3Cookie())
 	c := &http.Client{Timeout: 15 * time.Second}
 	resp, err := c.Do(req)
 	if err != nil {
@@ -184,4 +240,22 @@ func apiJSON(ctx context.Context, u string, out any) error {
 		return fmt.Errorf("B站 API 响应解析失败: %w（原文: %.200s）", err, string(raw))
 	}
 	return nil
+}
+
+// buvid3Cookie B站设备标识（进程内随机生成一次，UUID 风格 hex32+infoc）
+var (
+	buvidOnce sync.Once
+	buvidVal  string
+)
+
+func buvid3Cookie() string {
+	buvidOnce.Do(func() {
+		const hex = "0123456789ABCDEF"
+		b := make([]byte, 32)
+		for i := range b {
+			b[i] = hex[rand.Intn(len(hex))]
+		}
+		buvidVal = string(b) + "infoc"
+	})
+	return buvidVal
 }

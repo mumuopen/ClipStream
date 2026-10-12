@@ -51,6 +51,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/live/watches", s.addWatch)
 	mux.HandleFunc("DELETE /api/live/watches/{id}", s.deleteWatch)
 	mux.HandleFunc("GET /api/live/daemon", s.liveDaemon)
+	mux.HandleFunc("GET /api/live/barrage", s.liveBarrage)
 	return logRequest(mux)
 }
 
@@ -128,6 +129,31 @@ func (s *Server) liveDaemon(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, map[string]any{"running": running, "last_beat": lastBeat})
+}
+
+// liveBarrage 弹幕密度曲线数据（M4.2）：?room_id=6&minutes=60
+func (s *Server) liveBarrage(w http.ResponseWriter, r *http.Request) {
+	roomID := r.URL.Query().Get("room_id")
+	if roomID == "" {
+		httpError(w, 400, "缺少 room_id")
+		return
+	}
+	minutes := 120
+	if v := r.URL.Query().Get("minutes"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 1440 {
+			minutes = n
+		}
+	}
+	since := time.Now().Unix() - int64(minutes)*60
+	buckets, err := s.store.ListBarrage(roomID, since)
+	if err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	if buckets == nil {
+		buckets = []store.BarrageBucket{}
+	}
+	writeJSON(w, map[string]any{"room_id": roomID, "minutes": minutes, "buckets": buckets})
 }
 
 // stats 引擎/账号配置状态（控制台状态灯与设置页数据源；只报就绪性，不做运行时探测）

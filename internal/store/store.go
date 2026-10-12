@@ -48,7 +48,7 @@ func (s *Store) migrate() error {
 	)`); err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS watches (
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS watches (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		platform TEXT NOT NULL DEFAULT 'bilibili',
 		url TEXT NOT NULL,
@@ -60,6 +60,15 @@ func (s *Store) migrate() error {
 		seg_dir TEXT NOT NULL DEFAULT '',
 		seg_count INTEGER NOT NULL DEFAULT 0,
 		created_at INTEGER
+	)`); err != nil {
+		return err
+	}
+	// 弹幕密度桶（M4.2：5s 一桶，主键防重复累加）
+	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS barrage_buckets (
+		room_id TEXT NOT NULL,
+		bucket_ts INTEGER NOT NULL,
+		count INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (room_id, bucket_ts)
 	)`)
 	return err
 }
@@ -124,6 +133,41 @@ func (s *Store) UpdateWatch(w *Watch) error {
 func (s *Store) DeleteWatch(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM watches WHERE id=?`, id)
 	return err
+}
+
+// ── 弹幕密度桶（M4.2）──
+
+// BarrageBucket 弹幕密度桶：TS 桶起点 unix 秒；Count 桶内弹幕数
+type BarrageBucket struct {
+	TS    int64 `json:"ts"`
+	Count int   `json:"count"`
+}
+
+// AddBarrage 累加一个密度桶（同桶跨会话/重连累加）
+func (s *Store) AddBarrage(roomID string, bucketTS int64, count int) error {
+	_, err := s.db.Exec(`INSERT INTO barrage_buckets (room_id,bucket_ts,count) VALUES (?,?,?)
+		ON CONFLICT(room_id,bucket_ts) DO UPDATE SET count = count + excluded.count`,
+		roomID, bucketTS, count)
+	return err
+}
+
+// ListBarrage 读取 since（unix 秒）之后的密度桶，按时间升序
+func (s *Store) ListBarrage(roomID string, since int64) ([]BarrageBucket, error) {
+	rows, err := s.db.Query(`SELECT bucket_ts,count FROM barrage_buckets
+		WHERE room_id=? AND bucket_ts>=? ORDER BY bucket_ts`, roomID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BarrageBucket
+	for rows.Next() {
+		var b BarrageBucket
+		if err := rows.Scan(&b.TS, &b.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
 }
 
 // WatchByRoomID 按房间号查关注（录制守护进程 endSession 回写状态用）

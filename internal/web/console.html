@@ -362,6 +362,7 @@ const NAV = [
   { key: 'creeper',   name: '采集库',   soon: 'M4', origin: 'Creeper Library' },
   { key: 'hotguard',  name: '热门守卫', soon: 'M4', origin: 'Hot Guard' },
   { key: 'livefollow',name: '直播关注', sub: '开播自动录 + 下播自动切片', origin: 'Live Follow' },
+  { key: 'barrage',   name: '弹幕曲线', sub: '密度曲线 · 双信号高光', origin: 'Barrage Curve' },
   { group: '矩阵 · M5' },
   { key: 'labels',    name: '标签矩阵', soon: 'M5', origin: 'Label Manage' },
   { group: '系统' },
@@ -427,7 +428,8 @@ function renderPage() {
     case 'tasks':     return renderTasks(el);
     case 'review':    return renderReview(el);
     case 'settings':  return renderSettings(el);
-    case 'livefollow': return renderLiveFollow(el);
+	case 'livefollow': return renderLiveFollow(el);
+    case 'barrage':    return renderBarrage(el);
     default:          return renderPlaceholder(el, page);
   }
 }
@@ -604,6 +606,102 @@ function renderSettings(el) {
         <div class="cmd"><b>guanclip status</b>              任务一览</div>
       </div>
     </div>`;
+}
+
+/* ═══════════ 页面：弹幕曲线（M4.2，对齐原版 Barrage Curve/BarrageScoreCurve）═══════════ */
+let barrageRoom = '';
+let barrageData = { buckets: [] };
+async function refreshBarrage() {
+  if (page !== 'barrage' || !barrageRoom) return;
+  try {
+    barrageData = await fetchJSON('/api/live/barrage?room_id=' + encodeURIComponent(barrageRoom) + '&minutes=' + (barrageMinutes || 120));
+  } catch (e) { return; }
+  const el = $('#page');
+  if (el) { drawBarrage($('#barrage-canvas'), barrageData.buckets); $('#barrage-stat').textContent = statText(); }
+}
+let barrageMinutes = 120;
+function statText() {
+  if (!barrageData.buckets || !barrageData.buckets.length) return '暂无弹幕数据（直播中才有）';
+  const sum = barrageData.buckets.reduce((a, b) => a + b.count, 0);
+  const n = barrageData.buckets.length;
+  const max = Math.max(...barrageData.buckets.map(b => b.count));
+  const t0 = barrageData.buckets[0].ts, t1 = barrageData.buckets[n - 1].ts;
+  return `共 ${sum} 条弹幕 · 峰值 ${max} 条/5s · 覆盖 ${fmtDur(t1 - t0)}`;
+}
+function renderBarrage(el) {
+  const w = watches.find(x => x.room_id === barrageRoom);
+  el.innerHTML = `
+    <div class="feed">
+      <select id="barrage-room" style="flex:1;max-width:360px;padding:9px 12px;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px">
+        ${watches.map(x => `<option value="${x.room_id}" ${x.room_id === barrageRoom ? 'selected' : ''}>房间 ${x.room_id} · ${esc(x.title || '')}</option>`).join('')}
+      </select>
+      <select id="barrage-min" style="padding:9px 12px;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px">
+        <option value="30">近 30 分</option><option value="120" ${barrageMinutes === 120 ? 'selected' : ''}>近 2 小时</option><option value="360" ${barrageMinutes === 360 ? 'selected' : ''}>近 6 小时</option>
+      </select>
+      <button onclick="refreshBarrage()">刷新</button>
+    </div>
+    <div class="ph-card">
+      <div class="ph-name">弹幕密度曲线<span class="ph-tag">M4.2</span></div>
+      <div class="ph-origin">血统：原版 chopperbot-barrage · BarrageScoreCurve</div>
+      <div class="ph-desc" id="barrage-stat" style="margin-bottom:12px"></div>
+      <canvas id="barrage-canvas" style="width:100%;height:260px;background:var(--card);border:1px solid var(--line);border-radius:10px"></canvas>
+      <div class="hint" style="margin-top:10px">弹幕 WebSocket 采集（5s/桶）→ 密度曲线实时展示；录制会话结束自动落库。后续与 ASR 转写 + LLM 评分融合为双信号高光检测。</div>
+    </div>`;
+  const sel = $('#barrage-room');
+  if (sel) {
+    sel.addEventListener('change', () => { barrageRoom = sel.value; refreshBarrage(); });
+    if (!barrageRoom && sel.value) { barrageRoom = sel.value; }
+  }
+  const mins = $('#barrage-min');
+  if (mins) mins.addEventListener('change', () => { barrageMinutes = +mins.value; refreshBarrage(); });
+  if (barrageRoom) refreshBarrage();
+  else { const st = $('#barrage-stat'); if (st) st.textContent = '请选择直播间（录制中自动采集弹幕）'; }
+}
+function drawBarrage(canvas, buckets) {
+  if (!canvas || !buckets || !buckets.length) { return; }
+  const ctx = canvas.getContext('2d');
+  const W = canvas.clientWidth || 800, H = canvas.clientHeight || 240;
+  canvas.width = W * 2; canvas.height = H * 2; // 高清屏 2x
+  ctx.scale(2, 2);
+  ctx.fillStyle = '#101820'; ctx.fillRect(0, 0, W, H);
+  const max = Math.max(5, ...buckets.map(b => b.count));
+  const t0 = buckets[0].ts, t1 = buckets[buckets.length - 1].ts;
+  const span = Math.max(1, t1 - t0);
+  const pad = 30;
+  // 网格
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+  for (let g = 0; g < 4; g++) {
+    const y = pad + (H - pad * 2) * g / 3;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+  // 折线
+  ctx.strokeStyle = '#e8b34b'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  buckets.forEach((b, i) => {
+    const x = (b.ts - t0) / span * (W - pad) + pad;
+    const y = H - pad - (b.count / max) * (H - pad * 2);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  // 峰值标注
+  let peak = 0;
+  buckets.forEach((b, i) => { if (b.count > peak) peak = b.count; });
+  const pk = buckets.find(b => b.count === peak);
+  if (pk) {
+    const x = (pk.ts - t0) / span * (W - pad) + pad;
+    ctx.fillStyle = '#e8e0d0'; ctx.font = '11px system-ui';
+    ctx.fillText('峰值 ' + peak, Math.max(4, x - 24), pad - 2);
+  }
+  // 时间轴标签
+  ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '11px system-ui';
+  const ticks = 4;
+  for (let i = 0; i <= ticks; i++) {
+    const t = t0 + span * i / ticks;
+    const x = (t - t0) / span * (W - pad) + pad;
+    ctx.fillText(fmtClock(t), x - 24, H - 6);
+  }
+  ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = '11px system-ui';
+  ctx.fillText('弹幕/5s', 4, 12);
 }
 
 /* ═══════════ 任务列表渲染（总览/任务中心共用）═══════════ */
@@ -845,7 +943,8 @@ async function refresh() {
   if (page === 'board') { renderBoard($('#page')); }
   else if (page === 'tasks') { const c = $('#task-jobs'); if (c) renderJobList(c, jobs.filter(j => taskFilter === 'all' || j.kind === taskFilter), true); }
   else if (page === 'review') { renderReview($('#page')); }
-  else if (page === 'livefollow') { refreshWatches(); }
+	else if (page === 'livefollow') { refreshWatches(); }
+  else if (page === 'barrage') { refreshBarrage(); }
 }
 async function fetchStats() {
   try { stats = await fetchJSON('/api/stats'); renderNav(); if (page === 'settings') renderSettings($('#page')); } catch (e) {}

@@ -38,12 +38,13 @@ type Daemon struct {
 	wg     sync.WaitGroup
 }
 
-// liveSession 单场直播录制会话（进程内拉流）
+// liveSession 单场直播录制会话（进程内拉流 + 弹幕采集）
 type liveSession struct {
 	roomID   string
 	segDir   string
 	title    string
 	segCount atomic.Int32
+	danmaku  *DanmakuCollector
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -214,13 +215,26 @@ func (d *Daemon) startSession(w *store.Watch, info *RoomInfo) {
 	d.sessions[w.RoomID] = s
 	d.mu.Unlock()
 
-	w.Status = "recording"
+		w.Status = "recording"
 	w.LiveStart = time.Now().Unix()
 	w.SegDir = segDir
 	w.SegCount = 0
 	w.Title = info.Title
 	w.LastError = ""
 	_ = d.store.UpdateWatch(w)
+
+	// 弹幕采集（M4.2）：5s 密度桶落库，供曲线展示与双信号高光
+	dc := NewDanmakuCollector(info.RoomID)
+	dc.OnLog = func(format string, args ...any) {
+		fmt.Printf("[danmaku %s] %s\n", w.RoomID, fmt.Sprintf(format, args...))
+	}
+	dc.OnBucket = func(roomID string, bucketStart int64, count int) {
+		if err := d.store.AddBarrage(roomID, bucketStart, count); err != nil {
+			dc.log("弹幕桶落库失败：%v", err)
+		}
+	}
+	s.danmaku = dc
+	dc.Start(ctx)
 
 	d.wg.Add(1)
 	go func() {
@@ -288,6 +302,10 @@ func (d *Daemon) runLoop(ctx context.Context, s *liveSession) {
 
 // endSession 会话收尾：状态回写 + 通知 + 分段入切片队列
 func (d *Daemon) endSession(s *liveSession) {
+	// 停弹幕采集（flush 残余桶）
+	if s.danmaku != nil {
+		s.danmaku.Stop()
+	}
 	d.mu.Lock()
 	if d.sessions[s.roomID] == s {
 		delete(d.sessions, s.roomID)
