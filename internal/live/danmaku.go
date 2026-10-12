@@ -16,16 +16,19 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"sync/atomic"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/gobwas/ws"
+	"github.com/gobwas/ws/wsutil"
 )
 
 const (
@@ -144,38 +147,56 @@ func (c *DanmakuCollector) connectAndRead(ctx context.Context) error {
 	return lastErr
 }
 
-// session 单个节点的完整会话（认证 → 心跳 → 读循环）
+// session 单个节点的完整会话（TLS → WS 握手 → 认证 → 心跳 → 读循环）
+// 2026-10 实测定型（详见当天日志）：
+//   - Go 标准 TLS（NextProtos http/1.1）即可，utls Chrome 指纹反而被拉黑拒连
+//   - gobwas 握手带 Origin/UA；无子协议（服务器不回 chat，无需要求）
+//   - 认证 uid=0（对齐浏览器实测，uid=1 会 1006）+ getDanmuInfo token
+//   - 读帧用 wsutil.ReadServerData（客户端视角；ReadClientData 方向反了会报 mask 错误）
 func (c *DanmakuCollector) session(ctx context.Context, ds *DanmuServer) error {
-	wsURL := fmt.Sprintf("wss://%s:%d/sub", ds.Host, ds.WssPort)
+	hostport := net.JoinHostPort(ds.Host, strconv.Itoa(ds.WssPort))
 
-	// B站弹幕硬性要求：子协议 chat + UA + Origin，缺任一即 1006 异常断开
-	header := http.Header{}
-	header.Set("User-Agent", barrageWSUserAgent)
-	header.Set("Origin", "https://live.bilibili.com")
-	dialer := websocket.Dialer{
-		HandshakeTimeout:  10 * time.Second,
-		Proxy:             nil, // B站国内直连
-		EnableCompression: true,
-		Subprotocols:      []string{"chat"},
-	}
-	conn, _, err := dialer.DialContext(ctx, wsURL, header)
+	// ① Go 标准 TLS
+	d := net.Dialer{Timeout: 10 * time.Second}
+	tcp, err := d.DialContext(ctx, "tcp", hostport)
 	if err != nil {
-		return fmt.Errorf("弹幕 WS 连接失败: %w", err)
+		return fmt.Errorf("弹幕 TCP 连接失败: %w", err)
 	}
-	defer conn.Close()
+	tlsConn := tls.Client(tcp, &tls.Config{ServerName: ds.Host, NextProtos: []string{"http/1.1"}})
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		tcp.Close()
+		return fmt.Errorf("弹幕 TLS 握手失败: %w", err)
+	}
+	defer tlsConn.Close()
 	c.lastBeat.Store(time.Now().Unix())
 
-	// 认证包（2026 实测契约：头 protover=1、带 buvid 字段、roomid 必须为数字；缺任一会被 1006 断开）
+	// ② gobwas WS 握手（ws:// 复用已建 TLS 连接）
+	wsConn, _, _, err := ws.Dialer{
+		Timeout: 10 * time.Second,
+		NetDial: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return tlsConn, nil
+		},
+		Header: ws.HandshakeHeaderHTTP(http.Header{
+			"User-Agent": []string{barrageWSUserAgent},
+			"Origin":     []string{"https://live.bilibili.com"},
+		}),
+	}.Dial(ctx, "ws://"+hostport+"/sub")
+	if err != nil {
+		return fmt.Errorf("弹幕 WS 握手失败: %w", err)
+	}
+	defer wsConn.Close()
+
+	// ③ 认证包（uid=0 对齐浏览器 + getDanmuInfo token）
 	roomIDNum, _ := strconv.Atoi(c.RoomID)
 	auth, _ := json.Marshal(map[string]any{
-		"uid": 1, "roomid": roomIDNum, "protover": 2,
-		"buvid": buvid3Cookie(), "platform": "web", "type": 2, "key": ds.Token,
+		"uid": 0, "roomid": roomIDNum, "protover": 2,
+		"platform": "web", "type": 2, "key": ds.Token,
 	})
-	if err := conn.WriteMessage(websocket.BinaryMessage, buildPacket(opAuth, authProtoVer, auth)); err != nil {
+	if err := wsutil.WriteClientBinary(wsConn, buildPacket(opAuth, authProtoVer, auth)); err != nil {
 		return err
 	}
 
-	// 心跳（30s 一次）
+	// ④ 心跳（30s 一次）
 	heartbeatDone := make(chan struct{})
 	defer close(heartbeatDone)
 	go func() {
@@ -188,25 +209,27 @@ func (c *DanmakuCollector) session(ctx context.Context, ds *DanmuServer) error {
 			case <-heartbeatDone:
 				return
 			case <-t.C:
-				_ = conn.WriteMessage(websocket.BinaryMessage, buildPacket(opHeartbeat, authProtoVer, []byte("[object Object]")))
+				_ = wsutil.WriteClientBinary(wsConn, buildPacket(opHeartbeat, authProtoVer, []byte("[object Object]")))
 			}
 		}
 	}()
 
-	// 读循环
-	conn.SetReadDeadline(time.Now().Add(90 * time.Second)) // 心跳兜底：90s 无数据判定连接假死
+	// ⑤ 读循环
+	wsConn.SetReadDeadline(time.Now().Add(90 * time.Second))
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
-		_, data, err := conn.ReadMessage()
+		data, op, err := wsutil.ReadServerData(wsConn)
 		if err != nil {
 			return err
 		}
-		_ = conn.SetReadDeadline(time.Now().Add(90 * time.Second))
-		c.handleFrame(data)
+		_ = wsConn.SetReadDeadline(time.Now().Add(90 * time.Second))
+		if op == ws.OpBinary {
+			c.handleFrame(data)
+		}
 	}
 }
 
