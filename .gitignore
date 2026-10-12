@@ -14,4 +14,4 @@ config.yaml
 .temp-ck/
 
 # 原版 ChopperBot 源码（仅供研读）
-reference/
+reference/*.zip
