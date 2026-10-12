@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -61,6 +62,8 @@ func main() {
 		if err := doLogin(cfgPath, args); err != nil {
 			log.Fatalf("login 退出: %v", err)
 		}
+	case "record-test":
+		doRecordTest(args)
 	default:
 		usage(cfgPath)
 	}
@@ -259,6 +262,13 @@ func doServe(cfgPath string) error {
 	}
 	httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()}
 
+	// 关键顺序：先创建 TCP listener，再启动 guard——
+	// Windows 上无 listener 的进程其子进程无法做 FLV 流式网络 IO（实测发现）
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("端口 %s 监听失败: %w", addr, err)
+	}
+
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -271,7 +281,7 @@ func doServe(cfgPath string) error {
 
 	fmt.Printf("GuanClip %s 控制台已启动：%s  （Ctrl+C 停止）\n", version, "http://"+addr)
 	fmt.Println("数据目录：", app.cfg.DataDir)
-	return httpSrv.ListenAndServe()
+	return httpSrv.Serve(listener)
 }
 
 // ---- run（前台执行，实时打印日志）----
@@ -432,5 +442,53 @@ func doLogin(cfgPath string, args []string) error {
 		return fmt.Errorf("缺少 --platform（bilibili 或 douyin）")
 	default:
 		return fmt.Errorf("不支持的平台 %q（当前支持 bilibili / douyin）", *platform)
+	}
+}
+
+// doRecordTest 直录制测试（绕过 guard/pipeline/bus，隔离排查网络问题）
+// 用法: guanclip record-test <room_id> <输出目录>
+func doRecordTest(args []string) {
+	if len(args) < 2 {
+		fmt.Println("用法: guanclip record-test <room_id> <输出目录>")
+		os.Exit(1)
+	}
+	roomID := args[0]
+	outDir := args[1]
+
+	// 获取 FLV 地址
+	ctx := context.Background()
+	fmt.Printf("获取房间 %s 的 FLV 地址…\n", roomID)
+	playURL, err := live.GetPlayURL(ctx, roomID)
+	if err != nil {
+		fmt.Printf("获取地址失败: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("FLV 地址: %.80s…\n", playURL)
+
+	// 启动录制器
+	exe, _ := os.Executable()
+	recordBin := filepath.Join(filepath.Dir(exe), "guanclip-record.exe")
+	if _, err := os.Stat(recordBin); err != nil {
+		fmt.Printf("找不到录制器: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("启动录制器 %s → %s\n", recordBin, outDir)
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		fmt.Printf("创建目录失败: %v\n", err)
+		os.Exit(1)
+	}
+
+	cmd := exec.Command(recordBin, playURL, outDir, "600")
+	out, err := cmd.CombinedOutput()
+	fmt.Printf("录制器输出: %s\n", string(out))
+	if err != nil {
+		fmt.Printf("录制器错误: %v\n", err)
+	}
+
+	matches, _ := filepath.Glob(filepath.Join(outDir, "seg_*.flv"))
+	for _, m := range matches {
+		fi, _ := os.Stat(m)
+		fmt.Printf("段文件: %s (%d bytes = %.1fMB)\n", filepath.Base(m), fi.Size(), float64(fi.Size())/(1<<20))
 	}
 }

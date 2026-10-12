@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
@@ -180,51 +181,6 @@ func (g *Guard) startRecording(w *store.Watch, info *RoomInfo) {
 	if err := os.MkdirAll(segDir, 0o755); err != nil {
 		return
 	}
-	// 调试：确认 startRecording 被调用
-	dbg := filepath.Join(segDir, "debug.txt")
-	_ = os.WriteFile(dbg, []byte(fmt.Sprintf("startRecording called at %s, room=%s, url=%s\n", time.Now(), w.RoomID, w.URL)), 0o644)
-
-	rec := &Recorder{
-		RoomID:     w.RoomID,
-		SegDir:     segDir,
-		FFmpegBin:  g.cfg.Engines.FFmpeg,
-		SegmentSec: g.cfg.Live.SegmentSec,
-		OnLog: func(format string, args ...any) {
-			msg := fmt.Sprintf(format, args...)
-			fmt.Printf("[live %s] %s\n", w.RoomID, msg)
-			// 同时写调试文件（防 stdout 被吞）
-			if f, e := os.OpenFile(filepath.Join(segDir, "debug.txt"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); e == nil {
-				_, _ = f.WriteString(fmt.Sprintf("%s [live %s] %s\n", time.Now().Format("15:04:05"), w.RoomID, msg))
-				_ = f.Close()
-			}
-		},
-		OnEnd: func(rec *Recorder, segs []string, reason string) {
-			g.mu.Lock()
-			delete(g.recorders, w.RoomID)
-			g.mu.Unlock()
-			w.Status = "idle"
-			w.SegDir = segDir
-			w.SegCount = len(segs)
-			_ = g.store.UpdateWatch(w)
-
-			title := w.Title
-			if info != nil && info.Title != "" {
-				title = info.Title
-			}
-			g.notify.Send("GuanClip 直播录制结束",
-				fmt.Sprintf("《%s》%s；分段 %d 个已%s", title, reason, len(segs), map[bool]string{true: " 送入切片管线", false: " 保存"}[g.cfg.Live.AutoClip && len(segs) > 0]))
-
-			// 下播自动接切片管线：每段一个 clips 任务（本地文件直入）
-			if g.cfg.Live.AutoClip && g.OnSegQueued != nil {
-				for _, seg := range segs {
-					g.OnSegQueued(seg, title)
-				}
-			}
-		},
-	}
-	g.mu.Lock()
-	g.recorders[w.RoomID] = rec
-	g.mu.Unlock()
 
 	w.Status = "recording"
 	w.LiveStart = time.Now().Unix()
@@ -233,8 +189,81 @@ func (g *Guard) startRecording(w *store.Watch, info *RoomInfo) {
 	w.Title = info.Title
 	w.LastError = ""
 	_ = g.store.UpdateWatch(w)
-	rec.Start(g.ctx)
 
+	// 【实验验证的组合模式】Windows 网络栈需要"第一次失败的子进程连接"来 prime，
+	// 之后的子进程才能做 FLV 流式 IO。保留 Recorder（作为 primer，会挂起在 CDN），
+	// 5 秒后用直接 exec.Command 做实际录制（diag2 对照实验反复验证此组合有效）。
+	rec := &Recorder{
+		RoomID:     w.RoomID,
+		SegDir:     segDir,
+		FFmpegBin:  g.cfg.Engines.FFmpeg,
+		SegmentSec: g.cfg.Live.SegmentSec,
+		OnLog:      func(format string, args ...any) {},
+		OnEnd:      func(rec *Recorder, segs []string, reason string) {},
+	}
+	rec.Start(g.ctx) // Primer goroutine（网络 prime 用，不产出有效段文件）
+
+	// 实际录制 goroutine（在 primer 启动 5 秒后执行，此组合经 diag2 实验反复验证有效）
+	go func() {
+		time.Sleep(5 * time.Second)
+		fmt.Printf("[live %s] 正式录制启动\n", w.RoomID)
+		playURL, err := GetPlayURL(context.Background(), w.RoomID)
+		if err != nil {
+			fmt.Printf("[live %s] 获取地址失败: %v\n", w.RoomID, err)
+			g.endRecording(w, segDir, "获取地址失败", info.Title)
+			return
+		}
+		exe, _ := os.Executable()
+		recordBin := filepath.Join(filepath.Dir(exe), "guanclip-record.exe")
+		fmt.Printf("[live %s] 开始拉流: %.60s\n", w.RoomID, playURL)
+		cmd := exec.Command(recordBin, playURL, segDir, fmt.Sprintf("%d", g.cfg.Live.SegmentSec))
+		out, _ := cmd.CombinedOutput()
+		if len(out) > 0 {
+			fmt.Printf("[live %s] 录制器: %s\n", w.RoomID, string(out))
+		}
+
+		// 录制结束：检查下播或重连
+		ri, e := GetRoomInfo(context.Background(), w.RoomID)
+		if e != nil || ri.LiveStatus == 0 {
+			g.endRecording(w, segDir, "下播", info.Title)
+			return
+		}
+		fmt.Printf("[live %s] 仍在播，重新启动录制\n", w.RoomID)
+		g.startRecording(w, info)
+	}()
+
+	// pushme 开播通知
 	g.notify.Send("GuanClip 开播提醒",
 		fmt.Sprintf("《%s》开播了，已自动开始录制（房间 %s）", info.Title, w.RoomID))
+}
+
+func (g *Guard) endRecording(w *store.Watch, segDir, reason, title string) {
+	segs := listSegFiles(segDir)
+	w.Status = "idle"
+	w.SegCount = len(segs)
+	_ = g.store.UpdateWatch(w)
+
+	g.notify.Send("GuanClip 直播录制结束",
+		fmt.Sprintf("《%s》%s；分段 %d 个", title, reason, len(segs)))
+
+	if g.cfg.Live.AutoClip && g.OnSegQueued != nil {
+		for _, seg := range segs {
+			g.OnSegQueued(seg, title)
+		}
+	}
+}
+
+func listSegFiles(dir string) []string {
+	matches, _ := filepath.Glob(filepath.Join(dir, "seg_*.flv"))
+	var out []string
+	for _, m := range matches {
+		if fi, err := os.Stat(m); err == nil && fi.Size() > 1<<20 {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func countSegs(dir string) int {
+	return len(listSegFiles(dir))
 }
