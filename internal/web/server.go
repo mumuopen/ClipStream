@@ -238,15 +238,17 @@ func (s *Server) addWatch(w http.ResponseWriter, r *http.Request) {
 func detectWatchRoom(ctx context.Context, rawURL string) (platform, roomID, title string, err error) {
 	switch {
 	case strings.Contains(rawURL, "huya.com"):
-		roomID, err = live.ExtractHuyaRoomID(rawURL)
-		if err != nil {
-			return "", "", "", err
+		// 数字房间号或短别名都行（www.huya.com/660000 会被虎牙重定向成 /lpl）：
+		// 直接拿路径段去抓页面，页面 JSON 回传权威数字房间号
+		roomPath := live.HuyaRoomPath(rawURL)
+		if roomPath == "" {
+			return "", "", "", fmt.Errorf("无法从 %q 识别虎牙房间（形如 https://www.huya.com/660000 或 /lpl）", rawURL)
 		}
 		cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
-		h, err := live.GetHuyaRoomInfo(cctx, roomID)
+		h, err := live.GetHuyaRoomInfo(cctx, roomPath)
 		if err != nil {
-			return "", "", "", fmt.Errorf("房间号识别成功但信息获取失败: %v", err)
+			return "", "", "", fmt.Errorf("虎牙房间解析失败: %v", err)
 		}
 		return "huya", h.RoomID, h.Title, nil
 	default: // live.bilibili.com

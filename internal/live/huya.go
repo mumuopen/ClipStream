@@ -58,6 +58,25 @@ func ExtractHuyaRoomID(raw string) (string, error) {
 	return "", fmt.Errorf("无法从 %q 识别虎牙房间号（形如 https://www.huya.com/441195）", raw)
 }
 
+// HuyaRoomPath 提取虎牙房间路径段（数字或别名都行）：
+//
+//	https://www.huya.com/660000 → "660000"
+//	https://www.huya.com/lpl     → "lpl"
+//
+// 浏览器打开数字房间会被虎牙重定向成短别名（如 /lpl），别名与数字都能交给
+// GetHuyaRoomInfo 解析——页面 JSON 的 lProfileRoom 会回传权威数字房间号。
+func HuyaRoomPath(raw string) string {
+	i := strings.Index(raw, "huya.com/")
+	if i < 0 {
+		return ""
+	}
+	rest := raw[i+len("huya.com/"):]
+	if j := strings.IndexAny(rest, "/?#"); j >= 0 {
+		rest = rest[:j]
+	}
+	return strings.TrimSpace(rest)
+}
+
 // GetHuyaRoomInfo 抓取虎牙房间信息（HNF_GLOBAL_INIT JSON）
 func GetHuyaRoomInfo(ctx context.Context, roomID string) (*HuyaRoomInfo, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://m.huya.com/"+url.PathEscape(roomID), nil)
