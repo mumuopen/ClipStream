@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -43,6 +44,11 @@ func stageDownload(ctx context.Context, job *core.Job, env *Env) error {
 		job.SetParam("video", abs)
 		return nil
 	}
+	// 防呆：直播间链接走错入口。yt-dlp 对实时流只能抓到几秒残片，
+	// 连续分段录制+弹幕采集是 daemon（直播关注）的活——直接指路而非产出垃圾。
+	if isLiveRoomURL(in) {
+		return fmt.Errorf("直播间链接 %q 不能走「投喂视频链接」：yt-dlp 对直播流只抓实时残片。\n请加到控制台「直播关注」页 —— daemon 会连续分段录制（600s/段）并采集弹幕，下播自动送切。本工具仅用于离线视频（B站稿件/YouTube 等）或本地文件", in)
+	}
 	env.log(job, "yt-dlp 下载：%s", in)
 	path, err := env.YTDLP.Download(ctx, in, job.Dir, env.Cfg.Proxy)
 	if err != nil {
@@ -51,6 +57,36 @@ func stageDownload(ctx context.Context, job *core.Job, env *Env) error {
 	job.SetParam("video", path)
 	env.log(job, "下载完成：%s", path)
 	return nil
+}
+
+// isLiveRoomURL 判断是否直播间地址（直播 ≠ 离线视频，抓取/路径不同）
+// 虎牙所有房间都是直播；B站/抖音仅 live.* 子域是直播（www.bilibili.com/video/BV.. 是稿件，仍走搬运）。
+func isLiveRoomURL(raw string) bool {
+	u := strings.TrimSpace(raw)
+	if !strings.Contains(u, "://") {
+		u = "http://" + u
+	}
+	p, err := url.Parse(u)
+	if err != nil || p.Host == "" {
+		return false
+	}
+	host := strings.ToLower(p.Host)
+	path := strings.Trim(p.Path, "/")
+	switch {
+	case strings.Contains(host, "huya.com") && isNumeric(path):
+		return true
+	case strings.Contains(host, "live.bilibili.com") || strings.Contains(host, "live.douyin.com"):
+		return true
+	}
+	return false
+}
+
+func isNumeric(s string) bool {
+	if s == "" {
+		return false
+	}
+	_, err := strconv.Atoi(s)
+	return err == nil
 }
 
 // ---- transcribe ----
