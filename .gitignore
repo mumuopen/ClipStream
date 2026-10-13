@@ -13,5 +13,8 @@ config.yaml
 .temp/
 .temp-ck/
 
+# 服务器部署产物目录（本地组装、整目录拷走，不入库）
+/temp_server/
+
 # 原版 ChopperBot 源码（仅供研读，整目录不入库）
 reference/
