@@ -343,7 +343,7 @@ func doServe(cfgPath string) error {
 	// M5 每日摘要：早上 09:00 pushme 昨天发生了什么（挂机视角）
 	go dailyDigestTicker(app)
 
-	srv := web.NewServer(app.cfg, app.store, app.runner, app.bus)
+	srv := web.NewServer(app.cfg, cfgPath, app.store, app.runner, app.bus)
 	addr := app.cfg.Web.Listen
 	if addr == "" {
 		addr = "127.0.0.1:8899"

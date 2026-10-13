@@ -26,14 +26,15 @@ import (
 var consoleHTML string
 
 type Server struct {
-	cfg    *config.Config
-	store  *store.Store
-	runner *pipeline.Runner
-	bus    *core.Bus
+	cfg     *config.Config
+	cfgPath string // 配置文件路径（后台保存时写回）
+	store   *store.Store
+	runner  *pipeline.Runner
+	bus     *core.Bus
 }
 
-func NewServer(cfg *config.Config, st *store.Store, r *pipeline.Runner, bus *core.Bus) *Server {
-	return &Server{cfg: cfg, store: st, runner: r, bus: bus}
+func NewServer(cfg *config.Config, cfgPath string, st *store.Store, r *pipeline.Runner, bus *core.Bus) *Server {
+	return &Server{cfg: cfg, cfgPath: cfgPath, store: st, runner: r, bus: bus}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -63,7 +64,79 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/pool", s.listPool)
 	mux.HandleFunc("POST /api/pool", s.addPool)
 	mux.HandleFunc("DELETE /api/pool/{id}", s.deletePool)
+	// 后台配置：免改文件，运营参数在控制台直接改并写回 config.yaml
+	mux.HandleFunc("GET /api/config", s.getConfig)
+	mux.HandleFunc("PUT /api/config", s.updateConfig)
 	return logRequest(mux)
+}
+
+// ── 后台配置 API：读运营段 + 受控写入（校验后写回 config.yaml）──
+
+func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{
+		"auto_review": s.cfg.AutoReview,
+		"live":        s.cfg.Live,
+		"retention":   s.cfg.Retention,
+		"notify":      map[string]any{"pushme": s.cfg.Notify.Pushme},
+	})
+}
+
+func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AutoReview *config.AutoReview `json:"auto_review"`
+		Live       *config.Live       `json:"live"`
+		Retention  *config.Retention  `json:"retention"`
+		Notify     *struct {
+			Pushme *config.Pushme `json:"pushme"`
+		} `json:"notify"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpError(w, 400, "参数错误: "+err.Error())
+		return
+	}
+	if req.AutoReview != nil {
+		ar := req.AutoReview
+		if ar.MinScore < 0 || ar.MinScore > 100 {
+			httpError(w, 400, "min_score 需在 0-100")
+			return
+		}
+		if ar.HardMinDurSec < 0 || ar.HardMaxDurSec <= ar.HardMinDurSec {
+			httpError(w, 400, "硬闸时长需 0 ≤ min < max")
+			return
+		}
+		if ar.BannedWords == nil {
+			ar.BannedWords = s.cfg.AutoReview.BannedWords // 表单未带时保留原值，不静默清空
+		}
+		s.cfg.AutoReview = *ar
+	}
+	if req.Live != nil {
+		lv := req.Live
+		if lv.CheckIntervalSec < 5 || lv.SegmentSec < 60 {
+			httpError(w, 400, "检测间隔 ≥5s，分段时长 ≥60s")
+			return
+		}
+		s.cfg.Live = *lv
+	}
+	if req.Retention != nil {
+		rt := req.Retention
+		if rt.SegmentsDays < 1 || rt.MinFreePercent < 1 || rt.MinFreePercent > 95 || rt.CheckMinutes < 5 {
+			httpError(w, 400, "保留天数 ≥1，水位 1-95%，清理间隔 ≥5min")
+			return
+		}
+		if rt.ConsumedSegDays < 0 {
+			rt.ConsumedSegDays = s.cfg.Retention.ConsumedSegDays
+		}
+		s.cfg.Retention = *rt
+	}
+	if req.Notify != nil && req.Notify.Pushme != nil {
+		s.cfg.Notify.Pushme = *req.Notify.Pushme
+	}
+	if err := s.cfg.Save(s.cfgPath); err != nil {
+		httpError(w, 500, "写入 config.yaml 失败: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true,
+		"note": "已保存并写回 config.yaml：审核/通知即时生效；直播检测/磁盘清理参数需重启 daemon 生效"})
 }
 
 // ── M5 矩阵账号 / 发布调度 API（占位骨架）──

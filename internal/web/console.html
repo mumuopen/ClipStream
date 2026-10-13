@@ -695,13 +695,21 @@ function renderReview(el) {
 let watches = [];
 async function refreshWatches() {
   try { watches = await fetchJSON('/api/live/watches'); } catch (e) { return; }
-  if (page === 'livefollow') renderLiveFollow($('#page'));
+  if (page !== 'livefollow') return;
+  // 输入框与列表分离：轮询只刷列表，永不重建输入框（贴链接打字到一半不再被清空）
+  if ($('#watch-list')) renderWatchList(); else renderLiveFollow($('#page'));
 }
 function renderLiveFollow(el) {
   el.innerHTML = `
     <div class="feed"><input id="live-url" placeholder="${T('live_ph')}">
     <button onclick="addWatch()">${T('btn_add')}</button></div>
-    ${!watches.length ? `<div class="empty"><span class="arrow">📡</span>
+    <div id="watch-list"></div>
+    <div class="hint" style="margin-top:10px">${T('live_hint')}</div>`;
+  $('#live-url').addEventListener('keydown', e => { if (e.key === 'Enter') addWatch(); });
+  renderWatchList();
+}
+function renderWatchList() {
+  $('#watch-list').innerHTML = !watches.length ? `<div class="empty"><span class="arrow">📡</span>
       <div class="big">${T('live_empty')}</div>
       <div class="small">${T('live_empty2')}</div></div>`
     : watches.map(w => `
@@ -715,9 +723,7 @@ function renderLiveFollow(el) {
           ${w.status === 'recording' ? `<span class="jtime">${T('live_elapsed')} ${fmtDur((Date.now() / 1000) - w.live_start)}</span>` : ''}
           <button class="del" title="${T('btn_del')}" onclick="delWatch(${w.id})">✕</button>
         </div>
-      </div>`).join('')}
-    <div class="hint" style="margin-top:10px">${T('live_hint')}</div>`;
-  $('#live-url').addEventListener('keydown', e => { if (e.key === 'Enter') addWatch(); });
+      </div>`).join('');
 }
 function fmtDur(sec) {
   sec = Math.max(0, Math.floor(sec));
@@ -729,6 +735,7 @@ async function addWatch() {
   if (!url) return;
   try {
     await fetchJSON('/api/live/watches', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+    $('#live-url').value = ''; // 表单不再被轮询重建，成功后显式清空
     refreshWatches();
   } catch (e) { alert('添加失败：' + e.message); }
 }
@@ -753,27 +760,35 @@ function renderPlaceholder(el, key) {
 
 /* ═══════════ 页面：设置 ═══════════ */
 function renderSettings(el) {
-  const eng = stats ? stats.engines : null;
-  const acc = stats ? stats.accounts : null;
-  const engDesc = k => T('set_eng_' + k) || '';
+  // 静态骨架一次成型（含运营配置表单）；引擎/账号状态卡由 renderSettingsStatus 单独刷
   el.innerHTML = `
     <div class="set-grid">
-      <div class="set-card">
-        <h4>${T('set_engines')}</h4>
-        ${eng ? Object.entries(eng).map(([k, on]) => `
-          <div class="kv"><span class="k">${engineCN(k)}</span>
-            <span class="v">${engDesc(k)}</span>
-            <span class="st ${on ? 'on' : 'off'}">${on ? '● ' + T('ready') : '○ ' + T('not_set')}</span></div>`).join('') : ''}
-      </div>
-      <div class="set-card">
-        <h4>${T('set_accounts')}</h4>
-        <div class="kv"><span class="k">${T('set_bili')}</span><span class="v">${T('set_bili_login')}</span>
-          <span class="st ${acc && acc.bilibili ? 'on' : 'warn'}">${acc && acc.bilibili ? '● ' + T('set_ok') : '○ ' + T('set_scan2')}</span></div>
-        <div class="kv"><span class="k">${T('set_douyin')}</span><span class="v">${T('set_douyin_acc')}</span>
-          <span class="st off">○ ${T('set_scan2')}</span></div>
-        <h4 style="margin-top:16px">${T('set_notify')}</h4>
-        <div class="kv"><span class="k">pushme</span><span class="v">${T('set_eng_pushme')}</span>
-          <span class="st ${eng && eng.pushme ? 'on' : 'off'}">${eng && eng.pushme ? '● ' + T('set_enabled') : '○ ' + T('set_disabled')}</span></div>
+      <div class="set-card" id="set-engines-card"></div>
+      <div class="set-card" id="set-accounts-card"></div>
+      <div class="set-card" style="grid-column:1/-1">
+        <h4>运营配置 Runtime Config
+          <span class="hint">保存即写回 config.yaml（文件重写，注释会丢失）；审核/通知参数即时生效，直播检测/磁盘清理参数需重启 daemon</span></h4>
+        <div class="m5-form" id="cfg-form" style="flex-wrap:wrap;row-gap:10px">
+          <label>自动审核 <input id="cfg-ar-on" type="checkbox" style="width:auto"></label>
+          <label>入池评分≥ <input id="cfg-ar-score" type="number" min="0" max="100" style="width:60px"></label>
+          <label>硬闸时长(s) <input id="cfg-ar-min" type="number" min="0" style="width:60px"> ~ <input id="cfg-ar-max" type="number" style="width:60px"></label>
+          <label>敏感词(逗号分隔) <input id="cfg-ar-words" style="width:150px" placeholder="违禁词A,违禁词B"></label>
+          <label>检测间隔(s) <input id="cfg-live-check" type="number" min="5" style="width:60px"></label>
+          <label>录制分段(s) <input id="cfg-live-seg" type="number" min="60" style="width:60px"></label>
+          <label>下播自动切 <input id="cfg-live-clip" type="checkbox" style="width:auto"></label>
+          <label>磁盘清理 <input id="cfg-rt-on" type="checkbox" style="width:auto"></label>
+          <label>保留天数 <input id="cfg-rt-days" type="number" min="1" style="width:60px"></label>
+          <label>已消费分段(天) <input id="cfg-rt-consumed" type="number" min="0" style="width:60px"></label>
+          <label>水位% <input id="cfg-rt-free" type="number" min="1" max="95" style="width:60px"></label>
+          <label>清理间隔(min) <input id="cfg-rt-min" type="number" min="5" style="width:60px"></label>
+          <label>pushme <input id="cfg-nt-on" type="checkbox" style="width:auto"></label>
+          <label>地址 <input id="cfg-nt-url" style="width:170px" placeholder="http://server:36591"></label>
+          <label>push_key <input id="cfg-nt-key" style="width:140px"></label>
+        </div>
+        <div style="margin-top:10px">
+          <button onclick="saveConfig()">保存配置</button>
+          <span class="hint" id="cfg-msg" style="margin-left:10px"></span>
+        </div>
       </div>
       <div class="set-card" style="grid-column:1/-1">
         <h4>${T('set_cmds')}</h4>
@@ -788,6 +803,59 @@ function renderSettings(el) {
         </div>
       </div>
     </div>`;
+  renderSettingsStatus();
+  loadConfig();
+}
+// 引擎/账号状态卡（fetchStats 轮询单独刷新，不碰运营配置表单）
+function renderSettingsStatus() {
+  const eng = stats ? stats.engines : null;
+  const acc = stats ? stats.accounts : null;
+  const engDesc = k => T('set_eng_' + k) || '';
+  const ec = $('#set-engines-card'), ac = $('#set-accounts-card');
+  if (ec) ec.innerHTML = `
+    <h4>${T('set_engines')}</h4>
+    ${eng ? Object.entries(eng).map(([k, on]) => `
+      <div class="kv"><span class="k">${engineCN(k)}</span>
+        <span class="v">${engDesc(k)}</span>
+        <span class="st ${on ? 'on' : 'off'}">${on ? '● ' + T('ready') : '○ ' + T('not_set')}</span></div>`).join('') : ''}`;
+  if (ac) ac.innerHTML = `
+    <h4>${T('set_accounts')}</h4>
+    <div class="kv"><span class="k">${T('set_bili')}</span><span class="v">${T('set_bili_login')}</span>
+      <span class="st ${acc && acc.bilibili ? 'on' : 'warn'}">${acc && acc.bilibili ? '● ' + T('set_ok') : '○ ' + T('set_scan2')}</span></div>
+    <div class="kv"><span class="k">${T('set_douyin')}</span><span class="v">${T('set_douyin_acc')}</span>
+      <span class="st off">○ ${T('set_scan2')}</span></div>
+    <h4 style="margin-top:16px">${T('set_notify')}</h4>
+    <div class="kv"><span class="k">pushme</span><span class="v">${T('set_eng_pushme')}</span>
+      <span class="st ${eng && eng.pushme ? 'on' : 'off'}">${eng && eng.pushme ? '● ' + T('set_enabled') : '○ ' + T('set_disabled')}</span></div>`;
+}
+async function loadConfig() {
+  try {
+    const c = await fetchJSON('/api/config');
+    const setF = (id, v) => { const e = document.getElementById(id); if (!e) return; e.type === 'checkbox' ? e.checked = !!v : e.value = (v ?? ''); };
+    setF('cfg-ar-on', c.auto_review?.enabled); setF('cfg-ar-score', c.auto_review?.min_score);
+    setF('cfg-ar-min', c.auto_review?.hard_min_dur_sec); setF('cfg-ar-max', c.auto_review?.hard_max_dur_sec);
+    setF('cfg-ar-words', (c.auto_review?.banned_words || []).join(','));
+    setF('cfg-live-check', c.live?.check_interval); setF('cfg-live-seg', c.live?.segment_time); setF('cfg-live-clip', c.live?.auto_clip);
+    setF('cfg-rt-on', c.retention?.enabled); setF('cfg-rt-days', c.retention?.segments_days);
+    setF('cfg-rt-consumed', c.retention?.consumed_seg_days); setF('cfg-rt-free', c.retention?.min_free_percent); setF('cfg-rt-min', c.retention?.check_minutes);
+    setF('cfg-nt-on', c.notify?.pushme?.enable); setF('cfg-nt-url', c.notify?.pushme?.url); setF('cfg-nt-key', c.notify?.pushme?.push_key);
+  } catch (e) {}
+}
+async function saveConfig() {
+  const g = id => document.getElementById(id);
+  const num = id => parseInt(g(id).value) || 0;
+  const chk = id => g(id).checked;
+  const payload = {
+    auto_review: { enabled: chk('cfg-ar-on'), min_score: num('cfg-ar-score'), hard_min_dur_sec: num('cfg-ar-min'), hard_max_dur_sec: num('cfg-ar-max'),
+      banned_words: g('cfg-ar-words').value.split(/[,，]/).map(s => s.trim()).filter(Boolean) },
+    live: { check_interval: num('cfg-live-check'), segment_time: num('cfg-live-seg'), auto_clip: chk('cfg-live-clip') },
+    retention: { enabled: chk('cfg-rt-on'), segments_days: num('cfg-rt-days'), consumed_seg_days: num('cfg-rt-consumed'), min_free_percent: num('cfg-rt-free'), check_minutes: num('cfg-rt-min') },
+    notify: { pushme: { enable: chk('cfg-nt-on'), url: g('cfg-nt-url').value.trim(), push_key: g('cfg-nt-key').value.trim() } },
+  };
+  try {
+    const res = await fetchJSON('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    g('cfg-msg').textContent = res.note || '已保存 ✓';
+  } catch (e) { g('cfg-msg').textContent = '保存失败：' + e.message; }
 }
 
 /* ═══════════ 页面：弹幕曲线（M4.2，对齐原版 Barrage Curve/BarrageScoreCurve）═══════════ */
@@ -894,7 +962,9 @@ async function refreshMatrix() {
   try { accounts = await fetchJSON('/api/accounts'); } catch (e) { accounts = []; }
   try { schedules = await fetchJSON('/api/schedules'); } catch (e) { schedules = []; }
   try { poolItems = await fetchJSON('/api/pool'); } catch (e) { poolItems = []; }
-  if (page === 'labels') renderLabels($('#page'));
+  if (page !== 'labels') return;
+  // 表单与列表分离：轮询只刷列表，永不重建表单（填一半的账号/调度不再被清空）
+  if ($('#acc-list')) renderMatrixLists(); else renderLabels($('#page'));
 }
 function platChipsFor(plats) {
   return (plats || '').split(',').filter(Boolean).map(p => platBadge(p)).join('') || '<span class="tag">全部</span>';
@@ -911,30 +981,7 @@ function tagChips(s) {
   return (s || '').split(',').filter(Boolean).map(t => `<span class="tag">${esc(t)}</span>`).join('') || `<span class="tag dim">${T('m5_unlabel')}</span>`;
 }
 function renderLabels(el) {
-  // 账号卡
-  const accCards = accounts.map(a => `
-    <div class="acc-card">
-      <div class="acc-top">${platBadge(a.platform)}<b>${esc(a.name)}</b>
-        <span class="acc-star" title="${T('m5_prio')}">${'★'.repeat(Math.max(1, Math.min(5, Math.ceil((a.priority || 0) / 2))))}</span>
-        <span class="dot ${a.status === 'ok' ? 'ok' : 'warn'}" title="${a.status === 'ok' ? T('m5_ok') : T('m5_login')}"></span>
-        <button class="del" title="${T('btn_del')}" onclick="delAccount(${a.id})">✕</button></div>
-      <div class="acc-tags">${tagChips(a.labels)}</div>
-    </div>`).join('') || `<div class="hint">${T('m5_acc_empty')}</div>`;
-
-  // 调度卡
-  const schCards = schedules.map(sc => `
-    <div class="acc-card">
-      <div class="acc-top"><span class="time-badge">${esc(sc.time)}</span><span style="font-size:13px;color:var(--text)">${esc(sc.name)}</span>
-        <span class="badge ${sc.enabled ? 'running' : 'queued'}">${sc.enabled ? '● ' + T('m5_on') : '○ ' + T('m5_off')}</span>
-        <button class="del" onclick="delSchedule(${sc.id})">✕</button></div>
-      <div class="acc-tags">${(sc.platforms || '').split(',').filter(Boolean).map(p => PLAT_META[p] ? platBadge(p) : `<span class="tag">${esc(p)}</span>`).join('')}
-        <span class="jtime" style="margin-left:auto">${T('m5_last')} ${sc.last_run ? fmtClock(sc.last_run) : T('m5_never')}</span></div>
-    </div>`).join('') || `<div class="hint">${T('m5_sch_empty')}</div>`;
-
-  // 平台多选 chips（表单用）
-  const platChips = Object.entries(PLAT_META).map(([k, v]) =>
-    `<span class="plat ${schedPlats.includes(k) ? 'sel' : ''}" data-p="${k}" onclick="toggleSchedPlat('${k}')">${v.cn}</span>`).join('');
-
+  // 静态骨架：表单只在进页时建一次，轮询由 renderMatrixLists 只刷列表区
   el.innerHTML = `
     <div class="m5-grid">
       <div class="m5-panel">
@@ -945,13 +992,13 @@ function renderLabels(el) {
           </select></label>
           <label>${T('m5_name')} <input id="acc-name" placeholder="${T('m5_acc_name_ph')}"></label>
           <label>${T('m5_labels')} <input id="acc-labels" placeholder="${T('m5_labels_ph')}"></label>
-          <label>${T('m5_prio')}
+          <label>${T('m5_prio')}>
             <select id="acc-prio">
               ${[0,1,2,3,4,5,6,7,8,9].map(p => `<option value="${p}">${p}</option>`).join('')}
             </select></label>
           <button onclick="addAccount()">${T('btn_add_acc')}</button>
         </div>
-        <div class="acc-list">${accCards}</div>
+        <div class="acc-list" id="acc-list"></div>
       </div>
 
       <div class="set-panel">
@@ -959,24 +1006,15 @@ function renderLabels(el) {
         <div class="m5-form">
           <label>${T('m5_sch_name')} <input id="sch-name" placeholder="${T('m5_sch_name_ph')}"></label>
           <label>${T('m5_time')} <input id="sch-time" type="time" value="21:00"></label>
-          <label>${T('m5_plat_sel')} <span class="m5-plats">${platChips}</span><span class="hint">${T('m5_plat_only')}</span></label>
+          <label>${T('m5_plat_sel')} <span class="m5-plats" id="sch-plats"></span><span class="hint">${T('m5_plat_only')}</span></label>
           <button onclick="addSchedule()">${T('btn_create_sch')}</button>
         </div>
-        <div class="acc-list">${schCards}</div>
+        <div class="acc-list" id="sch-list"></div>
       </div>
 
       <div class="set-panel m5-rule">
         <h4>内容池（待发布 / Content Pool）</h4>
-        <div class="acc-list">
-          ${(poolItems||[]).map(it => `
-          <div class="acc-card">
-            <div class="acc-top"><span class="time-badge">待发</span><b title="${esc(it.clip)}">${esc(it.title)}</b>
-              <span class="jtime">${platChipsFor(it.platforms)}</span>
-              <span class="tag">${esc(it.tags || '无标签')}</span>
-              <button class="del" title="移出池" onclick="delPoolItem(${it.id})">✕</button></div>
-            <div class="acc-tags"><span class="jtime">${esc(it.source_job)} / ${esc(it.clip)}</span></div>
-          </div>`).join('') || '<div class="hint">池空 — 审核台点「入池待发」，调度到点自动按账号路由发布</div>'}
-        </div>
+        <div class="acc-list" id="pool-list"></div>
       </div>
 
       <div class="set-panel m5-rule">
@@ -995,6 +1033,58 @@ function renderLabels(el) {
     const e = document.getElementById(id);
     if (e) e.addEventListener('keydown', ev => { if (ev.key === 'Enter') (id.startsWith('acc-') ? addAccount() : addSchedule()); });
   });
+  renderMatrixLists();
+}
+// renderMatrixLists 只更新动态区（三个列表 + 平台 chips），表单 DOM 保持不动
+function renderMatrixLists() {
+  $('#acc-list').innerHTML = accounts.map(a => `
+    <div class="acc-card">
+      <div class="acc-top">${platBadge(a.platform)}<b>${esc(a.name)}</b>
+        <span class="acc-star" title="${T('m5_prio')}">${'★'.repeat(Math.max(1, Math.min(5, Math.ceil((a.priority || 0) / 2))))}</span>
+        <span class="dot ${a.status === 'ok' ? 'ok' : 'warn'}" title="${a.status === 'ok' ? T('m5_ok') : T('m5_login')}"></span>
+        <button class="del" title="${T('btn_del')}" onclick="delAccount(${a.id})">✕</button></div>
+      <div class="acc-tags">${tagChips(a.labels)}</div>
+    </div>`).join('') || `<div class="hint">${T('m5_acc_empty')}</div>`;
+
+  $('#sch-list').innerHTML = schedules.map(sc => `
+    <div class="acc-card">
+      <div class="acc-top"><span class="time-badge">${esc(sc.time)}</span><span style="font-size:13px;color:var(--text)">${esc(sc.name)}</span>
+        <span class="badge ${sc.enabled ? 'running' : 'queued'}">${sc.enabled ? '● ' + T('m5_on') : '○ ' + T('m5_off')}</span>
+        <button class="del" onclick="delSchedule(${sc.id})">✕</button></div>
+      <div class="acc-tags">${(sc.platforms || '').split(',').filter(Boolean).map(p => PLAT_META[p] ? platBadge(p) : `<span class="tag">${esc(p)}</span>`).join('')}
+        <span class="jtime" style="margin-left:auto">${T('m5_last')} ${sc.last_run ? fmtClock(sc.last_run) : T('m5_never')}</span></div>
+    </div>`).join('') || `<div class="hint">${T('m5_sch_empty')}</div>`;
+
+  $('#pool-list').innerHTML = (poolItems||[]).map(it => `
+    <div class="acc-card">
+      <div class="acc-top"><span class="time-badge">待发</span><b title="${esc(it.clip)}">${esc(it.title)}</b>
+        <span class="jtime">${platChipsFor(it.platforms)}</span>
+        <span class="tag">${esc(it.tags || '无标签')}</span>
+        <button class="del" title="移出池" onclick="delPoolItem(${it.id})">✕</button></div>
+      <div class="acc-tags"><span class="jtime">${esc(it.source_job)} / ${esc(it.clip)}</span></div>
+    </div>`).join('') || '<div class="hint">池空 — 审核台点「入池待发」，调度到点自动按账号路由发布</div>';
+
+  $('#sch-plats').innerHTML = Object.entries(PLAT_META).map(([k, v]) =>
+    `<span class="plat ${schedPlats.includes(k) ? 'sel' : ''}" data-p="${k}" onclick="toggleSchedPlat('${k}')">${v.cn}</span>`).join('');
+}
+function toggleSchedPlat(p) {
+  const i = schedPlats.indexOf(p);
+  i >= 0 ? schedPlats.splice(i, 1) : schedPlats.push(p);
+  renderMatrixLists(); // 只刷 chips，不重建表单（否则账号表单填一半会被清空）
+}
+async function addAccount() {
+  const payload = {
+    platform: $('#acc-plat').value,
+    name: $('#acc-name').value.trim(),
+    labels: $('#acc-labels').value.trim(),
+    priority: parseInt($('#acc-prio').value) || 0,
+  };
+  if (!payload.name) { alert(T('m5_acc_need')); return; }
+  try {
+    await fetchJSON('/api/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    $('#acc-name').value = ''; $('#acc-labels').value = ''; // 表单不再被重建，成功后显式清空
+    refreshMatrix();
+  } catch (e) { alert(T('m5_acc_need') + ': ' + e.message); }
 }
 function toggleSchedPlat(p) {
   const i = schedPlats.indexOf(p);
@@ -1022,7 +1112,11 @@ async function addSchedule() {
     platforms: schedPlats.join(','),
   };
   if (!payload.name) { alert(T('m5_sch_need')); return; }
-  try { await fetchJSON('/api/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); refreshMatrix(); } catch (e) { alert(e.message); }
+  try {
+    await fetchJSON('/api/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    $('#sch-name').value = ''; // 表单不再被重建，成功后显式清空
+    refreshMatrix();
+  } catch (e) { alert(e.message); }
 }
 async function delSchedule(id) {
   if (!confirm(T('m5_confirm_sch'))) return;
@@ -1293,14 +1387,18 @@ async function submitDub() {
 /* ═══════════ 刷新循环 ═══════════ */
 async function refresh() {
   try { jobs = await fetchJSON('/api/jobs'); } catch (e) { return; }
-  if (!Array.isArray(jobs)) jobs = []; // 请求异常/返回 null 时兜底为空数组，避免 renderNav 崩溃
+  if (!Array.isArray(jobs)) jobs = []; // 请求异常/返回 null 时兑底为空数组，避免 renderNav 崩溃
   renderNav();
-  if (page === 'board') { renderBoard($('#page')); }
+  // 输入框与动态区分离：轮询只刷动态区，永不重建页面（否则投喂框里贴的链接会被清空）
+  if (page === 'board') { if ($('#strip')) renderStrip(); const jc = $('#board-jobs'); if (jc) renderJobList(jc, jobs.slice(0, 8), true); }
   else if (page === 'tasks') { const c = $('#task-jobs'); if (c) renderJobList(c, jobs.filter(j => taskFilter === 'all' || j.kind === taskFilter), true); }
   else if (page === 'review') { renderReview($('#page')); }
 	else if (page === 'livefollow') { refreshWatches(); }
   else if (page === 'barrage') { refreshBarrage(); }
   else if (page === 'labels') { refreshMatrix(); }
+}
+async function fetchStats() {
+  try { stats = await fetchJSON('/api/stats'); renderNav(); if (page === 'settings') renderSettingsStatus(); } catch (e) {}
 }
 async function fetchStats() {
   try { stats = await fetchJSON('/api/stats'); renderNav(); if (page === 'settings') renderSettings($('#page')); } catch (e) {}
