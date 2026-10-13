@@ -411,6 +411,7 @@ const I18N = {
     strip_today: '今日任务', strip_review: '待审核', strip_done: '已完成', strip_failed: '失败',
     strip_rate: '成功率', strip_engines: '引擎就绪',
     st_queued: '排队', st_running: '执行中', st_review: '待审核', st_done: '完成', st_failed: '失败', st_canceled: '已取消',
+    st_live_idle: '待开播', st_live_recording: '录制中', st_live_error: '异常',
     eng_ytdlp: '下载', eng_ffmpeg: '转码', eng_whisper: '转写', eng_biliup: 'B站投稿', eng_deepseek: 'LLM', eng_pushme: '通知',
     board_empty: '流水线未开工 — 投喂链接即可启动「下载 → 转写 → 选高光 → 切片 → 审核 → 发布」全流程',
     live_ph: '粘贴直播间链接（B站 live.bilibili.com / 虎牙 www.huya.com），回车添加关注',
@@ -459,6 +460,7 @@ const I18N = {
     strip_today: 'Today', strip_review: 'Review', strip_done: 'Done', strip_failed: 'Failed',
     strip_rate: 'Success', strip_engines: 'Engines',
     st_queued: 'Queued', st_running: 'Running', st_review: 'Review', st_done: 'Done', st_failed: 'Failed', st_canceled: 'Canceled',
+    st_live_idle: 'Waiting', st_live_recording: 'Recording', st_live_error: 'Error',
     eng_ytdlp: 'Download', eng_ffmpeg: 'Transcode', eng_whisper: 'ASR', eng_biliup: 'Bilibili', eng_deepseek: 'LLM', eng_pushme: 'Notify',
     board_empty: 'Pipeline idle — feed a URL to start download → transcribe → highlight → clip → review → publish',
     live_ph: 'Paste a live-room link (Bilibili live.bilibili.com / Huya www.huya.com), press Enter',
@@ -1399,9 +1401,6 @@ async function refresh() {
 }
 async function fetchStats() {
   try { stats = await fetchJSON('/api/stats'); renderNav(); if (page === 'settings') renderSettingsStatus(); } catch (e) {}
-}
-async function fetchStats() {
-  try { stats = await fetchJSON('/api/stats'); renderNav(); if (page === 'settings') renderSettings($('#page')); } catch (e) {}
 }
 
 /* ═══════════ 启动 ═══════════ */
