@@ -81,9 +81,10 @@ publish:
   platforms_dir: "configs/platforms"
 
 notify:
-  enable: true
-  url: ""
-  push_key: ""
+  pushme:
+    enable: true
+    url: ""
+    push_key: ""
 
 chrome:
   path: ""

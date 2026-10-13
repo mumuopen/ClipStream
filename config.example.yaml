@@ -32,9 +32,10 @@ publish:
   platforms_dir: "configs/platforms"
 
 notify:
-  enable: true
-  url: ""                        # 自建 pushme 服务地址，如 http://server:3100/
-  push_key: ""                   # 手机 PushMe App 的 push_key（订阅用）
+  pushme:
+    enable: true                  # 总开关
+    url: ""                       # 自建 pushme 服务地址，如 http://server:36591（留空=官方 PushMe 云）
+    push_key: ""                  # 手机 PushMe App 的 push_key
 
 chrome:
   path: ""                       # 本机 Chrome 可执行路径，留空则自动探测
