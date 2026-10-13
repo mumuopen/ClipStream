@@ -1,0 +1,223 @@
+<mxGraphModel dx="1200" dy="800" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="1150" math="0" shadow="0">
+  <root>
+    <mxCell id="0" />
+    <mxCell id="1" parent="0" />
+    <mxCell id="2" value="&lt;b&gt;ClipStream 系统架构 · Architecture&lt;/b&gt;" style="text;html=1;align=center;verticalAlign=middle;fontSize=20;fontColor=#2D3748;" vertex="1" parent="1">
+      <mxGeometry x="450" y="15" width="800" height="30" as="geometry" />
+    </mxCell>
+    <mxCell id="3" value="&lt;b&gt;B站直播&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#999999;dashed=1;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="30" y="395" width="130" height="50" as="geometry" />
+    </mxCell>
+    <mxCell id="4" value="&lt;b&gt;虎牙直播&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#999999;dashed=1;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="30" y="475" width="130" height="50" as="geometry" />
+    </mxCell>
+    <mxCell id="5" value="&lt;b&gt;PushMe&lt;/b&gt;&lt;br&gt;手机" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#999999;dashed=1;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="1590" y="730" width="100" height="50" as="geometry" />
+    </mxCell>
+    <mxCell id="10" value="&lt;b&gt;接口层 Interfaces&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FAFAFC;strokeColor=#D4D4D8;verticalAlign=top;align=left;spacingLeft=12;spacingTop=6;fontSize=13;fontColor=#9673A6;" vertex="1" parent="1">
+      <mxGeometry x="200" y="70" width="1370" height="100" as="geometry" />
+    </mxCell>
+    <mxCell id="11" value="&lt;b&gt;Web Console :8899&lt;/b&gt;&lt;br&gt;中英双语控制台" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="230" y="105" width="300" height="50" as="geometry" />
+    </mxCell>
+    <mxCell id="12" value="&lt;b&gt;CLI&lt;/b&gt;&lt;br&gt;run · login · status · init" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="580" y="105" width="320" height="50" as="geometry" />
+    </mxCell>
+    <mxCell id="13" value="&lt;b&gt;进程层 Processes&lt;/b&gt;（serve 与 daemon 进程分离）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4F8FD;strokeColor=#C5D5EC;verticalAlign=top;align=left;spacingLeft=12;spacingTop=6;fontSize=13;fontColor=#4A6FA5;" vertex="1" parent="1">
+      <mxGeometry x="200" y="200" width="1370" height="110" as="geometry" />
+    </mxCell>
+    <mxCell id="14" value="&lt;b&gt;clipstream serve&lt;/b&gt;&lt;br&gt;管线 · 调度 · Web · 通知" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#6C8EBF;strokeColor=#4A6FA5;fontColor=#FFFFFF;fontSize=13;" vertex="1" parent="1">
+      <mxGeometry x="230" y="235" width="420" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="15" value="&lt;b&gt;clipstream-daemon&lt;/b&gt;&lt;br&gt;直播录制守护（独立进程）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#6C8EBF;strokeColor=#4A6FA5;fontColor=#FFFFFF;fontSize=13;" vertex="1" parent="1">
+      <mxGeometry x="740" y="235" width="420" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="16" value="&lt;b&gt;直播链 Live Chain&lt;/b&gt;（daemon · 下播自动送切）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F6FBF6;strokeColor=#C8E2C8;verticalAlign=top;align=left;spacingLeft=12;spacingTop=6;fontSize=13;fontColor=#5E9A5E;" vertex="1" parent="1">
+      <mxGeometry x="200" y="340" width="1370" height="130" as="geometry" />
+    </mxCell>
+    <mxCell id="17" value="&lt;b&gt;开播检测&lt;/b&gt;&lt;br&gt;60s 轮询" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="230" y="385" width="170" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="18" value="&lt;b&gt;分段录制&lt;/b&gt;&lt;br&gt;FLV · 600s/段" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="430" y="385" width="190" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="19" value="&lt;b&gt;断流续接&lt;/b&gt;&lt;br&gt;自动重连" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="640" y="385" width="160" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="20" value="&lt;b&gt;弹幕采集&lt;/b&gt;&lt;br&gt;WS · 5s 密度桶" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="820" y="385" width="200" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="21" value="&lt;b&gt;下播触发&lt;/b&gt;&lt;br&gt;自动送切" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="1040" y="385" width="170" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="22" value="&lt;b&gt;磁盘清理&lt;/b&gt;&lt;br&gt;超期 · 残留 · 水位" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="1240" y="385" width="200" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="23" value="&lt;b&gt;切片管线 Pipeline&lt;/b&gt;（serve · 引擎缺失自动降级）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4F8FD;strokeColor=#C5D5EC;verticalAlign=top;align=left;spacingLeft=12;spacingTop=6;fontSize=13;fontColor=#4A6FA5;" vertex="1" parent="1">
+      <mxGeometry x="200" y="510" width="1370" height="130" as="geometry" />
+    </mxCell>
+    <mxCell id="24" value="&lt;b&gt;download&lt;/b&gt;&lt;br&gt;yt-dlp" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="230" y="555" width="150" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="25" value="&lt;b&gt;transcribe&lt;/b&gt;&lt;br&gt;whisper.cpp" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="410" y="555" width="160" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="26" value="&lt;b&gt;highlight&lt;/b&gt;&lt;br&gt;LLM × 弹幕密度" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="600" y="555" width="170" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="27" value="&lt;b&gt;cut&lt;/b&gt;&lt;br&gt;ffmpeg" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="800" y="555" width="130" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="28" value="&lt;b&gt;字幕 / 配音&lt;/b&gt;&lt;br&gt;LLM 翻译 · tts（可选）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;dashed=1;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="960" y="555" width="170" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="29" value="&lt;b&gt;自动审核&lt;/b&gt;&lt;br&gt;分级闸门" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="1160" y="555" width="180" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="30" value="&lt;b&gt;发布闭环 Publish Loop&lt;/b&gt;（无人值守 · 错峰发布）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEFBF0;strokeColor=#EAD9A8;verticalAlign=top;align=left;spacingLeft=12;spacingTop=6;fontSize=13;fontColor=#B7950B;" vertex="1" parent="1">
+      <mxGeometry x="200" y="680" width="1370" height="140" as="geometry" />
+    </mxCell>
+    <mxCell id="31" value="&lt;b&gt;人工审核台&lt;/b&gt;&lt;br&gt;质闸留存" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="230" y="725" width="170" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="32" value="&lt;b&gt;内容池&lt;/b&gt;&lt;br&gt;入池待发" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="440" y="725" width="170" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="33" value="&lt;b&gt;错峰调度&lt;/b&gt;&lt;br&gt;平台 × 标签账号路由" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="650" y="725" width="200" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="34" value="&lt;b&gt;publish&lt;/b&gt;&lt;br&gt;B站 biliup · 抖音 rod" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="890" y="725" width="220" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="35" value="&lt;b&gt;notify&lt;/b&gt;&lt;br&gt;PushMe 推送" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="1150" y="725" width="170" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="36" value="&lt;b&gt;引擎层 Engines&lt;/b&gt;（全部子进程外挂 · 缺失自动降级）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF9F0;strokeColor=#F0DCBF;verticalAlign=top;align=left;spacingLeft=12;spacingTop=6;fontSize=13;fontColor=#B87800;" vertex="1" parent="1">
+      <mxGeometry x="200" y="860" width="1370" height="110" as="geometry" />
+    </mxCell>
+    <mxCell id="37" value="&lt;b&gt;yt-dlp&lt;/b&gt;&lt;br&gt;视频下载" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="215" y="895" width="170" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="38" value="&lt;b&gt;ffmpeg / ffprobe&lt;/b&gt;&lt;br&gt;录制 · 切片 · 抽音" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="410" y="895" width="180" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="39" value="&lt;b&gt;whisper.cpp&lt;/b&gt;&lt;br&gt;ASR 转写" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="610" y="895" width="160" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="40" value="&lt;b&gt;biliup&lt;/b&gt;&lt;br&gt;B站投稿" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="790" y="895" width="150" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="41" value="&lt;b&gt;edge-tts&lt;/b&gt;&lt;br&gt;解说配音" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="960" y="895" width="150" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="42" value="&lt;b&gt;LLM API&lt;/b&gt;&lt;br&gt;OpenAI 兼容" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="1130" y="895" width="160" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="43" value="&lt;b&gt;Chrome (rod)&lt;/b&gt;&lt;br&gt;抖音发布" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="1310" y="895" width="170" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="44" value="&lt;b&gt;存储 Storage&lt;/b&gt;（各层读写）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FAFAFA;strokeColor=#DDDDDD;verticalAlign=top;align=left;spacingLeft=12;spacingTop=6;fontSize=13;fontColor=#666666;" vertex="1" parent="1">
+      <mxGeometry x="200" y="1010" width="1370" height="110" as="geometry" />
+    </mxCell>
+    <mxCell id="45" value="&lt;b&gt;SQLite（无 cgo）&lt;/b&gt;&lt;br&gt;jobs · watches · barrage · content_pool · accounts · schedules" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#999999;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="230" y="1045" width="560" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="46" value="&lt;b&gt;data/ 本地文件&lt;/b&gt;&lt;br&gt;segments · clips · covers · cookies" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#999999;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="830" y="1045" width="560" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="50" value="HTTP/SSE" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;fontSize=10;fontColor=#555555;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.3;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="11" target="14">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="51" value="CLI 任务" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#8896A6;strokeWidth=1.5;fontSize=10;fontColor=#555555;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="12" target="14">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="740" y="187" />
+          <mxPoint x="440" y="187" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="52" value="HTTP/SSE 事件" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;fontSize=10;fontColor=#555555;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="14" target="15">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="53" value="流 · 弹幕" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;fontSize=10;fontColor=#555555;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.25;entryDx=0;entryDy=0;" edge="1" parent="1" source="3" target="17">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="54" value="流 · 弹幕" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;fontSize=10;fontColor=#555555;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.75;entryDx=0;entryDy=0;" edge="1" parent="1" source="4" target="17">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="55" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="17" target="18">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="56" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="18" target="19">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="57" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="19" target="20">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="58" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="20" target="21">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="59" value="segments 送切" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;fontSize=10;fontColor=#555555;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="21" target="24">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="1125" y="490" />
+          <mxPoint x="305" y="490" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="60" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="24" target="25">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="61" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="25" target="26">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="62" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="26" target="27">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="63" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="27" target="28">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="64" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="28" target="29">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="65" value="评分≥60 自动入池" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;fontSize=10;fontColor=#555555;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="29" target="32">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="1250" y="660" />
+          <mxPoint x="525" y="660" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="66" value="质闸留人工" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;fontSize=10;fontColor=#555555;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="29" target="31">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="1205" y="648" />
+          <mxPoint x="315" y="648" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="67" value="人工放行" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#8896A6;strokeWidth=1.5;fontSize=10;fontColor=#555555;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="31" target="32">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="68" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="32" target="33">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="69" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="33" target="34">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="70" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="34" target="35">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="71" value="结果 · 09:00 日报" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;fontSize=10;fontColor=#555555;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="35" target="5">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="72" value="子进程调用" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8896A6;strokeWidth=1.5;fontSize=10;fontColor=#555555;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="34" target="40">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="1000" y="840" />
+          <mxPoint x="865" y="840" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+  </root>
+</mxGraphModel>

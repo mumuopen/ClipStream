@@ -24,10 +24,23 @@ A **live → clip → publish** automation pipeline:
 
 ```
 live-detection → auto-record(segments) → danmaku-density buckets → highlight(ASR + barrage hotspots)
-              → cut → human review → publish to Bilibili (biliup) → push notification
+              → cut → review gate (auto or human) → content pool → off-peak publish to Bilibili (biliup)
+              → push notification
 ```
 
 Plus a **port/download chain**: any video URL (YouTube / Bilibili / Douyin ...) → download → transcript → highlight → clip → subtitle/dub → review → publish.
+
+## Architecture
+
+![architecture](docs/architecture.png)
+
+- Pure Go, single binary; SQLite via `modernc.org/sqlite` (no cgo).
+- **Process separation**: the live-recording daemon runs apart from the Web/pipeline process (avoids a Windows FLV streaming I/O pitfall).
+- **All engines external with graceful degradation**: no whisper → skip ASR; no LLM → equal-chunk / barrage-hotspot slicing.
+- **Unattended loop**: tiered auto-review gates → content pool → off-peak scheduling (platform × label account routing) → publish → PushMe notify & daily digest.
+- Danmaku: Bilibili WebSocket (wbi + uid=0), Huya va-node subscription; both stored as 5s density buckets.
+
+> Diagram source: `docs/architecture.drawio` (editable at [app.diagrams.net](https://app.diagrams.net)).
 
 ## Current support
 
@@ -38,8 +51,8 @@ Plus a **port/download chain**: any video URL (YouTube / Bilibili / Douyin ...) 
 | Danmaku density (Bilibili + Huya, 5s buckets, live curve) | ✅ |
 | Dual-signal highlight (ASR + barrage hotspots → LLM selection) | ✅ |
 | Subtitles (LLM translate + burn-in) / dub (edge-tts narration) | ✅ |
-| Publish (**Bilibili**: biliup upload; review-gate dry-run) | ✅ |
-| Matrix accounts / publish scheduling | skeleton (Bilibili only) |
+| Publish (**Bilibili**: biliup upload; auto/human review gates) | ✅ |
+| Matrix accounts / off-peak publish scheduling (content pool + account routing) | ✅ (Bilibili) |
 
 Other platforms (Douyin / Xiaohongshu / Kuaishou) are **not yet wired**; they will be scheduled via Issues.
 
@@ -71,7 +84,7 @@ Console pages: Dashboard / Tasks / Review / Live Follow / Barrage Curve / Label 
 
 ## Notes
 
-- **Publishing requires human review**: clips go to the Review page first; real publish only after approval (dry-run by default).
+- **Review gate, your choice**: default is the human Review page; set `auto_review.enabled: true` in `config.yaml` for unattended mode — tiered gates (hard rejects / quality-hold / auto-pool at score ≥ 60).
 - **Bilibili login**: `./bin/clipstream login --platform bilibili` (biliup QR in a terminal window). Credentials stay under `data/accounts/` (never committed).
 - **Live recording**: add a room on the Live Follow page → daemon auto-detects/records/auto-clips when the stream ends.
 - **LLM optional**: without an `api_key`, highlight falls back to equal-chunk or barrage-hotspot slicing; the whole pipeline still runs.

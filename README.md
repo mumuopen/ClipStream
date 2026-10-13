@@ -21,7 +21,7 @@ A Go reimagination of [ChopperBot](https://github.com/Geniusay/ChopperBot) — o
 | 🎯 | **双信号高光 Dual-signal** | ASR 转写 × 弹幕热点 → LLM 选段；无 LLM 弹幕热点直切 / transcript × barrage peaks |
 | 📖 | **字幕 Subtitles** | LLM 翻译 + 双语/中文烧录 / LLM translate + burn-in |
 | 🎙️ | **配音 Dub** | edge-tts 解说合成、变速对齐 / narration synthesis & alignment |
-| 📦 | **发布 Publish** | B站 biliup 投稿、人工审核闸门、dry-run 演练 / review-gate & dry-run |
+| 📦 | **发布 Publish** | B站 biliup 投稿、自动审核分级闸门（可关）、内容池错峰发布、PushMe 通知 / auto-review gates, off-peak publish |
 | 🌐 | **界面 Console** | 中英双语、记忆选择 / bilingual UI, remembered choice |
 
 > 更多平台（抖音 / 小红书 / 快手）已规划，按 Issue 排期 / More platforms scheduled via Issues.
@@ -68,28 +68,15 @@ cp config.example.yaml config.yaml      # 填引擎路径与 LLM key / fill engi
 
 ## 🏗️ 架构 / Architecture
 
-```
-┌─────────────┐   ┌──────────────────┐   ┌─────────────────┐
-│  clipstream  │   │ clipstream-daemon │   │     Engines      │
-│  (Web/CLI)   │   │  (live recorder)  │   │ yt-dlp/ffmpeg…   │
-└──────┬──────┘   └────────┬─────────┘   └────────┬────────┘
-       │   HTTP/SSE         │  FLV/segments        │ subprocess / API
-       ▼                    ▼                     ▼
-   ┌────────────────────────────────────────────────────┐
-   │      Pipeline  (clips / publish / subtitle /       │
-   │                      dub / live)                    │
-   └───────────────────────┬────────────────────────────┘
-                           ▼
-              ┌──────────────────────────┐
-              │  SQLite (jobs/watches/   │
-              │  barrage/accounts/…)     │
-              └──────────────────────────┘
-```
+![architecture](docs/architecture.png)
 
 - **纯 Go，单二进制**，SQLite 无 cgo（modernc.org/sqlite）
-- 录制守护与 Web **进程分离**：规避 Windows 父进程拉起子进程的 FLV 流式 IO 坑
-- 引擎全部外挂、**优雅降级**：缺 whisper → 跳过转写；缺 LLM → 等分/弹幕热点切片
+- **进程分离**：录制守护与 Web/管线各自独立进程，规避 Windows 父进程拉起子进程的 FLV 流式 IO 坑
+- **引擎全部外挂、优雅降级**：缺 whisper → 跳过转写；缺 LLM → 等分/弹幕热点切片
+- **无人值守闭环**：自动审核分级闸门 → 内容池 → 错峰调度（平台 × 标签账号路由）→ 发布 → PushMe 通知 + 每日战报
 - 弹幕：B站 WebSocket（wbi + uid=0）、虎牙 va 节点订阅，均 5s 桶落库
+
+> 图源文件 `docs/architecture.drawio`，可在 [app.diagrams.net](https://app.diagrams.net) 打开编辑。
 
 ---
 
