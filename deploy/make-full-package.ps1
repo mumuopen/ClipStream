@@ -26,14 +26,27 @@ Copy-Item (Join-Path $root 'bin\clipstream-daemon.exe') (Join-Path $stage 'bin\'
 Copy-Item (Join-Path $root 'configs\platforms\bilibili.yaml') (Join-Path $stage 'configs\platforms\') -Force
 Copy-Item (Join-Path $root 'configs\platforms\douyin.yaml')   (Join-Path $stage 'configs\platforms\') -Force
 
-# ---- 3) engine binaries (bundled) ----
+# ---- 3) engine binaries (bundled, must be SELF-CONTAINED) ----
 Copy-Item (Join-Path $root 'engines\biliup.exe')                    (Join-Path $stage 'engines\') -Force
 Copy-Item 'D:\tools\ffmpeg\ffmpeg.exe'                              (Join-Path $stage 'engines\') -Force
 Copy-Item 'D:\tools\ffmpeg\ffprobe.exe'                             (Join-Path $stage 'engines\') -Force
-Copy-Item (Join-Path $root 'engines\whisper\blas\Release\whisper-cli.exe') (Join-Path $stage 'engines\') -Force
+# yt-dlp: OFFICIAL STANDALONE exe (repo-local engines\yt-dlp.exe).
+# NEVER ship the pip wrapper exe: it embeds the dev machine's python.exe path
+# and dies instantly on any other host (exit status 1, zero output).
+Copy-Item (Join-Path $root 'engines\yt-dlp.exe')                     (Join-Path $stage 'engines\') -Force
+# whisper.cpp: plain build + its DLL chain. The exe ALONE cannot run:
+# whisper-cli.exe -> whisper.dll -> ggml.dll -> ggml-cpu-<arch>.dll (+ ggml-base.dll)
+$wh = Join-Path $root 'engines\whisper\plain\Release'
+Copy-Item (Join-Path $wh 'whisper-cli.exe') (Join-Path $stage 'engines\') -Force
+Copy-Item (Join-Path $wh 'whisper.dll')     (Join-Path $stage 'engines\') -Force
+Copy-Item (Join-Path $wh 'ggml.dll')        (Join-Path $stage 'engines\') -Force
+Copy-Item (Join-Path $wh 'ggml-base.dll')   (Join-Path $stage 'engines\') -Force
+Copy-Item (Join-Path $wh 'ggml-cpu-*.dll') (Join-Path $stage 'engines\') -Force
+# VC runtime app-local: a bare Windows Server may lack the VC++ 2015-2022 redist
+foreach ($d in 'msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll') {
+  Copy-Item (Join-Path $env:SystemRoot "System32\$d") (Join-Path $stage 'engines\') -Force
+}
 Copy-Item (Join-Path $root 'engines\whisper\ggml-small.bin')        (Join-Path $stage 'engines\') -Force
-$yt = 'C:\Users\aoeca\.local\share\TeleAgent\runtimes\python\Scripts\yt-dlp.exe'
-if (Test-Path $yt) { Copy-Item $yt (Join-Path $stage 'engines\') -Force }
 
 # ---- 4) bundled config.example.yaml (engines pre-pointed to ./engines/) ----
 $bundledConfig = @'
