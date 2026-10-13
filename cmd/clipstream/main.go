@@ -284,7 +284,7 @@ func setup(cfgPath string, reset bool) (*app, error) {
 		YTDLP:  &engine.YTDLP{Bin: cfg.Engines.YtDlp},
 		FFMPEG: ff,
 		ASR:    &engine.WhisperTranscriber{Bin: cfg.Engines.ASR.Binary, Model: cfg.Engines.ASR.Model, FF: ff},
-		LLM:    engine.NewLLMClient(cfg.LLM.BaseURL, cfg.LLM.APIKey, cfg.LLM.Model, cfg.LLM.Proxy),
+		LLM:    engine.NewLLMClient(cfg.LLM.BaseURL, cfg.LLM.APIKey, cfg.LLM.Model, cfg.LLM.Thinking, cfg.LLM.Proxy),
 		Bus:    bus,
 		Notify: notifier,
 	}

@@ -68,7 +68,8 @@ engines:
 llm:
   base_url: "https://api.deepseek.com/v1"
   api_key: ""
-  model: "deepseek-chat"
+  model: "deepseek-flash"
+  thinking: "disabled"
   proxy: ""
 
 web:

@@ -18,7 +18,9 @@ engines:
 llm:
   base_url: "https://api.deepseek.com/v1"  # OpenAI 兼容端点
   api_key: ""                    # 你的 API Key（必填才启用 LLM 高光/解说/翻译）
-  model: "deepseek-chat"
+  model: "deepseek-flash"        # DeepSeek 现行模型名（flash=V4.1-Flash 便宜快；pro 用 deepseek-v4-pro）
+                                 # 注意：旧名 deepseek-chat/deepseek-reasoner 已于 2026-07-24 退役
+  thinking: "disabled"           # V4 系默认开思考模式（effort=high）：批量打分用 disabled 更快更省；留空=不传参
   proxy: ""
 
 web:
