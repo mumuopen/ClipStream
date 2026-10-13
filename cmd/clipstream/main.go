@@ -1,4 +1,4 @@
-// ClipStream（暂用名）—— ChopperBot 融合平台单二进制入口
+﻿// ClipStream（暂用名）—— ChopperBot 融合平台单二进制入口
 //
 // 致敬来源：Geniusay/ChopperBot（Java 版智能直播切片机器人，2023 后停更）。
 // 本平台用 Go 重写其思想：直播录制 + 搬运下载 + 智能切片 + 翻译配音 + 多平台发布。
@@ -32,7 +32,7 @@ import (
 	"chopperbot/internal/web"
 )
 
-const version = "0.4.1"
+const version = "0.4.2"
 
 func main() {
 	log.SetFlags(log.LstdFlags)
