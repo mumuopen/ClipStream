@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -31,7 +32,7 @@ import (
 	"chopperbot/internal/web"
 )
 
-const version = "0.3.0"
+const version = "0.4.1"
 
 func main() {
 	log.SetFlags(log.LstdFlags)
@@ -115,25 +116,7 @@ func doInit(cfgPath string) {
 	fmt.Printf("✔ 数据目录就绪：%s\n", filepath.Join(cfg.DataDir, "jobs"))
 
 	// 引擎检查
-	fmt.Println("── 引擎检查 ──")
-	checkBin("yt-dlp", cfg.Engines.YtDlp)
-	checkBin("ffmpeg", cfg.Engines.FFmpeg)
-	checkBin("ffprobe", cfg.Engines.Probe)
-	if cfg.Engines.Biliup == "" {
-		fmt.Println("  △ biliup: 未配置（B站发布不可用；下载 github.com/biliup/biliup release 后填入 engines.biliup）")
-	} else {
-		checkBin("biliup", cfg.Engines.Biliup)
-	}
-	if cfg.Engines.ASR.Binary == "" || cfg.Engines.ASR.Model == "" {
-		fmt.Println("  △ ASR  : 未配置（管线将跳过转写，用等分切片回退）")
-	} else {
-		fmt.Printf("  ASR   : %s\n    模型: %s\n", cfg.Engines.ASR.Binary, cfg.Engines.ASR.Model)
-	}
-	if cfg.LLM.APIKey == "" {
-		fmt.Println("  △ LLM  : 未配置 api_key（高光评分将回退为等分切片）")
-	} else {
-		fmt.Printf("  LLM   : %s  model=%s\n", base(cfg.LLM.BaseURL), cfg.LLM.Model)
-	}
+	engineCheck(cfg)
 
 	// 发布与通知
 	fmt.Println("── 发布配置 ──")
@@ -155,12 +138,106 @@ func doInit(cfgPath string) {
 	fmt.Println("下一步：clipstream serve 打开控制台，或 clipstream run -i <视频地址> 直接跑")
 }
 
-func checkBin(name, bin string) {
+// engineCheck 引擎体检：存在性 + 冒烟执行。init 与 serve 启动都会跑——
+// 挂机部署最怕"文件在、一跑就崩"（pip 包装器内嵌本机路径 / 缺 DLL），
+// 坏引擎必须当场报警，而不是等任务失败才发现。
+func engineCheck(cfg *config.Config) {
+	fmt.Println("── 引擎检查 ──")
+	checkBin("yt-dlp", cfg.Engines.YtDlp, "--version")
+	checkBin("ffmpeg", cfg.Engines.FFmpeg, "-version")
+	checkBin("ffprobe", cfg.Engines.Probe, "-version")
+	if cfg.Engines.Biliup == "" {
+		fmt.Println("  △ biliup: 未配置（B站发布不可用；下载 github.com/biliup/biliup release 后填入 engines.biliup）")
+	} else {
+		checkBin("biliup", cfg.Engines.Biliup, "--version")
+	}
+	if cfg.Engines.ASR.Binary == "" || cfg.Engines.ASR.Model == "" {
+		fmt.Println("  △ ASR  : 未配置（管线将跳过转写，用等分切片回退）")
+	} else {
+		checkASR(cfg.Engines.ASR.Binary, cfg.Engines.ASR.Model)
+	}
+	if cfg.LLM.APIKey == "" {
+		fmt.Println("  △ LLM  : 未配置 api_key（高光评分将回退为等分切片）")
+	} else {
+		fmt.Printf("  LLM   : %s  model=%s\n", base(cfg.LLM.BaseURL), cfg.LLM.Model)
+	}
+}
+
+// checkBin 引擎检查：LookPath 查存在；带 smokeArgs 时真实执行一次版本命令，
+// 退出码非 0 = 引擎残废（内嵌路径失效的包装器 / 缺运行库），比"文件存在"可信得多。
+func checkBin(name, bin string, smokeArgs ...string) {
 	if _, err := exec.LookPath(bin); err != nil {
 		fmt.Printf("  ✗ %-6s: 未找到 %q —— 请安装或在 config.yaml 配置绝对路径\n", name, bin)
-	} else {
-		fmt.Printf("  ✔ %-6s: %s\n", name, bin)
+		return
 	}
+	if len(smokeArgs) == 0 {
+		fmt.Printf("  ✔ %-6s: %s\n", name, bin)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var out bytes.Buffer
+	cmd := exec.CommandContext(ctx, bin, smokeArgs...)
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("  ✗ %-6s: %s 存在但无法执行（%v）—— 引擎可能损坏或缺少依赖\n    输出：%s\n", name, bin, err, tailLines(out.String(), 3))
+		return
+	}
+	fmt.Printf("  ✔ %-6s: %s（%s）\n", name, bin, firstLine(out.String()))
+}
+
+// checkASR whisper-cli 没有 --version 参数，改用"裸跑出 usage"判定能启动：
+// 退出码 >= 0 = 进程正常起来过（2 = usage 提示）；负数（如 0xC0000135）=
+// 加载器失败（缺 DLL / VC 运行库），正是打包分发最容易踩的坑。
+func checkASR(binary, model string) {
+	if _, err := exec.LookPath(binary); err != nil {
+		fmt.Printf("  ✗ ASR  : 未找到 %q\n", binary)
+		return
+	}
+	if _, err := os.Stat(model); err != nil {
+		fmt.Printf("  ✗ ASR  : 模型缺失 %q（%v）\n", model, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var out bytes.Buffer
+	cmd := exec.CommandContext(ctx, binary)
+	cmd.Stdout, cmd.Stderr = &out, &out
+	err := cmd.Run()
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() >= 0 {
+		fmt.Printf("  ✔ ASR  : %s\n    模型: %s\n", binary, model)
+		return
+	}
+	if err == nil {
+		fmt.Printf("  ✔ ASR  : %s\n    模型: %s\n", binary, model)
+		return
+	}
+	fmt.Printf("  ✗ ASR  : %s 无法启动（缺依赖/损坏）：%v\n    输出：%s\n", binary, err, tailLines(out.String(), 3))
+}
+
+// firstLine 取输出首行，超长按 rune 裁剪（版本号一行足够）
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = s[:i]
+	}
+	if r := []rune(s); len(r) > 60 {
+		return strings.TrimSpace(string(r[:60]))
+	}
+	return s
+}
+
+// tailLines 取输出末尾 n 行（引擎报错的关键信息通常在最后）
+func tailLines(s string, n int) string {
+	s = strings.TrimRight(s, "\r\n")
+	if s == "" {
+		return "（无输出）"
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.TrimSpace(strings.Join(lines, " | "))
 }
 
 func base(u string) string {
@@ -291,6 +368,9 @@ func doServe(cfgPath string) error {
 	fmt.Printf("ClipStream %s 控制台已启动：%s  （Ctrl+C 停止）\n", version, "http://"+addr)
 	fmt.Println("数据目录：", app.cfg.DataDir)
 	fmt.Println("直播录制：由 clipstream-daemon 独立守护（若未启动，直播不会自动录制）")
+
+	// 挂机流程不跑 init，serve 启动时也要做引擎体检：坏引擎当场报警，别等任务失败
+	engineCheck(app.cfg)
 	return httpSrv.Serve(listener)
 }
 
