@@ -238,16 +238,24 @@ func stageHighlight(ctx context.Context, job *core.Job, env *Env) error {
 		env.log(job, "使用等分切片策略：%d 段（每段约 %.0fs）", len(clips), duration/float64(len(clips)))
 	}
 
-	// 过滤非法区间：下限 8s 对所有来源生效；上限 300s 仅约束 LLM 输出（等分回退按构造保证全覆盖）
-	var kept []engine.Clip
-	for _, c := range clips {
-		d := c.End - c.Start
-		if d >= 8 && c.Start >= 0 && c.End > c.Start && (!fromLLM || d <= 300) {
-			kept = append(kept, c)
+	// 过滤非法区间：LLM 输出先钳制到视频时长内（负起点归零/越界终点裁齐/整段越界丢弃），
+	// 下限 8s 对所有来源生效；上限 300s 仅约束 LLM 输出（等分回退按构造保证全覆盖）
+	kept, rejected := filterClips(clips, duration, fromLLM)
+	if len(kept) == 0 && rejected > 0 {
+		// 候选全灭不硬失败：降级等分兜底（挂机哲学——宁发等分片，不整单报废）
+		if duration <= 0 {
+			if d, err := env.FFMPEG.ProbeDuration(ctx, job.ParamsMap()["video"]); err == nil {
+				duration = d
+			}
+		}
+		fbKept, _ := filterClips(fallbackChunks(duration), duration, false)
+		if len(fbKept) > 0 {
+			env.log(job, "高光候选 %d 段全部被过滤，降级等分切片 %d 段", len(clips), len(fbKept))
+			kept = fbKept
 		}
 	}
 	if len(kept) == 0 {
-		return errors.New("高光切片为空（时长过短或区间非法）")
+		return fmt.Errorf("高光切片为空：视频时长 %.1fs，候选 %d 段（过滤 %d）均未通过校验——源视频短于 8s 最小切片下限或区间全非法，请检查下载/录制产物是否只有几秒存根", duration, len(clips), rejected)
 	}
 	b, _ := json.MarshalIndent(kept, "", "  ")
 	if err := os.WriteFile(jobFile(job, "clips.json"), b, 0o644); err != nil {
@@ -255,6 +263,33 @@ func stageHighlight(ctx context.Context, job *core.Job, env *Env) error {
 	}
 	env.log(job, "高光切片候选：%d 段", len(kept))
 	return nil
+}
+
+// filterClips 校验并裁剪高光候选：
+//   - LLM 输出钳制到视频时长内：负起点归零、超时长终点裁齐、整段越界丢弃
+//   - 下限 8s 对所有来源生效；上限 300s 仅约束 LLM（等分/弹幕按构造有效）
+func filterClips(clips []engine.Clip, duration float64, fromLLM bool) (kept []engine.Clip, rejected int) {
+	for _, c := range clips {
+		if fromLLM && duration > 0 {
+			if c.Start >= duration {
+				rejected++
+				continue
+			}
+			if c.Start < 0 {
+				c.Start = 0
+			}
+			if c.End > duration {
+				c.End = duration
+			}
+		}
+		d := c.End - c.Start
+		if d >= 8 && c.Start >= 0 && c.End > c.Start && (!fromLLM || d <= 300) {
+			kept = append(kept, c)
+		} else {
+			rejected++
+		}
+	}
+	return kept, rejected
 }
 
 // llmHighlight 用 LLM 从转写文本 + 弹幕热点（双信号）选出高光区间

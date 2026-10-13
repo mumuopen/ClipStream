@@ -10,6 +10,7 @@ import (
 
 	"chopperbot/internal/config"
 	"chopperbot/internal/core"
+	"chopperbot/internal/engine"
 	"chopperbot/internal/store"
 )
 
@@ -100,5 +101,67 @@ func TestHotspotsToClips(t *testing.T) {
 	}
 	if clips[0].Score <= 0 || clips[0].Title == "" {
 		t.Fatalf("标题/得分缺失: %+v", clips[0])
+	}
+}
+
+// ---- 高光候选过滤/钩制（LLM 边界 + 8s/300s 双限 + 降级兜底前提） ----
+
+func TestFilterClips(t *testing.T) {
+	mk := func(start, end float64) engine.Clip {
+		return engine.Clip{Start: start, End: end, Title: "t", Score: 80}
+	}
+	cases := []struct {
+		name         string
+		clips        []engine.Clip
+		duration     float64
+		fromLLM      bool
+		wantKept     int
+		wantRejected int
+	}{
+		{"LLM 正常区间", []engine.Clip{mk(10, 90)}, 300, true, 1, 0},
+		{"LLM 越界终点裁齐到时长", []engine.Clip{mk(50, 200)}, 60, true, 1, 0},
+		{"LLM 负起点归零", []engine.Clip{mk(-10, 30)}, 100, true, 1, 0},
+		{"LLM 整段越界丢弃", []engine.Clip{mk(120, 200)}, 100, true, 0, 1},
+		{"LLM 超 300s 上限拒绝", []engine.Clip{mk(0, 400)}, 500, true, 0, 1},
+		{"下限 8s：7.9s 拒绝", []engine.Clip{mk(0, 7.9)}, 100, true, 0, 1},
+		{"下限 8s：恰好 8s 保留", []engine.Clip{mk(0, 8)}, 100, true, 1, 0},
+		{"非 LLM 不钩制（等分按构造）", []engine.Clip{mk(0, 500)}, 100, false, 1, 0},
+		{"时长未知不钩制但守 300s", []engine.Clip{mk(0, 30), mk(0, 400)}, 0, true, 1, 1},
+		{"混合：保留+拒绝各计", []engine.Clip{mk(10, 60), mk(0, 5), mk(200, 280)}, 300, true, 2, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			kept, rejected := filterClips(tc.clips, tc.duration, tc.fromLLM)
+			if len(kept) != tc.wantKept || rejected != tc.wantRejected {
+				t.Fatalf("kept=%d rejected=%d, want kept=%d rejected=%d", len(kept), rejected, tc.wantKept, tc.wantRejected)
+			}
+		})
+	}
+}
+
+func TestFilterClipsClamp(t *testing.T) {
+	// LLM 给出 [50, 200] 而视频只有 60s：应裁成 [50, 60] 而不是丢弃
+	kept, _ := filterClips([]engine.Clip{{Start: 50, End: 200, Title: "x", Score: 70}}, 60, true)
+	if len(kept) != 1 {
+		t.Fatalf("kept=%d, want 1", len(kept))
+	}
+	if kept[0].Start != 50 || kept[0].End != 60 {
+		t.Fatalf("钩制结果 [%.1f, %.1f], want [50, 60]", kept[0].Start, kept[0].End)
+	}
+}
+
+func TestFallbackChunksShortVideo(t *testing.T) {
+	// 降级兜底前提：短视频时 fallbackChunks 产出可预期——<5s 无产出，100s 两段全覆盖
+	if got := fallbackChunks(3); len(got) != 0 {
+		t.Fatalf("3s 视频 fallbackChunks 产出 %d 段, want 0", len(got))
+	}
+	got := fallbackChunks(100)
+	if len(got) != 2 {
+		t.Fatalf("100s 视频 fallbackChunks 产出 %d 段, want 2", len(got))
+	}
+	for i, c := range got {
+		if c.End-c.Start < 5 {
+			t.Fatalf("第 %d 段过短: %.1f-%.1f", i+1, c.Start, c.End)
+		}
 	}
 }
