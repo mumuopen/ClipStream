@@ -16,6 +16,7 @@ type Request struct {
 	Platforms []string `json:"platforms"` // bilibili / douyin
 	Account   string   `json:"account"`   // 账号别名，默认 default
 	DryRun    bool     `json:"dry_run"`   // 走到发布按钮前停止并截图
+	PoolItemID int64   `json:"pool_item_id,omitempty"` // 来源池条目：发布失败时回池重试（调度派发时携带）
 }
 
 // PlatformResult 单平台发布结果

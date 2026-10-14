@@ -314,14 +314,17 @@ func (s *Store) DeleteJob(id string) error {
 
 // ── 多账号（M5 矩阵）──
 
-// Account 平台矩阵账号
+// Account 平台发布账号
+// LoggedIn 由 server 层根据磁盘 cookie 实时计算（磁盘即真相），不落库
+// Status 仅在发布失败时回写 login_expired（routeAccount 过滤），扫码登录成功后恢复 ok
 type Account struct {
 	ID       int64  `json:"id"`
-	Platform string `json:"platform"` // bilibili | douyin | xiaohongshu ...
-	Name     string `json:"name"`
-	Labels   string `json:"labels"`  // 人设标签（逗号分隔）
+	Platform string `json:"platform"` // bilibili | douyin
+	Name     string `json:"name"`     // 发布账号名 = 登录别名（data/accounts/<platform>-<name>）
+	Labels   string `json:"labels"`  // 内容标签（逗号分隔，定时发布时匹配选题）
 	Status   string `json:"status"`  // ok | login_expired
-	Priority int    `json:"priority"` // 发布优先级
+	Priority int    `json:"priority"` // 优先级：同标签多账号时大的先用
+	LoggedIn bool   `json:"logged_in"` // 机上体：登录态文件是否存在
 }
 
 func (s *Store) ListAccounts() ([]*Account, error) {
@@ -355,6 +358,29 @@ func (s *Store) CreateAccount(a *Account) (int64, error) {
 
 func (s *Store) DeleteAccount(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM accounts WHERE id=?`, id)
+	return err
+}
+
+// AccountByName 按平台+账号名查账号（无则 nil）
+func (s *Store) AccountByName(platform, name string) (*Account, error) {
+	rows, err := s.db.Query(`SELECT id,platform,name,labels,status,priority FROM accounts WHERE platform=? AND name=?`, platform, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var a Account
+		if err := rows.Scan(&a.ID, &a.Platform, &a.Name, &a.Labels, &a.Status, &a.Priority); err != nil {
+			return nil, err
+		}
+		return &a, nil
+	}
+	return nil, rows.Err()
+}
+
+// SetAccountStatus 回写账号状态：发布失败（登录态缺失）标 login_expired，扫码登录成功恢复 ok
+func (s *Store) SetAccountStatus(platform, name, status string) error {
+	_, err := s.db.Exec(`UPDATE accounts SET status=? WHERE platform=? AND name=?`, status, platform, name)
 	return err
 }
 
@@ -407,6 +433,16 @@ func (s *Store) CreateSchedule(sc *Schedule) (int64, error) {
 
 func (s *Store) UpdateScheduleLastRun(id int64) error {
 	_, err := s.db.Exec(`UPDATE schedules SET last_run=? WHERE id=?`, time.Now().Unix(), id)
+	return err
+}
+
+// EnableSchedule 启/停定时发布计划
+func (s *Store) EnableSchedule(id int64, enabled bool) error {
+	en := 0
+	if enabled {
+		en = 1
+	}
+	_, err := s.db.Exec(`UPDATE schedules SET enabled=? WHERE id=?`, en, id)
 	return err
 }
 

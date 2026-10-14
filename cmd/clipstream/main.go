@@ -449,6 +449,7 @@ func dispatchSchedule(app *app, sc *store.Schedule) {
 			"platforms":  platSlice(platforms), // Request.platforms 是 []string，不能传 map
 			"account":    acc.Name,
 			"dry_run":    false,
+			"pool_item_id": it.ID, // 失败回池依据：发布任务失败时把池条目置回 pending 供下轮重试
 		}
 		reqJSON, _ := json.Marshal(req)
 		job, err := app.newJob(string(reqJSON), "publish")

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"chopperbot/internal/core"
 	"chopperbot/internal/publish"
@@ -66,7 +67,7 @@ func stagePublishRun(ctx context.Context, job *core.Job, env *Env) error {
 	return nil
 }
 
-// ---- finalize：落结果、状态与通知 ----
+// ---- finalize：落结果、状态与通知（失败自动回池 + 账号登录态回写）----
 
 func stagePublishFinalize(_ context.Context, job *core.Job, env *Env) error {
 	var result publish.Result
@@ -81,6 +82,34 @@ func stagePublishFinalize(_ context.Context, job *core.Job, env *Env) error {
 		job.Status = core.StatusFailed
 	}
 
+	// 失败善后（无人值守核心：不能让内容静默损失）
+	req, _ := publish.ParseRequest(job.Input)
+	postmortem := ""
+	if !result.AllOK && req != nil {
+		loginExpired := false
+		for _, r := range result.Results {
+			if !r.OK && strings.Contains(r.Detail, "登录态缺失") {
+				loginExpired = true
+			}
+		}
+		// 1) 登录态缺失：账号标 login_expired（routeAccount 自动避开，UI 提示重新扫码）
+		if loginExpired && req.Account != "" {
+			if err := env.Store.SetAccountStatus("bilibili", req.Account, "login_expired"); err == nil {
+				postmortem = fmt.Sprintf("\n账号「%s」登录态已过期，已停用其自动发布——请在发布中心重新扫码登录。", req.Account)
+			}
+		}
+		// 2) 调度派发的任务失败：池条目回 pending，下次有可用账号时自动重试
+		if req.PoolItemID > 0 {
+			if err := env.Store.SetPoolItemStatus(req.PoolItemID, "pending"); err == nil {
+				if postmortem == "" {
+					postmortem = "\n该切片已退回待发池，账号可用后下次定时发布自动重试。"
+				} else {
+					postmortem += "\n该切片已退回待发池，账号可用后下次定时发布自动重试。"
+				}
+			}
+		}
+	}
+
 	// pushme 通知发布结果
 	var lines string
 	for _, r := range result.Results {
@@ -93,7 +122,7 @@ func stagePublishFinalize(_ context.Context, job *core.Job, env *Env) error {
 	if result.DryRun {
 		env.notify("ClipStream 发布演练完成", "任务 "+job.ID+"（dry-run，未真发）"+lines)
 	} else {
-		env.notify("ClipStream 发布结果", "任务 "+job.ID+lines)
+		env.notify("ClipStream 发布结果", "任务 "+job.ID+lines+postmortem)
 	}
 	return nil
 }
