@@ -560,38 +560,50 @@ func (s *Server) loginStart(w http.ResponseWriter, r *http.Request) {
 }
 
 // autoSelectQRLogin 在 biliup 登录方式菜单中自动选中「扫码登录」：
-// 解析当前输出里的菜单行（❯=当前项），计算与目标项的行差，模拟方向键+回车
+// 菜单形如（❯ 指向当前项）：
+//   ? 选择一种登录方式 ›
+//     账号密码
+//   ❯ 短信登录
+//     扫码登录          ← 目标
+//     浏览器登录
+// 认准「扫码登录」的行号，计算与 ❯ 行的差值发方向键，最后回车确认。
+// 注意不能匹配 ❯ 行自身且必须要求菜单上下文（避免误判后续输出里的普通文字）。
 func (sess *loginSession) autoSelectQRLogin(tty pty.Pty) {
 	sess.mu.Lock()
 	out := sess.output
 	sess.mu.Unlock()
 	lines := strings.Split(out, "\n")
+	menu := -1 // 菜单标题行（"选择一种登录方式"）
 	cur, target := -1, -1
 	for i, ln := range lines {
-		if strings.Contains(ln, "❯") && cur < 0 {
-			cur = i
+		if strings.Contains(ln, "选择一种登录方式") && menu < 0 {
+			menu = i
 		}
-		if strings.Contains(ln, "扫码登录") && !strings.Contains(ln, "❯") && target < 0 {
-			target = i
+		if menu >= 0 && i > menu {
+			if strings.Contains(ln, "❯") && cur < 0 {
+				cur = i
+			}
+			// 目标行必须仍在菜单区间内（菜单下最多 6 项，防越界吃到后续输出）
+			if i <= menu+8 && strings.Contains(ln, "扫码登录") && target < 0 {
+				target = i
+			}
 		}
 	}
-	if cur < 0 { // 菜单结构异常：盲发两次下移+回车（默认菜单第 3 项是扫码）
-		_, _ = tty.Write([]byte("\x1b[B\x1b[B\r"))
+	if target < 0 || cur < 0 || target == cur {
+		// 结构识别失败或已选中：直接回车（菜单默认选中短信，识别失败时宁可重开）
+		if target != cur {
+			_, _ = tty.Write([]byte("\r"))
+		}
 		return
-	}
-	if target < 0 {
-		target = cur // 已选中
 	}
 	keys := ""
 	if target > cur {
-		keys = strings.Repeat("\x1b[B", target-cur)
-	} else if target < cur {
-		keys = strings.Repeat("\x1b[A", cur-target)
+		keys = strings.Repeat("\x1b[B", target-cur) // 方向下键
+	} else {
+		keys = strings.Repeat("\x1b[A", cur-target) // 方向上键
 	}
-	if keys != "" {
-		_, _ = tty.Write([]byte(keys))
-		time.Sleep(150 * time.Millisecond)
-	}
+	_, _ = tty.Write([]byte(keys))
+	time.Sleep(250 * time.Millisecond)
 	_, _ = tty.Write([]byte("\r")) // 确认
 }
 

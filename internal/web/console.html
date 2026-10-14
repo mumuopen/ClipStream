@@ -1460,7 +1460,12 @@ async function pollLogin() {
   } else {
     img.style.display = 'none';
     qr.style.display = 'block';
-    const out = st.output || '';
+    let out = st.output || '';
+    // 兜底：biliup 部分版本进入"浏览器登录"会给链接而不是二维码——把链接挖出来提示可点击
+    const m = out.match(/https?:\/\/passport\.bilibili\.com[^\s\r\n]+/);
+    if (m && !/[▀▄█]/.test(out)) {
+      out = (T('lg_running')) + '\n\n或点此链接在浏览器完成登录：\n' + m[0];
+    }
     qr.textContent = out.length > 3000 ? out.slice(-3000) : out;
     qr.scrollTop = qr.scrollHeight;
   }
