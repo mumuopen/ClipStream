@@ -35,11 +35,11 @@ type ASR struct {
 }
 
 type LLM struct {
-	BaseURL  string `yaml:"base_url"` // OpenAI 兼容端点，默认 https://api.openai.com/v1
-	APIKey   string `yaml:"api_key"`
-	Model    string `yaml:"model"`
-	Thinking string `yaml:"thinking"` // V4 系思考模式：disabled=关（批量打分更快更省）/ enabled=开 / 留空=不传参（端点默认）
-	Proxy    string `yaml:"proxy"` // 可选：LLM 专用代理
+	BaseURL  string `yaml:"base_url" json:"base_url"` // OpenAI 兼容端点，默认 https://api.openai.com/v1
+	APIKey   string `yaml:"api_key" json:"api_key"`
+	Model    string `yaml:"model" json:"model"`
+	Thinking string `yaml:"thinking" json:"thinking"` // V4 系思考模式：disabled=关（批量打分更快更省）/ enabled=开 / 留空=不传参（端点默认）
+	Proxy    string `yaml:"proxy" json:"proxy"` // 可选：LLM 专用代理
 }
 
 type Web struct {
