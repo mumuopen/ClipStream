@@ -13,6 +13,7 @@
     --amber: #F5A524; --amber-dim: #8f6217;
     --ok: #3FB950; --err: #F85149; --run: #4F8CC9;
     --c-clips: #4F8CC9; --c-publish: #E8894C; --c-subtitle: #56D4DD; --c-dub: #B3A1E8;
+    --card: var(--panel-2); --accent: var(--amber); /* 兼容旧引用（弹幕页/徽章用） */
     --mono: Consolas, "Cascadia Mono", "JetBrains Mono", monospace;
     --sidebar-w: 208px;
   }
@@ -166,7 +167,7 @@
   .chip.on { color: var(--amber); border-color: var(--amber-dim); background: rgba(245,165,36,.08); }
   .chip .n { color: var(--faint); margin-left: 5px; }
 
-  /* 占位页（M4/M5 建设中） */
+  /* 已下线页面兜底样式 */
   .ph-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px 24px; max-width: 720px; }
   .ph-card .ph-name { font-size: 16px; font-weight: 700; color: #E8EDF4; display: flex; align-items: center; gap: 10px; }
   .ph-card .ph-tag { font: 10px var(--mono); color: var(--amber); border: 1px solid var(--amber-dim); border-radius: 4px; padding: 2px 8px; letter-spacing: .12em; }
@@ -231,7 +232,7 @@
     .strip { grid-auto-flow: row; grid-template-columns: repeat(3, 1fr); }
   }
 
-  /* M5 矩阵：账号与调度 */
+  /* 发布中心：账号与定时计划 */
   .m5-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
   .m5-panel, .set-panel {
     background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px;
@@ -248,6 +249,13 @@
   }
   .m5-form label:has(input[type=time]) { width: 96px; }
   .m5-form button { padding: 8px 16px; }
+  .b-login { font: 600 11px inherit; color: var(--amber); background: rgba(245,165,36,.1); border: 1px solid rgba(245,165,36,.4); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  .b-login:hover { background: rgba(245,165,36,.2); }
+  .qr-pre {
+    background: #000; color: #d8ffe0; font-family: var(--mono); font-size: 8.5px; line-height: 1.05;
+    white-space: pre; overflow: auto; border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px; max-height: 340px; margin: 0;
+  }
   .acc-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
   .acc-card {
     background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
@@ -321,6 +329,7 @@
       <label><input type="checkbox" id="pub-douyin"> 抖音</label>
       <label><input type="checkbox" id="pub-dryrun"> 演练模式（不真发）</label>
     </div>
+    <label id="pub-acc-row">发布账号<select id="pub-account"></select></label>
     <label>标题<input type="text" id="pub-title" maxlength="80"></label>
     <label>描述<textarea id="pub-desc" rows="2"></textarea></label>
     <label>话题（逗号分隔，B站作 tag、抖音作 #话题）<input type="text" id="pub-tags" placeholder="如：NASA, 航天, 科普"></label>
@@ -332,18 +341,33 @@
   </div>
 </div>
 
-<!-- 入池弹窗（错峰发布） -->
+<!-- 入池弹窗（定时发布） -->
 <div id="pool-bg" class="modal-bg" onclick="if(event.target===this)closePoolModal()">
   <div class="modal">
-    <h3>入池待发（错峰调度）</h3>
+    <h3 id="pool-modal-title">存入待发池</h3>
     <div id="pool-meta" class="mmeta"></div>
     <label>标题<input type="text" id="pool-title" maxlength="80"></label>
     <label>描述<textarea id="pool-desc" rows="2"></textarea></label>
-    <label>内容标签（逗号分隔，用于匹配账号人设路由，如：游戏,高燃）<input type="text" id="pool-tags" placeholder="游戏,高燃"></label>
-    <div class="hint">入池后由「标签矩阵」的发布调度在设定时间自动派发：按标签匹配账号、按优先级选号、pushme 通知结果。</div>
+    <label>内容标签（用于自动匹配发布账号，如：游戏,高燃）<input type="text" id="pool-tags" placeholder="游戏,高燃"></label>
+    <div class="hint" id="pool-modal-hint">存入后到「发布中心」设定发布时间，到点自动发布并推送到手机。</div>
     <div class="modal-actions">
       <button class="ghost" onclick="closePoolModal()">取消</button>
-      <button class="go" onclick="submitPool()">入池</button>
+      <button class="go" onclick="submitPool()">存入</button>
+    </div>
+  </div>
+</div>
+
+<!-- 扫码登录弹窗（B站） -->
+<div id="login-bg" class="modal-bg" onclick="if(event.target===this)closeLoginModal()">
+  <div class="modal" style="max-width:560px">
+    <h3 id="login-title">扫码登录 B站</h3>
+    <div id="login-meta" class="mmeta"></div>
+    <div class="hint" id="login-state" style="margin:6px 0">等待扫码中…</div>
+    <img id="login-img" alt="登录二维码" style="display:none;max-width:300px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px">
+    <pre id="login-qr" class="qr-pre"></pre>
+    <details style="margin-top:8px"><summary class="hint">终端输出</summary><pre id="login-console" class="qr-pre" style="max-height:120px"></pre></details>
+    <div class="modal-actions">
+      <button class="ghost" onclick="closeLoginModal()">关闭</button>
     </div>
   </div>
 </div>
@@ -394,100 +418,128 @@
 /* ═══════════ 国际化（zh/en）═══════════ */
 const I18N = {
   zh: {
-    nav_ops: '运营', nav_live: '直播 · M4', nav_matrix: '矩阵 · M5', nav_sys: '系统',
-    nav_board: '总览', nav_board_sub: '流水线概览与投料',
-    nav_tasks: '任务中心', nav_tasks_sub: '全部管线任务',
-    nav_review: '审核台', nav_review_sub: '切片审核与发布决策',
-    nav_creeper: '采集库', nav_hotguard: '热门守卫',
-    nav_livefollow: '直播关注', nav_livefollow_sub: '开播自动录 + 下播自动切片',
-    nav_barrage: '弹幕曲线', nav_barrage_sub: '密度曲线 · 双信号高光',
-    nav_labels: '标签矩阵', nav_labels_sub: '矩阵账号 · 错峰调度',
-    nav_settings: '设置', nav_settings_sub: '引擎 · 账号 · 通知',
-    built: '建设中',
+    nav_work: '工作台', nav_collect: '采集', nav_edit: '剪辑', nav_publish: '发布', nav_sys: '系统',
+    nav_board: '总览', nav_board_sub: '投喂离线视频 · 全流程一览',
+    nav_tasks: '任务中心', nav_tasks_sub: '所有任务与进度',
+    nav_review: '审核台', nav_review_sub: '挑选切片：发布 / 丢弃',
+    nav_livefollow: '直播关注', nav_livefollow_sub: '开播自动录制',
+    nav_barrage: '弹幕曲线', nav_barrage_sub: '直播间人气热度',
+    nav_labels: '发布中心', nav_labels_sub: '发布账号 · 定时计划 · 待发',
+    nav_settings: '设置', nav_settings_sub: '所有配置都在这',
+    page_gone: '页面不存在',
     lang_switch: 'EN',
-    feed_ph: '投喂视频链接（YouTube / B站…）或本地文件路径，回车开工',
-    btn_create: '创建任务', btn_add: '关注', btn_add_acc: '添加账号', btn_create_sch: '创建调度',
-    btn_refresh: '刷新', btn_del: '删除', btn_zh: '中文', btn_en: 'EN',
+    feed_ph: '离线视频链接（B站稿件 / YouTube）或本地文件路径，回车开工',
+    feed_hint: '直播录制请到「采集 → 直播关注」，这里只处理已完结的视频',
+    btn_create: '创建任务', btn_add: '关注', btn_add_acc: '添加账号', btn_create_sch: '创建计划',
+    btn_refresh: '刷新', btn_del: '删除',
     strip_today: '今日任务', strip_review: '待审核', strip_done: '已完成', strip_failed: '失败',
     strip_rate: '成功率', strip_engines: '引擎就绪',
     st_queued: '排队', st_running: '执行中', st_review: '待审核', st_done: '完成', st_failed: '失败', st_canceled: '已取消',
     st_live_idle: '待开播', st_live_recording: '录制中', st_live_error: '异常',
     eng_ytdlp: '下载', eng_ffmpeg: '转码', eng_whisper: '转写', eng_biliup: 'B站投稿', eng_deepseek: 'LLM', eng_pushme: '通知',
-    board_empty: '流水线未开工 — 投喂链接即可启动「下载 → 转写 → 选高光 → 切片 → 审核 → 发布」全流程',
-    live_ph: '粘贴直播间链接（B站 live.bilibili.com / 虎牙 www.huya.com），回车添加关注',
+    board_empty: '还没有任务 — 上面粘贴离线视频链接即可开工',
+    live_ph: '直播间链接（B站 live.bilibili.com / 虎牙 www.huya.com），回车开始盯播',
     live_idle: '未开播', live_recording: '录制中', live_error: '检测异常',
-    live_empty: '还没有关注的直播间', live_empty2: '添加后自动监控：开播即录、下播自动切片入审核台',
+    live_empty: '还没有盯播的直播间', live_empty2: '添加后开播自动录、下播自动切片',
     live_seg: '段', live_elapsed: '已录',
-    live_hint: '守护器每 60s 轮询一次；开播自动录 FLV → 600s/段 → 下播后每段自动进入切片管线 → pushme 推送。',
-    live_confirm_del: '取消关注并停止该房间的录制？（已录文件保留）',
-    barrage_ph: '请选择直播间（录制中自动采集弹幕）', barrage_nodata: '暂无弹幕数据（直播中才有）',
-    barrage_total: '共', 'barrage_peak': '峰值', 'barrage_cover': '覆盖', 'barrage_per5': '条/5s',
+    live_hint: '每 60 秒检测一次开播；自动录制（600秒/段）→ 下播自动切片进审核台 → 手机收通知。',
+    live_confirm_del: '取消盯播并停止录制？（已录文件保留）',
+    barrage_ph: '选择直播间（录制时自动统计弹幕）', barrage_nodata: '暂无弹幕数据（直播中才有）',
+    barrage_total: '共', 'barrage_peak': '峰值', 'barrage_cover': '覆盖', 'barrage_per5': '条/5秒',
     'barrage_min30': '近 30 分', 'barrage_min120': '近 2 小时', 'barrage_min360': '近 6 小时',
-    m5_acc: '矩阵账号', m5_acc_hint: '发布时按人设标签路由',
-    m5_plat: '平台', m5_name: '账号名', m5_labels: '人设标签', m5_labels_ph: '游戏,高燃,赛事（逗号分隔）', m5_prio: '优先级',
-    m5_acc_empty: '暂无矩阵账号 — 发布时按人设标签与优先级路由',
-    m5_sch: '发布调度', m5_sch_hint: '每日到点触发（占位）',
-    m5_sch_name: '调度名', m5_time: '触发时间', m5_plat_sel: '发布平台', m5_plat_only: '当前支持 B站',
-    m5_sch_empty: '暂无调度 — 到点触发发布（完整错峰待接内容池与账号路由）',
-    m5_rule: '路由规则（占位）', m5_step1: '切片出审核台', m5_step1b: '标签',
-    m5_step2: '匹配账号人设', m5_step2b: '优先级选号', m5_step3: '按调度错峰', m5_step3b: '多平台分发',
-    m5_acc_name_ph: '如：主号·电竞', m5_sch_name_ph: '如 晚高峰错峰',
-    m5_ok: '可用', m5_login: '待登录', m5_on: '启用', m5_off: '停用', m5_last: '上次', m5_never: '未触发',
-    m5_unlabel: '未设标签', m5_confirm_acc: '删除该矩阵账号？', m5_confirm_sch: '删除该调度？',
-    m5_acc_need: '账号名必填', m5_sch_need: '调度名必填', m5_sch_bad: '调度名与 HH:MM 时间必填',
-    set_engines: '引擎', set_accounts: '账号', set_notify: '通知', set_cmds: '常用命令',
-    set_bsub: 'B站投稿', set_douyin: '抖音', set_bili: 'B站', set_douyin_acc: '浏览器登录态（未接入）',
-    set_bili_login: 'biliup 登录态', set_ok: '已登录', set_scan2: '待扫码', set_enabled: '已启用', set_disabled: '未启用',
+    /* ── 发布中心 ── */
+    m5_acc: '发布账号', m5_acc_hint: '定时发布时自动选用：标签匹配 + 高优先级先用',
+    m5_plat: '平台', m5_name: '账号名', m5_labels: '内容标签', m5_labels_ph: '游戏,高燃,赛事（逗号分隔，选填）', m5_prio: '优先级',
+    m5_acc_name_ph: '如：电竞主号（将作为登录账号名）',
+    m5_acc_empty: '还没有发布账号 — 添加后点「扫码登录」完成授权',
+    m5_sch: '定时发布计划', m5_sch_hint: '每天到点自动发布待发池里的切片',
+    m5_sch_name: '计划名', m5_time: '发布时间', m5_plat_sel: '发布平台', m5_plat_only: '自动发布当前支持 B站',
+    m5_sch_name_ph: '如：晚八点发布',
+    m5_sch_empty: '还没有计划 — 创建后到点自动发布待发内容',
+    m5_rule: '自动发布是怎么运作的', m5_step1: '切片送入待发池', m5_step1b: '（审核通过后）',
+    m5_step2: '按标签匹配账号', m5_step2b: '优先级高的先用', m5_step3: '到点自动发布', m5_step3b: '结果推送到手机',
+    m5_ok: '正常', m5_login: '待登录', m5_expired: '登录已过期', m5_on: '启用', m5_off: '已停用', m5_last: '上次', m5_never: '未触发',
+    m5_unlabel: '无标签', m5_confirm_acc: '删除该发布账号？（已保存的登录不受影响）', m5_confirm_sch: '删除该定时计划？',
+    m5_acc_need: '账号名必填', m5_sch_need: '计划名必填',
+    m5_login_btn: '扫码登录', m5_login_now: '登录中…', m5_toggle_on: '启用', m5_toggle_off: '停用',
+    m5_pool_title: '待发池', m5_pool_empty: '待发池是空的 — 审核台点「存入待发池」后，到点自动发布',
+    /* ── 扫码登录弹窗 ── */
+    lg_title: '扫码登录 B站', lg_hint: '用手机 B站 App 扫屏幕上的二维码',
+    lg_running: '等待扫码中…（用 B站 App 的扫一扫）', lg_ok: '登录成功，可以发布了', lg_fail: '登录未完成，可重试',
+    lg_close: '关闭', lg_console: '终端输出',
+    /* ── 审核台 ── */
+    rv_discard: '不采用', rv_discard_confirm: '丢弃这个切片？（从列表移除，源文件保留）',
+    rv_pool_btn: '存入待发池', rv_pool_done: '已存入待发池：设定时间到自动发布',
+    pub_acc: '发布账号', pub_acc_default: '默认账号（default）',
+    pool_modal_title: '存入待发池', pool_modal_hint: '存入后到「发布中心」设定时间自动发布：自动匹配账号、手机收结果。',
+    /* ── 设置页 ── */
+    set_engines: '引擎状态', set_accounts: '账号', set_notify: '通知', set_cmds: '常用命令',
+    set_bsub: 'B站投稿', set_douyin: '抖音', set_bili: 'B站', set_douyin_acc: '需要装浏览器的电脑，暂不支持无人值守',
+    set_bili_login: 'B站登录态（default 账号）', set_ok: '已登录', set_scan2: '待扫码', set_enabled: '已启用', set_disabled: '未启用',
+    set_cg_ops: '运行规则', set_cg_llm: 'AI 模型（高光选择 / 翻译 / 解说稿）', set_cg_paths: '引擎路径（一般不用改，部署包已内置）',
+    set_cg_pub: '发布行为',
     'set_eng_ytdlp': '视频下载（数千站点）', 'set_eng_ffmpeg': '转码 / 切片 / 烧字幕', 'set_eng_whisper': '离线语音转写 whisper.cpp',
     'set_eng_biliup': 'B站投稿直传', 'set_eng_deepseek': '高光选择 / 解说稿 / 翻译', 'set_eng_pushme': '审核 / 发布 / 失败推手机',
     lang_label: '语言', ready: '就绪', not_set: '未配置', nav_tasks_all: '全部', set_cmd_init: '引擎体检与配置生成', set_cmd_serve: '启动本控制台（127.0.0.1:8899）', set_cmd_run: '命令行直接跑任务', set_cmd_login: '[--account 别名] 平台扫码登录', set_cmd_status: '任务一览',
   },
   en: {
-    nav_ops: 'Ops', nav_boards: 'Overview',
-    nav_board: 'Board', nav_board_sub: 'Pipeline overview & feed',
-    nav_tasks: 'Tasks', nav_tasks_sub: 'All pipeline jobs',
-    nav_review: 'Review', nav_review_sub: 'Clip review & publish',
-    nav_creeper: 'Crawler', nav_hotguard: 'Hot Guard',
-    nav_livefollow: 'Live Follow', nav_livefollow_sub: 'Auto-record on live, auto-clip after',
-    nav_barrage: 'Barrage', nav_barrage_sub: 'Density curve · dual-signal highlight',
-    nav_labels: 'Label Matrix', nav_labels_sub: 'Accounts · scheduling',
-    nav_settings: 'Settings', nav_settings_sub: 'Engines · accounts · notify',
-    built: 'WIP',
+    nav_work: 'Workspace', nav_collect: 'Collect', nav_edit: 'Edit', nav_publish: 'Publish', nav_sys: 'System',
+    nav_board: 'Overview', nav_board_sub: 'Feed completed videos · pipeline at a glance',
+    nav_tasks: 'Tasks', nav_tasks_sub: 'All jobs and progress',
+    nav_review: 'Review', nav_review_sub: 'Pick clips: publish / discard',
+    nav_livefollow: 'Live Follow', nav_livefollow_sub: 'Auto-record when live',
+    nav_barrage: 'Barrage', nav_barrage_sub: 'Room chat heat curve',
+    nav_labels: 'Publish Center', nav_labels_sub: 'Accounts · schedule · queue',
+    nav_settings: 'Settings', nav_settings_sub: 'Everything configurable here',
+    page_gone: 'Page not found',
     lang_switch: '中',
-    feed_ph: 'Paste a video URL (YouTube / Bilibili…) or local file path, press Enter',
-    btn_create: 'Create', btn_add: 'Follow', btn_add_acc: 'Add account', btn_create_sch: 'Create',
+    feed_ph: 'Completed-video URL (Bilibili video / YouTube) or local file path, press Enter',
+    feed_hint: 'For live streams use Collect → Live Follow; this feed only handles finished videos',
+    btn_create: 'Create', btn_add: 'Follow', btn_add_acc: 'Add account', btn_create_sch: 'Create plan',
     btn_refresh: 'Refresh', btn_del: 'Delete',
     strip_today: 'Today', strip_review: 'Review', strip_done: 'Done', strip_failed: 'Failed',
     strip_rate: 'Success', strip_engines: 'Engines',
     st_queued: 'Queued', st_running: 'Running', st_review: 'Review', st_done: 'Done', st_failed: 'Failed', st_canceled: 'Canceled',
     st_live_idle: 'Waiting', st_live_recording: 'Recording', st_live_error: 'Error',
     eng_ytdlp: 'Download', eng_ffmpeg: 'Transcode', eng_whisper: 'ASR', eng_biliup: 'Bilibili', eng_deepseek: 'LLM', eng_pushme: 'Notify',
-    board_empty: 'Pipeline idle — feed a URL to start download → transcribe → highlight → clip → review → publish',
-    live_ph: 'Paste a live-room link (Bilibili live.bilibili.com / Huya www.huya.com), press Enter',
+    board_empty: 'No jobs yet — paste a video URL above to start',
+    live_ph: 'Live-room link (Bilibili live.bilibili.com / Huya www.huya.com), press Enter',
     live_idle: 'Offline', live_recording: 'Recording', live_error: 'Error',
-    live_empty: 'No followed rooms yet', live_empty2: 'Add rooms to auto-record and auto-clip into review',
+    live_empty: 'No followed rooms yet', live_empty2: 'Auto-record on live, auto-clip afterwards',
     live_seg: 'seg', live_elapsed: 'for',
-    live_hint: 'Guard polls every 60s; auto-record FLV → 600s/seg → auto-clip into review → push notify.',
+    live_hint: 'Checked every 60s; auto-record (600s/seg) → auto-clip to review → phone notify.',
     live_confirm_del: 'Unfollow and stop recording this room? (recordings kept)',
-    barrage_ph: 'Select a room (danmaku is auto-collected while live)',
+    barrage_ph: 'Select a room (chat counted while live)',
     barrage_nodata: 'No danmaku yet (appears while live)',
     barrage_total: 'Total', barrage_peak: 'Peak', barrage_rate: 'count', barrage_per5: 'per 5s',
     'barrage_min30': '30 min', 'barrage_min120': '2 hours', 'barrage_min360': '6 hours',
-    m5_acc: 'Matrix Accounts', m5_acc_hint: 'route by persona labels at publish',
-    m5_plat: 'Platform', m5_name: 'Account name', m5_labels: 'Labels', m5_labels_ph: 'game,hype,tournament (comma-sep)', m5_prio: 'Priority',
-    m5_acc_empty: 'No accounts yet — routing by labels & priority at publish',
-    m5_sch: 'Publish Schedule', m5_sch_hint: 'daily trigger (placeholder)',
-    m5_sch_name: 'Name', m5_time: 'Time', m5_plat_sel: 'Platforms', m5_plat_only: 'Bilibili only',
-    m5_sch_empty: 'No schedules yet — full staggered publish pending',
-    m5_rule: 'Routing (placeholder)', m5_step1: 'Clip from review', m5_step2: 'Match account persona', m5_step3: 'Scheduled stagger',
-    m5_step1b: 'labels', m5_step2b: 'priority', m5_step3b: 'multi-platform',
-    m5_acc_name_ph: 'e.g. main-account', m5_sch_name_ph: 'e.g. evening peak',
-    m5_ok: 'OK', m5_login: 'login', m5_on: 'ON', m5_off: 'OFF', m5_last: 'last', m5_never: 'never',
-    m5_unlabel: 'no labels', m5_confirm_acc: 'Delete this account?', m5_confirm_sch: 'Delete this schedule?',
-    m5_acc_need: 'Account name required', m5_sch_need: 'Name required', m5_sch_bad: 'Name and HH:MM time required',
-    set_engines: 'Engines', set_accounts: 'Accounts', set_notify: 'Notify', set_cmds: 'Common commands',
-    set_bsub: 'Bilibili upload', set_douyin: 'Douyin', set_bili: 'Bilibili', set_douyin_acc: 'Douyin login (pending)',
-    set_bili_login: 'biliup login state', set_scan2: 'to scan', set_ok: 'logged in', set_enabled: 'enabled', set_disabled: 'disabled',
+    m5_acc: 'Publish Accounts', m5_acc_hint: 'auto-picked at publish: label match + priority',
+    m5_plat: 'Platform', m5_name: 'Account name', m5_labels: 'Content labels', m5_labels_ph: 'game,hype,tournament (comma-sep, optional)', m5_prio: 'Priority',
+    m5_acc_name_ph: 'e.g. esports-main (used as login name)',
+    m5_acc_empty: 'No accounts yet — add one, then QR-login to authorize it',
+    m5_sch: 'Publish Plans', m5_sch_hint: 'daily auto-publish of queued clips at this time',
+    m5_sch_name: 'Plan name', m5_time: 'Publish time', m5_plat_sel: 'Platforms', m5_plat_only: 'Bilibili only for now',
+    m5_sch_name_ph: 'e.g. 8pm publish',
+    m5_sch_empty: 'No plans yet — create one to auto-publish queued content',
+    m5_rule: 'How auto-publish works', m5_step1: 'Clip enters queue', m5_step1b: '(after review)',
+    m5_step2: 'Match account by label', m5_step2b: 'highest priority first', m5_step3: 'Publish on time', m5_step3b: 'result pushed to phone',
+    m5_ok: 'OK', m5_login: 'login', m5_expired: 'login expired', m5_on: 'ON', m5_off: 'OFF', m5_last: 'last', m5_never: 'never',
+    m5_unlabel: 'no labels', m5_confirm_acc: 'Delete this account? (saved login untouched)', m5_confirm_sch: 'Delete this plan?',
+    m5_acc_need: 'Account name required', m5_sch_need: 'Plan name required',
+    m5_login_btn: 'QR Login', m5_login_now: 'Logging in…', m5_toggle_on: 'Enable', m5_toggle_off: 'Disable',
+    m5_pool_title: 'Queue', m5_pool_empty: 'Queue is empty — press "Queue for publish" in Review; plans publish it automatically',
+    lg_title: 'QR Login · Bilibili', lg_hint: 'Scan the QR with the Bilibili mobile app',
+    lg_running: 'Waiting for scan… (use the Bilibili app scanner)', lg_ok: 'Logged in — ready to publish', lg_fail: 'Login not completed, you can retry',
+    lg_close: 'Close', lg_console: 'Terminal output',
+    rv_discard: 'Discard', rv_discard_confirm: 'Discard this clip? (removed from list, file kept)',
+    rv_pool_btn: 'Queue for publish', rv_pool_done: 'Queued: will publish automatically at plan time',
+    pub_acc: 'Account', pub_acc_default: 'Default account',
+    pool_modal_title: 'Queue for publish', pool_modal_hint: 'Queued items auto-publish at plan time in Publish Center: account matched automatically, result to your phone.',
+    set_engines: 'Engines', set_accounts: 'Accounts', set_notify: 'Notify', set_cmds: 'Commands',
+    set_bsub: 'Bilibili upload', set_douyin: 'Douyin', set_bili: 'Bilibili', set_douyin_acc: 'requires a desktop browser; not for unattended servers',
+    set_bili_login: 'Bilibili login (default account)', set_ok: 'logged in', set_scan2: 'to scan', set_enabled: 'enabled', set_disabled: 'disabled',
+    set_cg_ops: 'Runtime rules', set_cg_llm: 'AI model (highlight / translate / narration)', set_cg_paths: 'Engine paths (bundled, usually no change)',
+    set_cg_pub: 'Publish behavior',
     'set_eng_ytdlp': 'video download (thousands of sites)', 'set_eng_ffmpeg': 'transcode / clip / burn subtitles', 'set_eng_whisper': 'offline ASR whisper.cpp',
     'set_eng_biliup': 'Bilibili upload', 'set_eng_deepseek': 'highlight / script / translate', 'set_eng_pushme': 'review / publish / failure push',
     lang_label: 'Language', ready: 'ready', not_set: 'not set', nav_tasks_all: 'All', set_cmd_init: 'engine check & config generation', set_cmd_serve: 'start this console (127.0.0.1:8899)', set_cmd_run: 'run a job from CLI', set_cmd_login: '[--account alias] platform QR login', set_cmd_status: 'job overview',
@@ -499,14 +551,12 @@ function setLang(l) { LANG = l; localStorage.setItem('clipstream_lang', l); rout
 function statusCN(s) { return T('st_' + s) || s; }
 function engineCN(k) { return T('eng_' + (k || '')) || k; }
 /* ═══════════ 基础 ═══════════ */
-const STATUS_CN = { queued: '排队', running: '执行中', review: '待审核', done: '完成', failed: '失败', canceled: '已取消' };
 const KIND_STAGES = {
   clips:    ['download', 'transcribe', 'highlight', 'cut', 'finalize'],
   publish:  ['prepare', 'publish', 'finalize'],
   subtitle: ['prepare', 'translate', 'burn', 'finalize'],
   dub:      ['prepare', 'script', 'synthesize', 'mix', 'finalize'],
 };
-const ENGINE_CN = { 'yt-dlp': '下载', 'ffmpeg': '转码', 'whisper': '转写', 'biliup': 'B站投稿', 'deepseek': 'LLM', 'pushme': '通知' };
 const $ = s => document.querySelector(s);
 let jobs = [], openId = null, es = null;
 let detailClips = [];
@@ -531,52 +581,21 @@ function jobSummary(j) {
 }
 async function fetchJSON(url, opt) { const r = await fetch(url, opt); if (!r.ok) throw new Error(r.status + ' ' + await r.text()); return r.json(); }
 
-/* ═══════════ 模块地图（对齐原版 ChopperBot 菜单 apps.menu.ts）═══════════
-   原版核心模块 → 我们的页面；M4/M5 对应模块先占位，届时骨架现成 */
+/* ═══════════ 导航：按用户动词分组（采集 / 剪辑 / 发布）═══════════ */
 const NAV = [
-  { group: 'ops' },
-  { key: 'board',     name: '总览',     sub: '流水线概览与投料',   origin: 'Board' },
-  { key: 'tasks',     name: '任务中心', sub: '全部管线任务',       origin: 'Task Center' },
-  { key: 'review',    name: '审核台',   sub: '切片审核与发布决策', origin: '—' },
-  { group: 'live' },
-  { key: 'creeper',   name: '采集库',   soon: 'M4', origin: 'Creeper Library' },
-  { key: 'hotguard',  name: '热门守卫', soon: 'M4', origin: 'Hot Guard' },
-  { key: 'livefollow',name: '直播关注', sub: '开播自动录 + 下播自动切片', origin: 'Live Follow' },
-  { key: 'barrage',   name: '弹幕曲线', sub: '密度曲线 · 双信号高光', origin: 'Barrage Curve' },
-  { group: 'matrix' },
-  { key: 'labels',    name: '标签矩阵', sub: '矩阵账号 · 错峰调度', origin: 'Label Manage' },
+  { group: 'work' },
+  { key: 'board',     name: '总览',     sub: '投喂离线视频 · 全流程一览' },
+  { group: 'collect' },
+  { key: 'livefollow',name: '直播关注', sub: '开播自动录制' },
+  { key: 'barrage',   name: '弹幕曲线', sub: '直播间人气热度' },
+  { group: 'edit' },
+  { key: 'review',    name: '审核台',   sub: '挑选切片：发布 / 丢弃' },
+  { key: 'tasks',     name: '任务中心', sub: '所有任务与进度' },
+  { group: 'publish' },
+  { key: 'labels',    name: '发布中心', sub: '发布账号 · 定时计划 · 待发' },
   { group: 'sys' },
-  { key: 'settings',  name: '设置',     sub: '引擎 · 账号 · 通知' },
+  { key: 'settings',  name: '设置',     sub: '所有配置都在这' },
 ];
-
-/* M4/M5 占位页内容（对齐原版模块语义） */
-const PLACEHOLDERS = {
-  creeper: {
-    name: '采集库 Creeper Library', origin: '血统：原版 chopperbot-creeper · CreeperManager',
-    desc: '爬虫任务模板库：直播检测、弹幕采集、主播信息等任务的定义与复用，由 TaskCenter 统一调度执行、恢复与观察。',
-    plan: ['直播录制任务模板（平台适配：B站 / 抖音 / 斗鱼 / 虎牙）', '任务派发与恢复（借鉴原版 TaskCenter 观察者机制）', '采集任务的定时循环与去重'],
-  },
-  hotguard: {
-    name: '热门守卫 Hot Guard', origin: '血统：原版 chopperbot-hot · HotGuard',
-    desc: '循环值守监控全平台热门直播，热度达标自动进入「录制 → 切片 → 审核」管线——原版 ChopperBot 的核心入口，直播切片自动化的起点。',
-    plan: ['平台热门榜轮询（B站 / 抖音）', '热度阈值与关键词触发', '自动派发录制任务'],
-  },
-  livefollow: {
-    name: '直播关注 Live Follow', origin: '血统：原版 chopperbot-hot · LiverFollower',
-    desc: '关注主播列表：开播自动检测、自动录制、下播自动切片入审核台。适合追固定主播做日常切片内容。',
-    plan: ['主播关注管理（多平台）', '开播检测与自动启停录制', '录制分片与断流重连'],
-  },
-  barrage: {
-    name: '弹幕曲线 Barrage Curve', origin: '血统：原版 chopperbot-barrage · BarrageScoreCurve',
-    desc: '弹幕关键词打分密度曲线：高分区间即高光切片参考。与 ASR 转写 + LLM 评分融合为双信号高光检测——比单信号准得多。',
-    plan: ['弹幕 WebSocket 采集', '打分策略配置（全局词库 + 主播词库 + ban 词，原版 BarrageScore 思想）', '密度曲线可视化', '与转写双信号融合选高光'],
-  },
-  labels: {
-    name: '标签矩阵 Label Manage', origin: '血统：原版 chopperbot-account · LabelManager + 账号路由 RouteRuler',
-    desc: '账号人设标签与切片标签管理：切片打好标签后按人设路由到对应账号发布——矩阵号运营的核心抽象。',
-    plan: ['多账号管理（B站 / 抖音 / 小红书）', '人设标签与路由规则', '错峰发布调度', '播放数据回收与日报'],
-  },
-};
 
 /* ═══════════ 路由 ═══════════ */
 function route() {
@@ -598,10 +617,9 @@ function renderNav() {
     : '';
 }
 function renderPage() {
-  const cur = NAV.find(n => n.key === page);
   $('#ph-title').textContent = T('nav_' + page);
-  $('#ph-sub').textContent = T(page + '_sub') || (cur.origin ? `Origin: ${cur.origin}` : '');
-  $('#ph-note').textContent = PLACEHOLDERS[page] ? `— ${T('built')} —` : '';
+  $('#ph-sub').textContent = T('nav_' + page + '_sub') || '';
+  $('#ph-note').textContent = '';
   const el = $('#page');
   switch (page) {
     case 'board':     return renderBoard(el);
@@ -611,7 +629,7 @@ function renderPage() {
 	case 'livefollow': return renderLiveFollow(el);
     case 'barrage':    return renderBarrage(el);
     case 'labels':     return renderLabels(el);
-    default:          return renderPlaceholder(el, page);
+    default:          return renderGone(el);
   }
 }
 
@@ -619,6 +637,7 @@ function renderPage() {
 function renderBoard(el) {
   el.innerHTML = `
     <div class="feed"><input id="input" placeholder="${T('feed_ph')}"><button id="submit" onclick="submitJob()">${T('btn_create')}</button></div>
+    <div class="hint" style="margin:6px 0 0">${T('feed_hint')}</div>
     <div class="strip" id="strip"></div>
     <div id="board-jobs"></div>`;
   bindFeed();
@@ -746,18 +765,11 @@ async function delWatch(id) {
   try { await fetchJSON('/api/live/watches/' + id, { method: 'DELETE' }); refreshWatches(); } catch (e) { alert(e.message); }
 }
 
-/* ═══════════ 页面：占位（M4 建设中，对齐原版模块）═══════════ */
-function renderPlaceholder(el, key) {
-  const p = PLACEHOLDERS[key];
-  el.innerHTML = `
-    <div class="ph-card">
-      <div class="ph-name">${p.name}<span class="ph-tag">建设中</span></div>
-      <div class="ph-origin">${p.origin}</div>
-      <div class="ph-desc">${p.desc}</div>
-      <ul>${p.plan.map(x => `<li>${x}</li>`).join('')}</ul>
-      <div class="coming"><div class="c1">— OPEN FOR THIS MODULE —</div>
-      <div class="c2">平台路线图：M3 已交付 · M4 直播链接续</div></div>
-    </div>`;
+/* ═══════════ 页面：不存在（旧书签/已下线占位页路由到这）═══════════ */
+function renderGone(el) {
+  el.innerHTML = `<div class="empty"><span class="arrow">🧭</span>
+    <div class="big">${T('page_gone')}</div>
+    <div class="small">${T('feed_hint')}</div></div>`;
 }
 
 /* ═══════════ 页面：设置 ═══════════ */
@@ -768,8 +780,8 @@ function renderSettings(el) {
       <div class="set-card" id="set-engines-card"></div>
       <div class="set-card" id="set-accounts-card"></div>
       <div class="set-card" style="grid-column:1/-1">
-        <h4>运营配置 Runtime Config
-          <span class="hint">保存即写回 config.yaml（文件重写，注释会丢失）；审核/通知参数即时生效，直播检测/磁盘清理参数需重启 daemon</span></h4>
+        <h4>${T('set_cg_ops')}
+          <span class="hint">保存即写回 config.yaml；审核/通知即时生效；直播检测/磁盘清理需重启后台；LLM 与引擎路径需重启程序生效</span></h4>
         <div class="m5-form" id="cfg-form" style="flex-wrap:wrap;row-gap:10px">
           <label>自动审核 <input id="cfg-ar-on" type="checkbox" style="width:auto"></label>
           <label>入池评分≥ <input id="cfg-ar-score" type="number" min="0" max="100" style="width:60px"></label>
@@ -787,8 +799,33 @@ function renderSettings(el) {
           <label>地址 <input id="cfg-nt-url" style="width:170px" placeholder="http://server:36591"></label>
           <label>push_key <input id="cfg-nt-key" style="width:140px"></label>
         </div>
-        <div style="margin-top:10px">
-          <button onclick="saveConfig()">保存配置</button>
+      </div>
+      <div class="set-card" style="grid-column:1/-1">
+        <h4>${T('set_cg_llm')} <span class="hint">填 DeepSeek 或任意 OpenAI 兼容接口；不填则高光退化为等分切片</span></h4>
+        <div class="m5-form" style="flex-wrap:wrap;row-gap:10px">
+          <label>接口地址 <input id="cfg-llm-base" style="width:220px" placeholder="https://api.deepseek.com/v1"></label>
+          <label>API Key <input id="cfg-llm-key" type="password" style="width:230px" autocomplete="new-password"></label>
+          <label>模型 <input id="cfg-llm-model" style="width:150px" placeholder="deepseek-flash"></label>
+          <label>思考模式 <select id="cfg-llm-think" style="width:90px">
+            <option value="disabled">关（快·省）</option>
+            <option value="enabled">开（深度）</option>
+          </select></label>
+        </div>
+      </div>
+      <details class="set-card" style="grid-column:1/-1">
+        <summary><h4 style="display:inline">${T('set_cg_paths')}</h4></summary>
+        <div class="m5-form" style="flex-wrap:wrap;row-gap:10px;margin-top:10px">
+          <label>yt-dlp <input id="cfg-eng-ytdlp" style="width:220px" placeholder="./engines/yt-dlp.exe"></label>
+          <label>ffmpeg <input id="cfg-eng-ffmpeg" style="width:220px" placeholder="./engines/ffmpeg.exe"></label>
+          <label>ffprobe <input id="cfg-eng-ffprobe" style="width:220px" placeholder="./engines/ffprobe.exe"></label>
+          <label>biliup <input id="cfg-eng-biliup" style="width:220px" placeholder="./engines/biliup.exe"></label>
+          <label>转写程序 <input id="cfg-eng-asr-bin" style="width:220px" placeholder="./engines/whisper-cli.exe"></label>
+          <label>转写模型 <input id="cfg-eng-asr-model" style="width:220px" placeholder="./engines/ggml-small.bin"></label>
+        </div>
+      </details>
+      <div class="set-card" style="grid-column:1/-1">
+        <div style="margin-top:2px">
+          <button onclick="saveConfig()">保存全部配置</button>
           <span class="hint" id="cfg-msg" style="margin-left:10px"></span>
         </div>
       </div>
@@ -841,6 +878,10 @@ async function loadConfig() {
     setF('cfg-rt-on', c.retention?.enabled); setF('cfg-rt-days', c.retention?.segments_days);
     setF('cfg-rt-consumed', c.retention?.consumed_seg_days); setF('cfg-rt-free', c.retention?.min_free_percent); setF('cfg-rt-min', c.retention?.check_minutes);
     setF('cfg-nt-on', c.notify?.pushme?.enable); setF('cfg-nt-url', c.notify?.pushme?.url); setF('cfg-nt-key', c.notify?.pushme?.push_key);
+    setF('cfg-llm-base', c.llm?.base_url); setF('cfg-llm-key', c.llm?.api_key); setF('cfg-llm-model', c.llm?.model);
+    setF('cfg-llm-think', c.llm?.thinking || 'disabled');
+    setF('cfg-eng-ytdlp', c.engines?.ytdlp); setF('cfg-eng-ffmpeg', c.engines?.ffmpeg); setF('cfg-eng-ffprobe', c.engines?.ffprobe);
+    setF('cfg-eng-biliup', c.engines?.biliup); setF('cfg-eng-asr-bin', c.engines?.asr?.binary); setF('cfg-eng-asr-model', c.engines?.asr?.model);
   } catch (e) {}
 }
 async function saveConfig() {
@@ -853,14 +894,21 @@ async function saveConfig() {
     live: { check_interval: num('cfg-live-check'), segment_time: num('cfg-live-seg'), auto_clip: chk('cfg-live-clip') },
     retention: { enabled: chk('cfg-rt-on'), segments_days: num('cfg-rt-days'), consumed_seg_days: num('cfg-rt-consumed'), min_free_percent: num('cfg-rt-free'), check_minutes: num('cfg-rt-min') },
     notify: { pushme: { enable: chk('cfg-nt-on'), url: g('cfg-nt-url').value.trim(), push_key: g('cfg-nt-key').value.trim() } },
+    llm: { base_url: g('cfg-llm-base').value.trim(), api_key: g('cfg-llm-key').value.trim(), model: g('cfg-llm-model').value.trim(),
+      thinking: g('cfg-llm-think').value, proxy: '' },
+    engines: { ytdlp: g('cfg-eng-ytdlp').value.trim(), ffmpeg: g('cfg-eng-ffmpeg').value.trim(), ffprobe: g('cfg-eng-ffprobe').value.trim(),
+      biliup: g('cfg-eng-biliup').value.trim(), asr: { binary: g('cfg-eng-asr-bin').value.trim(), model: g('cfg-eng-asr-model').value.trim() } },
   };
+  // engines 段里 asr 可能全空：后端把空 binary/model 视为保持原值，这里不传 asr 键更简单——直接不包含空字符串路径
+  for (const k of ['ytdlp','ffmpeg','ffprobe','biliup']) { if (!payload.engines[k]) delete payload.engines[k]; }
+  if (!payload.engines.asr.binary && !payload.engines.asr.model) delete payload.engines.asr;
   try {
     const res = await fetchJSON('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     g('cfg-msg').textContent = res.note || '已保存 ✓';
   } catch (e) { g('cfg-msg').textContent = '保存失败：' + e.message; }
 }
 
-/* ═══════════ 页面：弹幕曲线（M4.2，对齐原版 Barrage Curve/BarrageScoreCurve）═══════════ */
+/* ═══════════ 页面：弹幕曲线 ═══════════ */
 let barrageRoom = '';
 let barrageData = { buckets: [] };
 async function refreshBarrage() {
@@ -892,12 +940,11 @@ function renderBarrage(el) {
       </select>
       <button onclick="refreshBarrage()">${T('btn_refresh')}</button>
     </div>
-    <div class="ph-card">
-      <div class="ph-name">弹幕密度曲线<span class="ph-tag">M4.2</span></div>
-      <div class="ph-origin">血统：原版 chopperbot-barrage · BarrageScoreCurve</div>
+    <div class="ph-card" style="max-width:none">
+      <div class="ph-name">${T('barrage_total')}<span id="barrage-label"></span></div>
       <div class="ph-desc" id="barrage-stat" style="margin-bottom:12px"></div>
       <canvas id="barrage-canvas" style="width:100%;height:260px;background:var(--card);border:1px solid var(--line);border-radius:10px"></canvas>
-      <div class="hint" style="margin-top:10px">弹幕 WebSocket 采集（5s/桶）→ 密度曲线实时展示；录制会话结束自动落库。后续与 ASR 转写 + LLM 评分融合为双信号高光检测。</div>
+      <div class="hint" style="margin-top:10px">直播时自动统计弹幕（每 5 秒一桶）——弹幕高峰一般就是切片高光的候选位置。</div>
     </div>`;
   const sel = $('#barrage-room');
   if (sel) {
@@ -956,10 +1003,18 @@ function drawBarrage(canvas, buckets) {
   ctx.fillText('弹幕/5s', 4, 12);
 }
 
-/* ═══════════ 页面：标签矩阵 / M5（矩阵账号 + 错峰调度）═══════════ */
+/* ═══════════ 发布中心（发布账号 + 定时计划 + 待发池）═══════════ */
+// 平台元数据：B站是自动发布全支持的唯一平台；抖音需桌面浏览器（仅显示）
+const PLAT_META = {
+  bilibili: { cn: 'B站', color: '#23ade5' },
+  douyin:   { cn: '抖音', color: '#8f8f96' },
+};
 let accounts = [];
 let schedules = [];
 let poolItems = [];
+let schedPlats = ['bilibili']; // 定时计划表单：目标平台多选
+let loginCtx = null; // {id, account} 扫码登录会话
+let loginTimer = null;
 async function refreshMatrix() {
   try { accounts = await fetchJSON('/api/accounts'); } catch (e) { accounts = []; }
   try { schedules = await fetchJSON('/api/schedules'); } catch (e) { schedules = []; }
@@ -1015,7 +1070,7 @@ function renderLabels(el) {
       </div>
 
       <div class="set-panel m5-rule">
-        <h4>内容池（待发布 / Content Pool）</h4>
+        <h4>${T('m5_pool_title')}<span class="hint">${T('m5_sch_hint')}</span></h4>
         <div class="acc-list" id="pool-list"></div>
       </div>
 
@@ -1039,19 +1094,29 @@ function renderLabels(el) {
 }
 // renderMatrixLists 只更新动态区（三个列表 + 平台 chips），表单 DOM 保持不动
 function renderMatrixLists() {
-  $('#acc-list').innerHTML = accounts.map(a => `
+  // 账号卡：登录态三态（正常/待登录/登录过期）+ 待授权时给扫码入口
+  $('#acc-list').innerHTML = accounts.map(a => {
+    const expired = a.status === 'login_expired';
+    const state = a.logged_in && !expired ? 'running' : expired ? 'failed' : 'queued';
+    const label = a.logged_in && !expired ? T('m5_ok') : expired ? T('m5_expired') : T('m5_login');
+    const needLogin = !a.logged_in || expired;
+    return `
     <div class="acc-card">
       <div class="acc-top">${platBadge(a.platform)}<b>${esc(a.name)}</b>
         <span class="acc-star" title="${T('m5_prio')}">${'★'.repeat(Math.max(1, Math.min(5, Math.ceil((a.priority || 0) / 2))))}</span>
-        <span class="dot ${a.status === 'ok' ? 'ok' : 'warn'}" title="${a.status === 'ok' ? T('m5_ok') : T('m5_login')}"></span>
+        <span class="badge ${state}">${label}</span>
+        ${a.platform === 'bilibili' && needLogin ? `<button class="b-login" onclick="startLogin('${esc(a.platform)}','${esc(a.name)}')">${T('m5_login_btn')}</button>` : ''}
         <button class="del" title="${T('btn_del')}" onclick="delAccount(${a.id})">✕</button></div>
       <div class="acc-tags">${tagChips(a.labels)}</div>
-    </div>`).join('') || `<div class="hint">${T('m5_acc_empty')}</div>`;
+    </div>`;
+  }).join('') || `<div class="hint">${T('m5_acc_empty')}</div>`;
 
+  // 计划卡：启/停开关 + 删除
   $('#sch-list').innerHTML = schedules.map(sc => `
     <div class="acc-card">
       <div class="acc-top"><span class="time-badge">${esc(sc.time)}</span><span style="font-size:13px;color:var(--text)">${esc(sc.name)}</span>
         <span class="badge ${sc.enabled ? 'running' : 'queued'}">${sc.enabled ? '● ' + T('m5_on') : '○ ' + T('m5_off')}</span>
+        <button class="chip" onclick="toggleSchedule(${sc.id}, ${!sc.enabled})">${sc.enabled ? T('m5_toggle_off') : T('m5_toggle_on')}</button>
         <button class="del" onclick="delSchedule(${sc.id})">✕</button></div>
       <div class="acc-tags">${(sc.platforms || '').split(',').filter(Boolean).map(p => PLAT_META[p] ? platBadge(p) : `<span class="tag">${esc(p)}</span>`).join('')}
         <span class="jtime" style="margin-left:auto">${T('m5_last')} ${sc.last_run ? fmtClock(sc.last_run) : T('m5_never')}</span></div>
@@ -1059,12 +1124,12 @@ function renderMatrixLists() {
 
   $('#pool-list').innerHTML = (poolItems||[]).map(it => `
     <div class="acc-card">
-      <div class="acc-top"><span class="time-badge">待发</span><b title="${esc(it.clip)}">${esc(it.title)}</b>
+      <div class="acc-top"><span class="time-badge">${T('m5_pool_title')}</span><b title="${esc(it.clip)}">${esc(it.title)}</b>
         <span class="jtime">${platChipsFor(it.platforms)}</span>
-        <span class="tag">${esc(it.tags || '无标签')}</span>
-        <button class="del" title="移出池" onclick="delPoolItem(${it.id})">✕</button></div>
+        <span class="tag">${esc(it.tags || T('m5_unlabel'))}</span>
+        <button class="del" title="${T('rv_pool_btn')}" onclick="delPoolItem(${it.id})">✕</button></div>
       <div class="acc-tags"><span class="jtime">${esc(it.source_job)} / ${esc(it.clip)}</span></div>
-    </div>`).join('') || '<div class="hint">池空 — 审核台点「入池待发」，调度到点自动按账号路由发布</div>';
+    </div>`).join('') || `<div class="hint">${T('m5_pool_empty')}</div>`;
 
   $('#sch-plats').innerHTML = Object.entries(PLAT_META).map(([k, v]) =>
     `<span class="plat ${schedPlats.includes(k) ? 'sel' : ''}" data-p="${k}" onclick="toggleSchedPlat('${k}')">${v.cn}</span>`).join('');
@@ -1073,6 +1138,9 @@ function toggleSchedPlat(p) {
   const i = schedPlats.indexOf(p);
   i >= 0 ? schedPlats.splice(i, 1) : schedPlats.push(p);
   renderMatrixLists(); // 只刷 chips，不重建表单（否则账号表单填一半会被清空）
+}
+async function toggleSchedule(id, en) {
+  try { await fetchJSON('/api/schedules/' + id + '/enabled', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: en }) }); refreshMatrix(); } catch (e) { alert(e.message); }
 }
 async function addAccount() {
   const payload = {
@@ -1086,22 +1154,7 @@ async function addAccount() {
     await fetchJSON('/api/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     $('#acc-name').value = ''; $('#acc-labels').value = ''; // 表单不再被重建，成功后显式清空
     refreshMatrix();
-  } catch (e) { alert(T('m5_acc_need') + ': ' + e.message); }
-}
-function toggleSchedPlat(p) {
-  const i = schedPlats.indexOf(p);
-  i >= 0 ? schedPlats.splice(i, 1) : schedPlats.push(p);
-  renderLabels($('#page'));
-}
-async function addAccount() {
-  const payload = {
-    platform: $('#acc-plat').value,
-    name: $('#acc-name').value.trim(),
-    labels: $('#acc-labels').value.trim(),
-    priority: parseInt($('#acc-prio').value) || 0,
-  };
-  if (!payload.name) { alert(T('m5_acc_need')); return; }
-  try { await fetchJSON('/api/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); refreshMatrix(); } catch (e) { alert(T('m5_acc_need') + ': ' + e.message); }
+  } catch (e) { alert(e.message); }
 }
 async function delAccount(id) {
   if (!confirm(T('m5_confirm_acc'))) return;
@@ -1218,9 +1271,10 @@ function clipHTML(job, c, idx) {
   const acts = job.status === 'review' ? `
     <div class="acts">
       <button class="b-pub" onclick="openPubModal('${job.id}', ${idx})">发布</button>
-      <button class="b-pool" onclick='openPoolModal(${JSON.stringify({ jobId: job.id, clip: { file: c.file, cover: c.cover || '', title: c.title } })})'>入池待发</button>
+      <button class="b-pool" onclick='openPoolModal(${JSON.stringify({ jobId: job.id, clip: { file: c.file, cover: c.cover || '', title: c.title } })})'>${T('rv_pool_btn')}</button>
       <button class="b-sub" onclick="openSubModal('${job.id}', ${idx})">加字幕</button>
       <button class="b-dub" onclick='openDubModal(${JSON.stringify({ jobId: job.id, clip: { file: c.file, cover: c.cover || '', title: c.title } })})'>配音</button>
+      <button class="b-del" onclick="discardJob('${job.id}')">${T('rv_discard')}</button>
     </div>` : '';
   return `<div class="clip">
     <video controls preload="metadata" src="${file}" ${cover ? `poster="${cover}"` : ''}></video>
@@ -1297,7 +1351,7 @@ async function delJob(id) {
 
 /* ═══════════ 弹窗（发布/字幕/配音）═══════════ */
 function openPubModal(jobId, idx) { const c = detailClips[idx]; if (c) openPubModalFor({ jobId, clip: c }); }
-function openPubModalFor(ctx) {
+async function openPubModalFor(ctx) {
   pubCtx = ctx;
   const c = ctx.clip;
   $('#pub-meta').textContent = c.file + (c.cover ? ' ｜ 封面 ' + c.cover : ' ｜ 无封面');
@@ -1305,7 +1359,18 @@ function openPubModalFor(ctx) {
   $('#pub-desc').value = '';
   $('#pub-tags').value = '';
   $('#pub-dryrun').checked = false;
+  fillPubAccounts(); // 异步填充账号下拉（含登录态标记）
   $('#pub-bg').style.display = 'flex';
+}
+async function fillPubAccounts() {
+  const sel = $('#pub-account');
+  let html = `<option value="">${T('pub_acc_default')}</option>`;
+  try {
+    const accs = await fetchJSON('/api/accounts');
+    html += accs.filter(a => a.platform === 'bilibili')
+      .map(a => `<option value="${esc(a.name)}">${esc(a.name)}${a.logged_in && a.status !== 'login_expired' ? '' : '（' + T('m5_login') + '）'}</option>`).join('');
+  } catch (e) {}
+  sel.innerHTML = html;
 }
 function closePubModal() { $('#pub-bg').style.display = 'none'; pubCtx = null; }
 async function submitPublish() {
@@ -1319,12 +1384,20 @@ async function submitPublish() {
     title: $('#pub-title').value.trim() || (pubCtx.clip.title || ''),
     desc: $('#pub-desc').value.trim(),
     tags: $('#pub-tags').value.split(/[,，、\s]+/).filter(Boolean),
-    platforms, dry_run: $('#pub-dryrun').checked
+    platforms, dry_run: $('#pub-dryrun').checked,
+    account: $('#pub-account').value || '', // 空则后端用 default
   };
   try {
     await fetchJSON('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'publish', input: JSON.stringify(req) }) });
     closePubModal(); refresh();
   } catch (e) { alert('创建发布任务失败：' + e.message); }
+}
+// 不采用：丢弃整个待审任务的全部切片（现状粒度：一次录制/下载的产物一起处理）
+async function discardJob(jobId) {
+  const job = jobs.find(j => j.id === jobId);
+  const n = (job && job.result) ? (() => { try { return (JSON.parse(job.result).clips || []).length; } catch (e) { return 0; } })() : 0;
+  if (!confirm(T('rv_discard_confirm') + (n > 1 ? `（该任务的 ${n} 个切片将一起移除）` : ''))) return;
+  try { await fetchJSON('/api/jobs/' + jobId, { method: 'DELETE' }); if (openId === jobId) closeDetail(); refresh(); } catch (e) { alert(e.message); }
 }
 /* ═══════════ 入池（错峰调度）═══════════ */
 let poolCtx = null;
@@ -1352,9 +1425,54 @@ async function submitPool() {
   try {
     await fetchJSON('/api/pool', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item) });
     closePoolModal(); refreshMatrix();
-    alert('已入池：调度到点将自动按账号路由发布');
+    alert(T('rv_pool_done'));
   } catch (e) { alert('入池失败：' + e.message); }
 }
+
+/* ═══════════ 扫码登录（B站，biliup 二维码流到弹窗）═══════════ */
+async function startLogin(platform, account) {
+  try {
+    const res = await fetchJSON('/api/login/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform, account }) });
+    loginCtx = res;
+    $('#login-title').textContent = T('lg_title');
+    $('#login-meta').textContent = 'B站 · ' + account;
+    $('#login-state').textContent = T('lg_running');
+    $('#login-qr').textContent = '';
+    $('#login-console').textContent = '';
+    $('#login-bg').style.display = 'flex';
+    if (loginTimer) clearInterval(loginTimer);
+    loginTimer = setInterval(pollLogin, 1200);
+    pollLogin();
+  } catch (e) { alert(e.message); }
+}
+async function pollLogin() {
+  if (!loginCtx || !loginCtx.id) return;
+  let st;
+  try { st = await fetchJSON('/api/login/status?id=' + encodeURIComponent(loginCtx.id)); }
+  catch (e) { stopLoginTimer(); $('#login-state').textContent = T('lg_fail'); return; }
+  // PNG 二维码优先（biliup 生成的 qrcode.png，比终端 ASCII 可靠）；否则展示终端块符码
+  const img = $('#login-img'), qr = $('#login-qr');
+  if (st.qr_png) {
+    img.style.display = 'block';
+    const src = '/api/login/qrpng?id=' + encodeURIComponent(loginCtx.id) + '&t=' + Date.now();
+    if (!img.src.includes(encodeURIComponent(loginCtx.id))) img.src = src;
+    qr.style.display = 'none';
+  } else {
+    img.style.display = 'none';
+    qr.style.display = 'block';
+    const out = st.output || '';
+    qr.textContent = out.length > 3000 ? out.slice(-3000) : out;
+    qr.scrollTop = qr.scrollHeight;
+  }
+  $('#login-console').textContent = st.output || '';
+  if (st.done) {
+    stopLoginTimer();
+    $('#login-state').textContent = st.ok ? T('lg_ok') : (T('lg_fail') + (st.error ? '（' + st.error + '）' : ''));
+    if (st.ok) refreshMatrix();
+  }
+}
+function stopLoginTimer() { if (loginTimer) { clearInterval(loginTimer); loginTimer = null; } }
+function closeLoginModal() { stopLoginTimer(); $('#login-bg').style.display = 'none'; loginCtx = null; }
 function openSubModal(jobId, idx) {
   const c = detailClips[idx]; if (!c) return;
   subCtx = { jobId, clip: c };
