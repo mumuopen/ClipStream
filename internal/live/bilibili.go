@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -67,9 +68,48 @@ func GetRoomInfo(ctx context.Context, roomID string) (*RoomInfo, error) {
 	}, nil
 }
 
-// GetPlayURL 获取 FLV 播放地址（API：xlive/web-room/v2/index/getRoomPlayInfo）
-// 完整地址 = url_info.host + codec.base_url + url_info.extra（2026-10 实测契约）
+// GetPlayURL 获取 FLV 播放地址。
+// 契约变迁（2026-10 实测）：v2 getRoomPlayInfo 对部分房间返回空 streams（风控收紧，无 cookie 时不下发 FLV），
+// 而 v1 room/v1/Room/playUrl 仍稳定可用（qn=10000 会被服务端自动降级到无登录态的最高档）。
+// 策略：v1 优先（简单可靠），v2 兜底（部分房间 v1 失效时再用）。
 func GetPlayURL(ctx context.Context, roomID string) (string, error) {
+	if u, err := getPlayURLV1(ctx, roomID); err == nil {
+		return u, nil
+	} else {
+		fmt.Printf("[bilibili] v1 playUrl 未取到流（%v），尝试 v2 接口\n", err)
+	}
+	return getPlayURLV2(ctx, roomID)
+}
+
+// getPlayURLV1 老接口（room/v1/Room/playUrl）：durl[].url 即完整 FLV 直链
+func getPlayURLV1(ctx context.Context, roomID string) (string, error) {
+	u := "https://api.live.bilibili.com/room/v1/Room/playUrl?cid=" + url.QueryEscape(roomID) + "&qn=10000&platform=web"
+	var out struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Durl []struct {
+				URL string `json:"url"`
+			} `json:"durl"`
+		} `json:"data"`
+	}
+	if err := apiJSON(ctx, u, &out); err != nil {
+		return "", err
+	}
+	if out.Code != 0 {
+		return "", fmt.Errorf("B站 playUrl code=%d: %s", out.Code, out.Message)
+	}
+	for _, d := range out.Data.Durl {
+		if strings.HasPrefix(d.URL, "http") {
+			return d.URL, nil
+		}
+	}
+	return "", fmt.Errorf("v1 未返回 durl")
+}
+
+// getPlayURLV2 v2 接口（xlive/web-room/v2/index/getRoomPlayInfo）：
+// 完整地址 = url_info.host + codec.base_url + url_info.extra
+func getPlayURLV2(ctx context.Context, roomID string) (string, error) {
 	u := "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?room_id=" +
 		url.QueryEscape(roomID) + "&protocol=0,1&format=0,1,2&codec=0,1&qn=0&platform=web&ptype=16"
 	var out struct {

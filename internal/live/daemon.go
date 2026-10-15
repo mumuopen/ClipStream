@@ -13,8 +13,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -374,13 +376,44 @@ func (d *Daemon) endSession(s *liveSession) {
 		fmt.Sprintf("《%s》结束（房间 %s）；分段 %d 个", s.title, s.roomID, len(segs)))
 
 	if d.cfg.Live.AutoClip {
+		clipped, skipped := 0, 0
 		for _, seg := range segs {
+			// 送切前按时长过滤：低于最小切片下限的残段（断流尾巴/低码率几秒画面）
+			// 送了也只会白跑一次转写然后失败，白白消耗算力
+			dur := d.probeSegDuration(seg)
+			if dur > 0 && dur < 10 {
+				skipped++
+				fmt.Printf("[queue] 跳过 %s：时长仅 %.1fs（低于 10s 切片价值下限）\n", filepath.Base(seg), dur)
+				continue
+			}
 			if err := d.queueClip(seg, s.title); err != nil {
 				d.notify.Send("ClipStream 切片排队失败",
 					fmt.Sprintf("分段 %s 送入切片队列失败：%v", seg, err))
+			} else {
+				clipped++
 			}
 		}
+		if skipped > 0 {
+			fmt.Printf("[queue] 房间 %s 下播：送切 %d 段，跳过 %d 个过短残段\n", s.roomID, clipped, skipped)
+		}
 	}
+}
+
+// probeSegDuration 用 ffprobe 探段时长（秒）；探测失败返回 0（调用方按"无法判定"放行，交给管线兜底）
+func (d *Daemon) probeSegDuration(segPath string) float64 {
+	bin := d.cfg.Engines.Probe
+	if bin == "" {
+		bin = "ffprobe"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin, "-v", "error", "-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1", segPath).Output()
+	if err != nil {
+		return 0
+	}
+	dur, _ := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	return dur
 }
 
 // queueClip 写切片队列文件（serve 侧 watcher 消费）；内容 = 分段路径 \t 标题

@@ -1,4 +1,4 @@
-﻿// ClipStream（暂用名）—— ChopperBot 融合平台单二进制入口
+// ClipStream（暂用名）—— ChopperBot 融合平台单二进制入口
 //
 // 致敬来源：Geniusay/ChopperBot（Java 版智能直播切片机器人，2023 后停更）。
 // 本平台用 Go 重写其思想：直播录制 + 搬运下载 + 智能切片 + 翻译配音 + 多平台发布。
@@ -598,16 +598,19 @@ func scanClipQueue(queueDir string, onClip func(segPath, roomTitle string)) {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".seg") {
 				continue
 			}
-			full := filepath.Join(queueDir, e.Name())
-			b, err := os.ReadFile(full)
-			if err != nil {
-				continue
-			}
-			parts := strings.SplitN(strings.TrimSpace(string(b)), "\t", 2)
-			if len(parts) < 2 || parts[0] == "" {
-				_ = os.Remove(full) // 格式坏的文件直接弃
-				continue
-			}
+		full := filepath.Join(queueDir, e.Name())
+		b, err := os.ReadFile(full)
+		if err != nil {
+			continue
+		}
+		content := strings.TrimSpace(string(b))
+		// 剥 UTF-8 BOM：队列文件若被带 BOM 的编辑器/脚本写过，BOM 会拼进路径导致 download 找不到文件
+		content = strings.TrimPrefix(content, "\ufeff")
+		parts := strings.SplitN(content, "\t", 2)
+		if len(parts) < 2 || parts[0] == "" {
+			_ = os.Remove(full) // 格式坏的文件直接弃
+			continue
+		}
 			onClip(parts[0], parts[1])
 			_ = os.Remove(full) // 消费后删除（onClip 内 Enqueue 失败会打日志，下轮不再重试）
 		}
