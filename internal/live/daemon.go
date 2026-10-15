@@ -376,14 +376,18 @@ func (d *Daemon) endSession(s *liveSession) {
 		fmt.Sprintf("《%s》结束（房间 %s）；分段 %d 个", s.title, s.roomID, len(segs)))
 
 	if d.cfg.Live.AutoClip {
+		// 虎牙 CDN 是 5-15 秒短连接（每次断流重连带新 anticode），下播时会留下海量碎段——
+		// 直接送切 = 每个碎段白跑一次转写。先按时长过滤残段，再把碎段合并成 ~10 分钟大段送管线。
 		clipped, skipped := 0, 0
 		for _, seg := range segs {
-			// 送切前按时长过滤：低于最小切片下限的残段（断流尾巴/低码率几秒画面）
-			// 送了也只会白跑一次转写然后失败，白白消耗算力
 			dur := d.probeSegDuration(seg)
+			if dur > 0 && dur < 10 && len(segs) > 3 {
+				// 碎段流场景（如虎牙）交给合并器统一处理；孤立残段（正常流的断流尾巴）直接丢
+				break
+			}
 			if dur > 0 && dur < 10 {
 				skipped++
-				fmt.Printf("[queue] 跳过 %s：时长仅 %.1fs（低于 10s 切片价值下限）\n", filepath.Base(seg), dur)
+				fmt.Printf("[queue] 跳过 %s：时长仅 %.1fs 残段\n", filepath.Base(seg), dur)
 				continue
 			}
 			if err := d.queueClip(seg, s.title); err != nil {
@@ -393,10 +397,103 @@ func (d *Daemon) endSession(s *liveSession) {
 				clipped++
 			}
 		}
-		if skipped > 0 {
-			fmt.Printf("[queue] 房间 %s 下播：送切 %d 段，跳过 %d 个过短残段\n", s.roomID, clipped, skipped)
+		// 碎段流：合并成大段（目标 ~600s/合并段）
+		if skipped >= 3 || (len(segs) > 3 && clipped == 0) {
+			merged, err := d.mergeAndQueue(segs, s.title, s.segDir)
+			if err != nil {
+				fmt.Printf("[queue] 房间 %s 碎段合并失败：%v（回退逐段送切）\n", s.roomID, err)
+				for _, seg := range segs {
+					if dur := d.probeSegDuration(seg); dur > 0 && dur < 10 {
+						continue
+					}
+					_ = d.queueClip(seg, s.title)
+				}
+			} else {
+				fmt.Printf("[queue] 房间 %s 碎段合并：%d 段 → %d 个合并段送切\n", s.roomID, len(segs), merged)
+			}
 		}
 	}
+}
+
+// mergeAndQueue 把碎段按目标时长合并为大 FLV 后送切（ffmpeg concat demuxer，不重编码）。
+// 合并产物写 segDir/merged_*.flv，避开 seg_*.flv 的 glob（避免 retention/送切重复处理）。
+func (d *Daemon) mergeAndQueue(segs []string, title, segDir string) (int, error) {
+	target := d.cfg.Live.SegmentSec
+	if target <= 0 {
+		target = 600
+	}
+	// 按目标时长分组（用文件大小做近似：虎牙低码率 ~0.5MB/5s，通用做法按 probe 累计）
+	type group struct {
+		files []string
+		dur   float64
+	}
+	var groups []*group
+	var g *group
+	for _, seg := range segs {
+		dur := d.probeSegDuration(seg)
+		if dur <= 0 {
+			continue // 探不了的段不并入（宁少勿坏）
+		}
+		if g == nil || g.dur+dur > float64(target) {
+			g = &group{files: []string{seg}, dur: dur}
+			groups = append(groups, g)
+		} else {
+			g.files = append(g.files, seg)
+			g.dur += dur
+		}
+	}
+	if len(groups) == 0 {
+		return 0, fmt.Errorf("无有效段可合并")
+	}
+
+	ffmpeg := d.cfg.Engines.FFmpeg
+	if ffmpeg == "" {
+		ffmpeg = "ffmpeg"
+	}
+	queued := 0
+	for i, grp := range groups {
+		if len(grp.files) < 2 {
+			// 单文件组直接送原文件（无需合并）
+			if err := d.queueClip(grp.files[0], title); err == nil {
+				queued++
+			}
+			continue
+		}
+		listPath := filepath.Join(segDir, fmt.Sprintf("concat_%03d.txt", i))
+		var sb strings.Builder
+		for _, f := range grp.files {
+			sb.WriteString("file '")
+			sb.WriteString(strings.ReplaceAll(f, "'", `'\''`))
+			sb.WriteString("'\n")
+		}
+		if err := os.WriteFile(listPath, []byte(sb.String()), 0o644); err != nil {
+			return queued, err
+		}
+		out := filepath.Join(segDir, fmt.Sprintf("merged_%03d.flv", i))
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		cmd := exec.CommandContext(ctx, ffmpeg, "-f", "concat", "-safe", "0", "-i", listPath,
+			"-c", "copy", out)
+		if outBytes, err := cmd.CombinedOutput(); err != nil {
+			cancel()
+			_ = os.Remove(listPath)
+			return queued, fmt.Errorf("ffmpeg 合并失败: %v: %s", err, tailBytes(outBytes, 300))
+		}
+		cancel()
+		_ = os.Remove(listPath)
+		if err := d.queueClip(out, title); err != nil {
+			return queued, err
+		}
+		queued++
+	}
+	return queued, nil
+}
+
+func tailBytes(b []byte, n int) string {
+	s := string(b)
+	if len(s) > n {
+		return "..." + s[len(s)-n:]
+	}
+	return s
 }
 
 // probeSegDuration 用 ffprobe 探段时长（秒）；探测失败返回 0（调用方按"无法判定"放行，交给管线兜底）
