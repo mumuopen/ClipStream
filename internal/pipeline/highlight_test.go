@@ -4,7 +4,10 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,6 +91,62 @@ func TestBarrageHotspots(t *testing.T) {
 	hs2, _ := barrageHotspots(context.Background(), job2, env)
 	if len(hs2) != 0 {
 		t.Fatalf("普通视频应无热点，实际 %+v", hs2)
+	}
+}
+
+// TestBarrageHotspotsMerged 合并产物（merged_*.flv）的弹幕热点映射：
+// 虎牙碎段流内容轴有重连空洞——600s 墙钟窗口仅 300s 内容，弹幕必须按 meta
+// 段级映射换算，否则热点位置错位近一倍（300s 墙钟处的内容实际在 150s 处）。
+func TestBarrageHotspotsMerged(t *testing.T) {
+	env := newTestEnv(t)
+	t0, _ := time.ParseInLocation("20060102_150405", "20260512_120000", time.Local)
+	base := filepath.Join("data", "live", "441195_20260512_120000")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll("data") })
+	video := filepath.Join(base, "merged_000.flv")
+	if err := os.WriteFile(video, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 模拟虎牙空洞：组墙钟 600s、内容仅 300s（两段各 150s 内容占 300s 墙钟）
+	meta := core.MergedSegMeta{
+		Start: t0.Unix(),
+		End:   t0.Unix() + 600,
+		Segs: []core.MergedSeg{
+			{Name: "seg_000", Wall: t0.Unix() + 300, Offset: 0, Dur: 150},
+			{Name: "seg_001", Wall: t0.Unix() + 600, Offset: 150, Dur: 150},
+		},
+	}
+	mb, _ := json.Marshal(meta)
+	if err := os.WriteFile(strings.TrimSuffix(video, ".flv")+".meta.json", mb, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	job := &core.Job{}
+	job.SetParam("video", video)
+	hs, err := barrageHotspots(context.Background(), job, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hs) == 0 {
+		t.Fatal("应检测到热点")
+	}
+	// 弹幕爆发在墙钟 300-330s → 段 1 区间线性映射到内容轴 150-165s
+	found := false
+	for _, h := range hs {
+		if h.Start >= 145 && h.Start <= 158 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("热点应映射到内容轴 ~150s（墙钟空洞换算），实际：%+v", hs)
+	}
+	// 对照：若未做映射，热点会错位在 ~300s（墙钟直减）
+	for _, h := range hs {
+		if h.Start > 250 {
+			t.Fatalf("热点 %v 疑似未按 meta 映射（落在墙钟直减位置 ~300s）", h)
+		}
 	}
 }
 

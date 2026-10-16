@@ -12,16 +12,19 @@ package live
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"chopperbot/internal/config"
+	"chopperbot/internal/core"
 	"chopperbot/internal/notify"
 	"chopperbot/internal/store"
 )
@@ -453,7 +456,7 @@ func (d *Daemon) mergeAndQueue(segs []string, title, segDir string) (int, error)
 	queued := 0
 	for i, grp := range groups {
 		out := filepath.Join(segDir, fmt.Sprintf("merged_%03d.flv", i))
-		n, err := concatFLV(grp, out, inject)
+		n, meta, err := concatFLV(grp, out, inject)
 		if err != nil {
 			_ = os.Remove(out)
 			return queued, fmt.Errorf("第 %d 组拼接失败: %w", i, err)
@@ -461,6 +464,11 @@ func (d *Daemon) mergeAndQueue(segs []string, title, segDir string) (int, error)
 		if n == 0 {
 			_ = os.Remove(out) // 全空组（每段都解析失败）不送切
 			continue
+		}
+		// 侧车 meta：弹幕热点映射（墙钟时间 → 合并产物内容轴偏移），
+		// 读方 pipeline/barrageHotspots；写失败不阻塞送切（仅退化无弹幕信号）
+		if mb, jerr := json.Marshal(meta); jerr == nil {
+			_ = os.WriteFile(strings.TrimSuffix(out, ".flv")+".meta.json", mb, 0o644)
 		}
 		if err := d.queueClip(out, title); err != nil {
 			return queued, err
@@ -471,27 +479,30 @@ func (d *Daemon) mergeAndQueue(segs []string, title, segDir string) (int, error)
 }
 
 // concatFLV 把一组 FLV 段的音视频 tag 原样顺序写入 out（剥 script 轨 + 断链止损），
-// 返回写入的 tag 数。FLV 结构：header(9B) + prevTagSize0(4B) + [tagType(1B) +
-// size(3B) + ts(3B) + tsExt(1B) + streamID(3B) + data(sizeB) + prevTagSize(4B)]*；
-// prevTagSize 应等于本 tag 总长 11+size，不匹配即流损坏，止损丢弃其后所有字节
-// （CDN 断流时段尾 tag 常写一半，其后本就无数据）。
+// 返回写入 tag 数与拼接 meta（各段墙钟时刻/内容偏移/内容时长，供弹幕热点映射）。
+// FLV 结构：header(9B) + prevTagSize0(4B) + [tagType(1B) + size(3B) + ts(3B) +
+// tsExt(1B) + streamID(3B) + data(sizeB) + prevTagSize(4B)]*；prevTagSize 应等于本
+// tag 总长 11+size，不匹配即流损坏，止损丢弃其后所有字节（CDN 断流时段尾 tag 常
+// 写一半，其后本就无数据）。
 // 兼容历史裸段（旧版 StreamFLV 无头分段产物）：文件头非 "FLV" 时从 offset 0 按
 // tag 流扫描，产物头用合成标准头补齐。inject 为可选的 seq header tag（ts 已清零），
 // 写在产物 tag 序列最前，保证每组产物自解码配置（缺 seq header 的裸段组可正常 Cut）。
-func concatFLV(files []string, out string, inject [][]byte) (int, error) {
+func concatFLV(files []string, out string, inject [][]byte) (int, core.MergedSegMeta, error) {
 	f, err := os.Create(out)
 	if err != nil {
-		return 0, err
+		return 0, core.MergedSegMeta{}, err
 	}
 	defer f.Close()
 	// 合成标准头：FLV v1 + audio/video flags + headerSize=9（裸段产物的兜底头）
 	synthHeader := []byte{'F', 'L', 'V', 0x01, 0x05, 0, 0, 0, 9}
 	var zeros [4]byte
 	total := 0
+	var meta core.MergedSegMeta
+	var contentOffset float64
 	for _, file := range files {
 		b, err := os.ReadFile(file)
 		if err != nil {
-			return total, err
+			return total, meta, err
 		}
 		offset := 0
 		if len(b) >= 13 && string(b[:3]) == "FLV" {
@@ -502,27 +513,33 @@ func concatFLV(files []string, out string, inject [][]byte) (int, error) {
 		if total == 0 {
 			if offset == 13 {
 				if _, err := f.Write(b[:9]); err != nil { // 透传原头
-					return total, err
+					return total, meta, err
 				}
 				if _, err := f.Write(zeros[:]); err != nil { // prevTagSize0
-					return total, err
+					return total, meta, err
 				}
 			} else {
 				if _, err := f.Write(synthHeader); err != nil {
-					return total, err
+					return total, meta, err
 				}
 				if _, err := f.Write(zeros[:]); err != nil {
-					return total, err
+					return total, meta, err
 				}
 			}
 			// 注入 seq header（裸段组缺解码配置时视频不可解；重复注入无害）
 			for _, tag := range inject {
 				if _, err := f.Write(tag); err != nil {
-					return total, err
+					return total, meta, err
 				}
 				total++
 			}
 		}
+		// 段级 meta：记录墙钟时刻与内容轴偏移（弹幕热点映射用）
+		ms := core.MergedSeg{Name: filepath.Base(file), Offset: contentOffset}
+		if fi, err := os.Stat(file); err == nil {
+			ms.Wall = fi.ModTime().Unix()
+		}
+		firstTS, lastTS := uint32(0), uint32(0)
 		pos := offset
 		for pos+11 <= len(b) {
 			t := b[pos]
@@ -536,14 +553,31 @@ func concatFLV(files []string, out string, inject [][]byte) (int, error) {
 			}
 			if t == 8 || t == 9 { // 只保留音频/视频，剥 script(18) 等杂轨
 				if _, err := f.Write(b[pos : dataEnd+4]); err != nil {
-					return total, err
+					return total, meta, err
 				}
 				total++
+				// FLV tag ts：Timestamp(3B) + TimestampExtended(1B)，大端毫秒
+				ts := uint32(b[pos+4])<<16 | uint32(b[pos+5])<<8 | uint32(b[pos+6]) |
+					uint32(b[pos+7])<<24
+				if total == len(inject)+1 || firstTS == 0 && lastTS == 0 {
+					firstTS = ts
+				}
+				lastTS = ts
 			}
 			pos = dataEnd + 4
 		}
+		if lastTS >= firstTS {
+			ms.Dur = float64(lastTS-firstTS) / 1000
+		}
+		contentOffset += ms.Dur
+		meta.Segs = append(meta.Segs, ms)
 	}
-	return total, nil
+	if n := len(meta.Segs); n > 0 {
+		// 组窗口：首段内容开始 ≈ 首段完成时刻 - 内容时长；末段完成时刻即终点
+		meta.Start = meta.Segs[0].Wall - int64(meta.Segs[0].Dur)
+		meta.End = meta.Segs[n-1].Wall
+	}
+	return total, meta, nil
 }
 
 // extractSeqHeaders 从段文件头部提取 FLV sequence header tag（视频 AVC 解码配置/

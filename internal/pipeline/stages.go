@@ -123,14 +123,18 @@ type Hotspot struct {
 }
 
 // liveSegRe 直播分段路径：data/live/<roomID>_<yyyyMMdd_HHmmss>/seg_<NNN>.flv
-var liveSegRe = regexp.MustCompile(`[/\\]live[/\\](\d+)_(\d{8}_\d{6})[/\\]seg_(\d+)\.flv$`)
+var liveSegRe = regexp.MustCompile(`[/\\]live[/\\](\d+)_(\d{8}_\d{6})[/\\](seg|merged)_(\d+)\.flv$`)
 
 // barrageHotspots 从视频路径关联直播会话，拉取弹幕密度桶并计算热点区间。
 // 普通视频（非 data/live/ 分段）返回空，行为与原管线一致。
+// seg_*.flv：窗口 = 会话起点 + 段序号 x 分段时长（墙钟轴即内容轴）。
+// merged_*.flv（碎段流合并产物）：优先读同目录 .meta.json（各段墙钟时刻与内容轴
+// 偏移），把弹幕墙钟时间映射到内容轴——虎牙碎段流内容轴有重连空洞（墙钟 ~5.3s/段
+// 仅 ~2.2s 内容），直接相减会错位近一倍；meta 缺失时退回序号 x 分段时长近似。
 func barrageHotspots(ctx context.Context, job *core.Job, env *Env) ([]Hotspot, error) {
 	videoPath := job.ParamsMap()["video"]
 	m := liveSegRe.FindStringSubmatch(videoPath)
-	if len(m) != 4 {
+	if len(m) != 5 {
 		return nil, nil // 非直播分段，无弹幕信号
 	}
 	roomID := m[1]
@@ -138,13 +142,31 @@ func barrageHotspots(ctx context.Context, job *core.Job, env *Env) ([]Hotspot, e
 	if err != nil {
 		return nil, nil
 	}
-	segIdx, _ := strconv.Atoi(m[3])
+	segIdx, _ := strconv.Atoi(m[4])
 	segDur := int64(env.Cfg.Live.SegmentSec)
 	if segDur <= 0 {
 		segDur = 600
 	}
-	winStart := startUnix.Unix() + int64(segIdx)*segDur
-	winEnd := winStart + segDur
+
+	var winStart, winEnd int64                 // 弹幕拉取窗口（墙钟）
+	mapToContent := func(int64) float64 { return -1 } // 墙钟 ts -> 内容轴秒；-1 表示按窗口起点直减
+	if m[3] == "merged" {
+		// 合并产物：读侧车 meta 精确定位窗口与内容轴映射
+		if b, rerr := os.ReadFile(strings.TrimSuffix(videoPath, ".flv") + ".meta.json"); rerr == nil {
+			var meta core.MergedSegMeta
+			if jerr := json.Unmarshal(b, &meta); jerr == nil && len(meta.Segs) > 0 && meta.End > meta.Start {
+				winStart, winEnd = meta.Start, meta.End
+				mapToContent = func(ts int64) float64 { return wallToContent(meta, ts) }
+			}
+		}
+		if winEnd == 0 { // 无 meta（旧产物）：按序号近似
+			winStart = startUnix.Unix() + int64(segIdx)*segDur
+			winEnd = winStart + segDur
+		}
+	} else {
+		winStart = startUnix.Unix() + int64(segIdx)*segDur
+		winEnd = winStart + segDur
+	}
 
 	buckets, err := env.Store.ListBarrage(roomID, winStart)
 	if err != nil {
@@ -154,7 +176,7 @@ func barrageHotspots(ctx context.Context, job *core.Job, env *Env) ([]Hotspot, e
 		return nil, nil // 弹幕太稀疏，无热点意义
 	}
 	type pt struct {
-		rel float64 // 相对窗口起点秒
+		rel float64 // 相对窗口起点秒（merged 场景为内容轴秒）
 		cnt int
 	}
 	var pts []pt
@@ -163,7 +185,14 @@ func barrageHotspots(ctx context.Context, job *core.Job, env *Env) ([]Hotspot, e
 		if b.TS < winStart || b.TS >= winEnd {
 			continue
 		}
-		pts = append(pts, pt{rel: float64(b.TS-winStart) + 2.5, cnt: b.Count})
+		rel := mapToContent(b.TS)
+		if rel < 0 {
+			rel = float64(b.TS-winStart) + 2.5
+		}
+		if rel < 0 {
+			continue
+		}
+		pts = append(pts, pt{rel: rel, cnt: b.Count})
 		sum += b.Count
 	}
 	if len(pts) < 3 {
@@ -211,6 +240,36 @@ func barrageHotspots(ctx context.Context, job *core.Job, env *Env) ([]Hotspot, e
 		}
 	}
 	return kept, nil
+}
+
+// wallToContent 把弹幕墙钟时间映射到合并产物内容轴（秒）。
+// 段级映射：定位 ts 落在哪段的墙钟区间（段区间 = [前段完成时刻, 本段完成时刻]，
+// 首段起点为 meta.Start），段内按 内容时长/墙钟跨度 线性缩放（假设段内空洞均匀，
+// 5s 弹幕桶粒度下误差可忽略）；越界钳制到 [0, 总内容时长]。
+func wallToContent(meta core.MergedSegMeta, ts int64) float64 {
+	if len(meta.Segs) == 0 {
+		return -1
+	}
+	if ts <= meta.Start {
+		return 0
+	}
+	last := meta.Segs[len(meta.Segs)-1]
+	total := last.Offset + last.Dur
+	if ts >= meta.End {
+		return total
+	}
+	prevWall := meta.Start
+	for _, s := range meta.Segs {
+		if ts <= s.Wall {
+			span := float64(s.Wall - prevWall)
+			if span <= 0 {
+				return s.Offset
+			}
+			return s.Offset + float64(ts-prevWall)/span*s.Dur
+		}
+		prevWall = s.Wall
+	}
+	return total
 }
 
 // hotspotsToClips 弹幕热点直接作为高光候选（无 LLM 时的规则回退）

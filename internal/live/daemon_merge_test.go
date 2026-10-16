@@ -60,7 +60,7 @@ func TestConcatFLV(t *testing.T) {
 	makeFLV(t, b, 3, false, true) // 无 script + 截断尾
 
 	out := filepath.Join(dir, "merged.flv")
-	n, err := concatFLV([]string{a, b}, out, nil)
+	n, _, err := concatFLV([]string{a, b}, out, nil)
 	if err != nil {
 		t.Fatalf("concatFLV: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestConcatFLVBrokenChain(t *testing.T) {
 	data[13+11+64] = 0xFF // prevTagSize 高位（tag data size=64，尾偏移 = 13+11+64）
 	os.WriteFile(a, data, 0o644)
 	out := filepath.Join(dir, "merged.flv")
-	n, err := concatFLV([]string{a}, out, nil)
+	n, _, err := concatFLV([]string{a}, out, nil)
 	if err != nil {
 		t.Fatalf("concatFLV: %v", err)
 	}
