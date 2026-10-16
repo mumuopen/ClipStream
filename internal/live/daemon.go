@@ -11,12 +11,11 @@ package live
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -376,110 +375,87 @@ func (d *Daemon) endSession(s *liveSession) {
 		fmt.Sprintf("《%s》结束（房间 %s）；分段 %d 个", s.title, s.roomID, len(segs)))
 
 	if d.cfg.Live.AutoClip {
-		// 虎牙 CDN 是 5-15 秒短连接（每次断流重连带新 anticode），下播时会留下海量碎段——
-		// 直接送切 = 每个碎段白跑一次转写。先按时长过滤残段，再把碎段合并成 ~10 分钟大段送管线。
-		clipped, skipped := 0, 0
-		for _, seg := range segs {
-			dur := d.probeSegDuration(seg)
-			if dur > 0 && dur < 10 && len(segs) > 3 {
-				// 碎段流场景（如虎牙）交给合并器统一处理；孤立残段（正常流的断流尾巴）直接丢
-				break
-			}
-			if dur > 0 && dur < 10 {
-				skipped++
-				fmt.Printf("[queue] 跳过 %s：时长仅 %.1fs 残段\n", filepath.Base(seg), dur)
-				continue
-			}
-			if err := d.queueClip(seg, s.title); err != nil {
-				d.notify.Send("ClipStream 切片排队失败",
-					fmt.Sprintf("分段 %s 送入切片队列失败：%v", seg, err))
-			} else {
-				clipped++
-			}
-		}
-		// 碎段流：合并成大段（目标 ~600s/合并段）
-		if skipped >= 3 || (len(segs) > 3 && clipped == 0) {
+		// 碎段流判定（按段数，不按时长）：虎牙 CDN 是 5-15 秒短连接，一场直播留下数百段；
+		// 正常 600s 分段一场最多 ~10 段（含断流重连残段），≥20 段即碎段流，合并后送切。
+		// 注：不能用 ffprobe 判段时长——直播流切出的 FLV 段 metadata duration 是"流内累计
+		// 时间"假值（实测 B站段标 4562s、虎牙段标 5718s，均非本段真实长度）。
+		if len(segs) >= 20 {
 			merged, err := d.mergeAndQueue(segs, s.title, s.segDir)
 			if err != nil {
-				fmt.Printf("[queue] 房间 %s 碎段合并失败：%v（回退逐段送切）\n", s.roomID, err)
-				for _, seg := range segs {
-					if dur := d.probeSegDuration(seg); dur > 0 && dur < 10 {
-						continue
-					}
-					_ = d.queueClip(seg, s.title)
-				}
+				fmt.Printf("[queue] 房间 %s 碎段合并失败：%v（%d 段未送切）\n", s.roomID, err, len(segs))
+				d.notify.Send("ClipStream 碎段合并失败",
+					fmt.Sprintf("《%s》（房间 %s）%d 段未能送切：%v", s.title, s.roomID, len(segs), err))
 			} else {
 				fmt.Printf("[queue] 房间 %s 碎段合并：%d 段 → %d 个合并段送切\n", s.roomID, len(segs), merged)
+			}
+		} else {
+			// 正常分段流：逐段直接送切（短尾巴残段交管线时长下限兜底）
+			for _, seg := range segs {
+				if err := d.queueClip(seg, s.title); err != nil {
+					d.notify.Send("ClipStream 切片排队失败",
+						fmt.Sprintf("分段 %s 送入切片队列失败：%v", seg, err))
+				}
 			}
 		}
 	}
 }
 
-// mergeAndQueue 把碎段按目标时长合并为大 FLV 后送切（ffmpeg concat demuxer，不重编码）。
+// mergeAndQueue 把碎段按墙钟跨度分组，FLV tag 级拼接合并为大段后送切。
+// 为什么不用 ffmpeg concat demuxer：①虎牙流内嵌非标 script/text 轨（ffmpeg 的 FLV
+// demuxer 解析即错位，报 Packet corrupt 并错杀后续 tag）；②CDN 短连接的段尾截断是
+// 常态。tag 级拼接剥掉 script 轨、断链止损（丢截断尾），字节透传零转码、零进程开销；
+// 各段 tag 时间戳本就续接（内容轴无缝），产物直供管线（Cut 的 -ss 会自动处理非零起点）。
 // 合并产物写 segDir/merged_*.flv，避开 seg_*.flv 的 glob（避免 retention/送切重复处理）。
 func (d *Daemon) mergeAndQueue(segs []string, title, segDir string) (int, error) {
-	target := d.cfg.Live.SegmentSec
+	target := time.Duration(d.cfg.Live.SegmentSec) * time.Second
 	if target <= 0 {
-		target = 600
+		target = 600 * time.Second
 	}
-	// 按目标时长分组（用文件大小做近似：虎牙低码率 ~0.5MB/5s，通用做法按 probe 累计）
-	type group struct {
-		files []string
-		dur   float64
-	}
-	var groups []*group
-	var g *group
+	// 按段文件 mtime（墙钟跨度）分组：碎段流的内容轴有重连空洞（实测虎牙 60fps 流每段
+	// 墙钟 ~5.3s 但内容仅 ~2.2s），探不出真实时长，mtime 差是唯一稳定的分组依据
+	var groups [][]string
+	var cur []string
+	var groupStart time.Time
 	for _, seg := range segs {
-		dur := d.probeSegDuration(seg)
-		if dur <= 0 {
-			continue // 探不了的段不并入（宁少勿坏）
+		fi, err := os.Stat(seg)
+		if err != nil {
+			continue
 		}
-		if g == nil || g.dur+dur > float64(target) {
-			g = &group{files: []string{seg}, dur: dur}
-			groups = append(groups, g)
-		} else {
-			g.files = append(g.files, seg)
-			g.dur += dur
+		if len(cur) > 0 && fi.ModTime().Sub(groupStart) >= target {
+			groups = append(groups, cur)
+			cur = nil
 		}
+		if len(cur) == 0 {
+			groupStart = fi.ModTime()
+		}
+		cur = append(cur, seg)
+	}
+	if len(cur) > 0 {
+		groups = append(groups, cur)
 	}
 	if len(groups) == 0 {
-		return 0, fmt.Errorf("无有效段可合并")
+		return 0, fmt.Errorf("无有效段")
 	}
 
-	ffmpeg := d.cfg.Engines.FFmpeg
-	if ffmpeg == "" {
-		ffmpeg = "ffmpeg"
-	}
 	queued := 0
 	for i, grp := range groups {
-		if len(grp.files) < 2 {
-			// 单文件组直接送原文件（无需合并）
-			if err := d.queueClip(grp.files[0], title); err == nil {
+		if len(grp) == 1 {
+			// 单段组直接送原文件（无需合并）
+			if err := d.queueClip(grp[0], title); err == nil {
 				queued++
 			}
 			continue
 		}
-		listPath := filepath.Join(segDir, fmt.Sprintf("concat_%03d.txt", i))
-		var sb strings.Builder
-		for _, f := range grp.files {
-			sb.WriteString("file '")
-			sb.WriteString(strings.ReplaceAll(f, "'", `'\''`))
-			sb.WriteString("'\n")
-		}
-		if err := os.WriteFile(listPath, []byte(sb.String()), 0o644); err != nil {
-			return queued, err
-		}
 		out := filepath.Join(segDir, fmt.Sprintf("merged_%03d.flv", i))
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		cmd := exec.CommandContext(ctx, ffmpeg, "-f", "concat", "-safe", "0", "-i", listPath,
-			"-c", "copy", out)
-		if outBytes, err := cmd.CombinedOutput(); err != nil {
-			cancel()
-			_ = os.Remove(listPath)
-			return queued, fmt.Errorf("ffmpeg 合并失败: %v: %s", err, tailBytes(outBytes, 300))
+		n, err := concatFLV(grp, out)
+		if err != nil {
+			_ = os.Remove(out)
+			return queued, fmt.Errorf("第 %d 组拼接失败: %w", i, err)
 		}
-		cancel()
-		_ = os.Remove(listPath)
+		if n == 0 {
+			_ = os.Remove(out) // 全空组（每段都解析失败）不送切
+			continue
+		}
 		if err := d.queueClip(out, title); err != nil {
 			return queued, err
 		}
@@ -488,29 +464,56 @@ func (d *Daemon) mergeAndQueue(segs []string, title, segDir string) (int, error)
 	return queued, nil
 }
 
-func tailBytes(b []byte, n int) string {
-	s := string(b)
-	if len(s) > n {
-		return "..." + s[len(s)-n:]
-	}
-	return s
-}
-
-// probeSegDuration 用 ffprobe 探段时长（秒）；探测失败返回 0（调用方按"无法判定"放行，交给管线兜底）
-func (d *Daemon) probeSegDuration(segPath string) float64 {
-	bin := d.cfg.Engines.Probe
-	if bin == "" {
-		bin = "ffprobe"
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, bin, "-v", "error", "-show_entries", "format=duration",
-		"-of", "default=noprint_wrappers=1:nokey=1", segPath).Output()
+// concatFLV 把一组 FLV 段的音视频 tag 原样顺序写入 out（剥 script 轨 + 断链止损），
+// 返回写入的 tag 数。FLV 结构：header(9B) + prevTagSize0(4B) + [tagType(1B) +
+// size(3B) + ts(3B) + tsExt(1B) + streamID(3B) + data(sizeB) + prevTagSize(4B)]*；
+// prevTagSize 应等于本 tag 总长 11+size，不匹配即流损坏，止损丢弃其后所有字节
+// （CDN 断流时段尾 tag 常写一半，其后本就无数据）。
+func concatFLV(files []string, out string) (int, error) {
+	f, err := os.Create(out)
 	if err != nil {
-		return 0
+		return 0, err
 	}
-	dur, _ := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
-	return dur
+	defer f.Close()
+	var zeros [4]byte
+	total := 0
+	for _, file := range files {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			return total, err
+		}
+		if len(b) < 13 || string(b[:3]) != "FLV" {
+			continue // 非 FLV：跳过（宁少勿坏）
+		}
+		if total == 0 {
+			if _, err := f.Write(b[:9]); err != nil { // FLV header（version/flags 透传）
+				return total, err
+			}
+			if _, err := f.Write(zeros[:]); err != nil { // prevTagSize0
+				return total, err
+			}
+		}
+		pos := 13
+		for pos+11 <= len(b) {
+			t := b[pos]
+			size := int(uint32(b[pos+1])<<16 | uint32(b[pos+2])<<8 | uint32(b[pos+3]))
+			dataEnd := pos + 11 + size
+			if dataEnd+4 > len(b) {
+				break // 段尾截断，弃
+			}
+			if binary.BigEndian.Uint32(b[dataEnd:dataEnd+4]) != uint32(11+size) {
+				break // tag 链断裂，其后不可信
+			}
+			if t == 8 || t == 9 { // 只保留音频/视频，剥 script(18) 等杂轨
+				if _, err := f.Write(b[pos : dataEnd+4]); err != nil {
+					return total, err
+				}
+				total++
+			}
+			pos = dataEnd + 4
+		}
+	}
+	return total, nil
 }
 
 // queueClip 写切片队列文件（serve 侧 watcher 消费）；内容 = 分段路径 \t 标题
@@ -539,12 +542,13 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-// listSegFiles 列出目录下 >1MB 的有效分段（忽略残段）
+// listSegFiles 列出目录下有效分段（>64KB：虎牙 60fps 短连接碎段最小实测 ~76KB/2s，
+// 旧阈值 1MB 会把碎段流九成以上的段全部漏掉；空文件/写一半的段仍被忽略）
 func listSegFiles(dir string) []string {
 	matches, _ := filepath.Glob(filepath.Join(dir, "seg_*.flv"))
 	var out []string
 	for _, m := range matches {
-		if fi, err := os.Stat(m); err == nil && fi.Size() > 1<<20 {
+		if fi, err := os.Stat(m); err == nil && fi.Size() > 64<<10 {
 			out = append(out, m)
 		}
 	}
