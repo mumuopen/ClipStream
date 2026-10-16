@@ -120,6 +120,7 @@ func TestMergeAndQueueRealData(t *testing.T) {
 		{"660000_20261015_164249", "WE vs BRO 德玛西亚杯淘汰赛", 20},
 		{"998_20261015_164249", "新主播，双5090顶尖画质！", 20},
 		{"7734200_20261015_164248", "【直播】WE vs BRO", 5},
+		{"660000_20261016_101612", "KC vs MVK S16入围赛", 20}, // 今日停滞会话手动重放
 	}
 	oldWD, _ := os.Getwd()
 	if err := os.Chdir(tempServer); err != nil {

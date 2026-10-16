@@ -200,6 +200,30 @@ func (d *Daemon) check(w *store.Watch) {
 			}
 			// 兜底后落进下方开播检测（同轮重新判定）
 		} else {
+			// 素材停滞兜底：直播已停但 API 仍报在播（赛事房下播后"预告"态是常见形态）
+			// 时，拉流重试会一直失败、watch 状态永远 recording。看分段写入：
+			// 超过 MaxStaleSec 无新段 = 实锤下播，强制结束会话（endSession 收尾送切+置 idle）
+			if d.cfg.Live.MaxStaleSec > 0 {
+				if st := segDirStale(s.segDir); st >= time.Duration(d.cfg.Live.MaxStaleSec)*time.Second {
+					fmt.Printf("[stale] 房间 %s 素材停滞 %.0fmin（≥%ds），判定下播，结束会话\n",
+						w.RoomID, st.Minutes(), d.cfg.Live.MaxStaleSec)
+					s.cancel()
+					return
+				}
+			}
+			// 标题转预告态自动收工：赛事房赛前/赛后轮播"预告"画面时 API 仍报在播且
+			// 码率与真播无异（实测段均 764KB），只有标题能区分。标题含预告关键词
+			// 即结束会话（如赛后变【预告】下一场……），避免预告画面进素材
+			if kws := d.cfg.Live.PreviewKeywords; len(kws) > 0 {
+				pctx, pcancel := context.WithTimeout(d.ctx, 15*time.Second)
+				pinfo, perr := d.roomInfo(pctx, w.Platform, w.RoomID)
+				pcancel()
+				if perr == nil && isPreviewTitle(pinfo.Title, kws) {
+					fmt.Printf("[preview] 房间 %s 标题转预告态（%s），结束会话\n", w.RoomID, pinfo.Title)
+					s.cancel()
+					return
+				}
+			}
 			w.SegCount = int(s.SegCount())
 			w.Title = s.title
 			_ = d.store.UpdateWatch(w)
@@ -232,8 +256,29 @@ func (d *Daemon) check(w *store.Watch) {
 		}
 		return
 	}
+	// 预告态不视为开播：赛事房白天轮播"预告"画面（API 报在播、码率与真播无异），
+	// 标题含预告关键词即跳过，避免录一堆预告画面直到夜里真开赛
+	if kws := d.cfg.Live.PreviewKeywords; len(kws) > 0 && isPreviewTitle(info.Title, kws) {
+		if w.Status != "idle" {
+			w.Status = "idle"
+			w.LastError = "预告态（标题含关键词），未录制"
+			_ = d.store.UpdateWatch(w)
+		}
+		return
+	}
 
 	d.startSession(w, info)
+}
+
+// isPreviewTitle 判断标题是否为预告态（赛事房赛前/赛后轮播画面）。
+// 关键词可配置（Live.PreviewKeywords），默认 ["预告","凌晨见"]。
+func isPreviewTitle(title string, kws []string) bool {
+	for _, kw := range kws {
+		if kw != "" && strings.Contains(title, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // startSession 创建录制会话并立即拉流
@@ -379,11 +424,24 @@ func (d *Daemon) endSession(s *liveSession) {
 		fmt.Sprintf("《%s》结束（房间 %s）；分段 %d 个", s.title, s.roomID, len(segs)))
 
 	if d.cfg.Live.AutoClip {
-		// 碎段流判定（按段数，不按时长）：虎牙 CDN 是 5-15 秒短连接，一场直播留下数百段；
-		// 正常 600s 分段一场最多 ~10 段（含断流重连残段），≥20 段即碎段流，合并后送切。
+		// 碎段流判定（按段数 + 段大小，不按时长）：虎牙 CDN 是 5-15 秒短连接，一场直播
+		// 留下数百段且段均 ~0.5MB；B站长连接 600s 分段一场最多 ~10 段、段均数十 MB。
+		// 仅"段多且段小"才合并；段数多但段大（B站录满 6 小时=35 段）走逐段。
 		// 注：不能用 ffprobe 判段时长——直播流切出的 FLV 段 metadata duration 是"流内累计
 		// 时间"假值（实测 B站段标 4562s、虎牙段标 5718s，均非本段真实长度）。
-		if len(segs) >= 20 {
+		isFrag := len(segs) >= 20
+		if isFrag {
+			var totalSize int64
+			for _, seg := range segs {
+				if fi, err := os.Stat(seg); err == nil {
+					totalSize += fi.Size()
+				}
+			}
+			if avgMB := float64(totalSize) / float64(len(segs)) / (1 << 20); avgMB >= 8 {
+				isFrag = false // 段均 ≥8MB：正常分段流（600s 段低码率也远超此值）
+			}
+		}
+		if isFrag {
 			merged, err := d.mergeAndQueue(segs, s.title, s.segDir)
 			if err != nil {
 				fmt.Printf("[queue] 房间 %s 碎段合并失败：%v（%d 段未送切）\n", s.roomID, err, len(segs))
@@ -667,6 +725,30 @@ func listSegFiles(dir string) []string {
 func countSegFiles(dir string) int {
 	matches, _ := filepath.Glob(filepath.Join(dir, "seg_*.flv"))
 	return len(matches)
+}
+
+// segDirStale 返回会话目录"最后写入距今"的时长：取最新文件 mtime（含目录本身，
+// 空目录/无段文件时用目录 mtime 兜底）。tick 每轮对 recording 会话调用一次，
+// 目录内文件数几百个时仅 stat 开销，可接受。
+func segDirStale(dir string) time.Duration {
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return 0
+	}
+	latest := fi.ModTime()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return time.Since(latest)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if fi2, err := e.Info(); err == nil && fi2.ModTime().After(latest) {
+			latest = fi2.ModTime()
+		}
+	}
+	return time.Since(latest)
 }
 
 // ── 平台分发（M4 多平台：bilibili / huya）──

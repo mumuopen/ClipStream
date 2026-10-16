@@ -1232,7 +1232,17 @@ function renderJobList(container, list, expandable) {
   if (openId) {
     const el = document.getElementById('detail-' + openId);
     const job = jobs.find(j => j.id === openId);
-    if (el && job) { el.classList.add('open'); renderDetailBody(el, job); }
+    if (el && job) {
+      el.classList.add('open');
+      // 详情差分：2.5s 轮询每次重建会把展开里的 <video> 反复替换、打断播放
+      // （同审核台问题）。已渲染且任务状态未变则不重建——日志走 SSE 增量追加；
+      // 仅任务状态变化（如 running→review 出切片结果）才重渲染。
+      const sig = job.status + ':' + (job.stage || '') + ':' + job.progress;
+      if (el.dataset.dsig !== sig) {
+        el.dataset.dsig = sig;
+        renderDetailBody(el, job);
+      }
+    }
   }
 }
 
@@ -1244,6 +1254,7 @@ async function toggle(id) {
   const el = document.getElementById('detail-' + id);
   if (!el) return;
   el.classList.add('open');
+  el.dataset.dsig = ''; // 收起再展开时强制重渲染（差分签名重置）
   const job = jobs.find(j => j.id === id);
   if (job) renderDetailBody(el, job);
   connectSSE(id);

@@ -70,6 +70,12 @@ type Live struct {
 	CheckIntervalSec int  `yaml:"check_interval" json:"check_interval"` // 开播检测轮询间隔，默认 60
 	SegmentSec       int  `yaml:"segment_time" json:"segment_time"`     // 录制分段时长，默认 600
 	AutoClip         bool `yaml:"auto_clip" json:"auto_clip"`           // 下播后自动将分段送入切片管线
+	// 素材停滞兜底（秒）：录制会话超过该时长无新分段即强制结束（下播/API 假在播防挂死）
+	MaxStaleSec int `yaml:"max_stale_sec" json:"max_stale_sec"`
+	// 预告态关键词：标题含任一关键词时不视为真开播（不录制）；录制中标题
+	// 变为预告态也自动收工。赛事房白天轮播"预告"画面但 API 仍报在播——
+	// 码率与真播无异（实测段均 764KB），只有标题能区分。默认 ["预告","凌晨见"]
+	PreviewKeywords []string `yaml:"preview_keywords" json:"preview_keywords"`
 }
 
 // Retention 磁盘清理策略（挂机刚需：数据流入-流出平衡）
@@ -106,7 +112,7 @@ func Default() *Config {
 		Engines: Engines{YtDlp: "yt-dlp", FFmpeg: "ffmpeg", Probe: "ffprobe"},
 		Web:     Web{Listen: "127.0.0.1:8899"},
 		Publish: Publish{Headless: false, Screenshots: true, PlatformsDir: "configs/platforms"},
-		Live:      Live{CheckIntervalSec: 60, SegmentSec: 600, AutoClip: true},
+		Live:      Live{CheckIntervalSec: 60, SegmentSec: 600, AutoClip: true, MaxStaleSec: 300, PreviewKeywords: []string{"预告", "凌晨见"}},
 		Retention: Retention{Enabled: true, SegmentsDays: 7, ConsumedSegDays: 1, MinFreePercent: 10, CheckMinutes: 60},
 		AutoReview: AutoReview{Enabled: false, MinScore: 60, HardMinDurSec: 15, HardMaxDurSec: 120, BannedWords: []string{}},
 	}
