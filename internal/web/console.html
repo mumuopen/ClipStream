@@ -357,16 +357,18 @@
   </div>
 </div>
 
-<!-- 扫码登录弹窗（B站） -->
+<!-- 扫码登录弹窗（B站原生二维码） -->
 <div id="login-bg" class="modal-bg" onclick="if(event.target===this)closeLoginModal()">
-  <div class="modal" style="max-width:560px">
+  <div class="modal" style="max-width:420px">
     <h3 id="login-title">扫码登录 B站</h3>
     <div id="login-meta" class="mmeta"></div>
-    <div class="hint" id="login-state" style="margin:6px 0">等待扫码中…</div>
-    <img id="login-img" alt="登录二维码" style="display:none;max-width:300px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px">
-    <pre id="login-qr" class="qr-pre"></pre>
-    <details style="margin-top:8px"><summary class="hint">终端输出</summary><pre id="login-console" class="qr-pre" style="max-height:120px"></pre></details>
+    <div id="login-qr-wrap" style="display:flex;justify-content:center;margin:14px 0">
+      <img id="login-img" alt="登录二维码" style="max-width:280px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px">
+    </div>
+    <div class="hint" id="login-state" style="margin:6px 0;text-align:center">生成二维码中…</div>
+    <div class="hint" style="text-align:center">打开手机 B站 App → 首页右上角扫一扫</div>
     <div class="modal-actions">
+      <button class="ghost" onclick="startLogin(loginCtx.platform, loginCtx.account)">刷新二维码</button>
       <button class="ghost" onclick="closeLoginModal()">关闭</button>
     </div>
   </div>
@@ -449,6 +451,8 @@ const I18N = {
     'barrage_min30': '近 30 分', 'barrage_min120': '近 2 小时', 'barrage_min360': '近 6 小时',
     /* ── 发布中心 ── */
     m5_acc: '发布账号', m5_acc_hint: '定时发布时自动选用：标签匹配 + 高优先级先用',
+    m5_acc_qr_btn: '＋ 扫码添加 B站账号', m5_acc_qr_hint: '手机 B站 App 扫码即完成添加与登录，账号名自动取B站昵称，无需填写',
+    m5_acc_qr_new: '新账号（扫码后自动命名）',
     m5_plat: '平台', m5_name: '账号名', m5_labels: '内容标签', m5_labels_ph: '游戏,高燃,赛事（逗号分隔，选填）', m5_prio: '优先级',
     m5_acc_name_ph: '如：电竞主号（将作为登录账号名）',
     m5_acc_empty: '还没有发布账号 — 添加后点「扫码登录」完成授权',
@@ -514,6 +518,8 @@ const I18N = {
     barrage_total: 'Total', barrage_peak: 'Peak', barrage_rate: 'count', barrage_per5: 'per 5s',
     'barrage_min30': '30 min', 'barrage_min120': '2 hours', 'barrage_min360': '6 hours',
     m5_acc: 'Publish Accounts', m5_acc_hint: 'auto-picked at publish: label match + priority',
+    m5_acc_qr_btn: '＋ Add Bilibili account (scan QR)', m5_acc_qr_hint: 'Scan with the bilibili App — account auto-named from your nickname, zero typing',
+    m5_acc_qr_new: 'new account (auto-named after scan)',
     m5_plat: 'Platform', m5_name: 'Account name', m5_labels: 'Content labels', m5_labels_ph: 'game,hype,tournament (comma-sep, optional)', m5_prio: 'Priority',
     m5_acc_name_ph: 'e.g. esports-main (used as login name)',
     m5_acc_empty: 'No accounts yet — add one, then QR-login to authorize it',
@@ -1054,18 +1060,8 @@ function renderLabels(el) {
     <div class="m5-grid">
       <div class="m5-panel">
         <h4>${T('m5_acc')} <span class="hint">${T('m5_acc_hint')}</span></h4>
-        <div class="m5-form">
-          <label>${T('m5_plat')} <select id="acc-plat">
-            ${Object.entries(PLAT_META).map(([k, v]) => `<option value="${k}">${v.cn}</option>`).join('')}
-          </select></label>
-          <label>${T('m5_name')} <input id="acc-name" placeholder="${T('m5_acc_name_ph')}"></label>
-          <label>${T('m5_labels')} <input id="acc-labels" placeholder="${T('m5_labels_ph')}"></label>
-          <label>${T('m5_prio')}>
-            <select id="acc-prio">
-              ${[0,1,2,3,4,5,6,7,8,9].map(p => `<option value="${p}">${p}</option>`).join('')}
-            </select></label>
-          <button onclick="addAccount()">${T('btn_add_acc')}</button>
-        </div>
+        <button class="b-login" style="width:100%;margin-bottom:12px;padding:10px;font-size:14px" onclick="startLogin('bilibili','')">${T('m5_acc_qr_btn')}</button>
+        <div class="hint" style="margin-bottom:12px">${T('m5_acc_qr_hint')}</div>
         <div class="acc-list" id="acc-list"></div>
       </div>
 
@@ -1096,10 +1092,10 @@ function renderLabels(el) {
         </div>
       </div>
     </div>`;
-  // 回车提交
-  ['acc-name', 'acc-labels', 'sch-name'].forEach(id => {
+  // 回车提交（账号表单已下线，仅计划名）
+  ['sch-name'].forEach(id => {
     const e = document.getElementById(id);
-    if (e) e.addEventListener('keydown', ev => { if (ev.key === 'Enter') (id.startsWith('acc-') ? addAccount() : addSchedule()); });
+    if (e) e.addEventListener('keydown', ev => { if (ev.key === 'Enter') addSchedule(); });
   });
   renderMatrixLists();
 }
@@ -1152,20 +1148,6 @@ function toggleSchedPlat(p) {
 }
 async function toggleSchedule(id, en) {
   try { await fetchJSON('/api/schedules/' + id + '/enabled', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: en }) }); refreshMatrix(); } catch (e) { alert(e.message); }
-}
-async function addAccount() {
-  const payload = {
-    platform: $('#acc-plat').value,
-    name: $('#acc-name').value.trim(),
-    labels: $('#acc-labels').value.trim(),
-    priority: parseInt($('#acc-prio').value) || 0,
-  };
-  if (!payload.name) { alert(T('m5_acc_need')); return; }
-  try {
-    await fetchJSON('/api/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    $('#acc-name').value = ''; $('#acc-labels').value = ''; // 表单不再被重建，成功后显式清空
-    refreshMatrix();
-  } catch (e) { alert(e.message); }
 }
 async function delAccount(id) {
   if (!confirm(T('m5_confirm_acc'))) return;
@@ -1454,48 +1436,34 @@ async function submitPool() {
 /* ═══════════ 扫码登录（B站，biliup 二维码流到弹窗）═══════════ */
 async function startLogin(platform, account) {
   try {
-    const res = await fetchJSON('/api/login/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform, account }) });
-    loginCtx = res;
-    $('#login-title').textContent = T('lg_title');
-    $('#login-meta').textContent = 'B站 · ' + account;
+    // account 传空 = 新账号流程：登录成功后自动用 B站昵称建账号（服务端降账）
+    const res = await fetchJSON('/api/login/qr/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform, account: account || '' }) });
+    loginCtx = { ...res, platform, account: account || '' };
+    $('#login-meta').textContent = account ? ('B站 · ' + account) : 'B站 · ' + T('m5_acc_qr_new');
     $('#login-state').textContent = T('lg_running');
-    $('#login-qr').textContent = '';
-    $('#login-console').textContent = '';
+    $('#login-img').src = res.qr; // data URL（Go 原生渲染 PNG）
     $('#login-bg').style.display = 'flex';
     if (loginTimer) clearInterval(loginTimer);
-    loginTimer = setInterval(pollLogin, 1200);
+    loginTimer = setInterval(pollLogin, 1500);
     pollLogin();
   } catch (e) { alert(e.message); }
 }
 async function pollLogin() {
   if (!loginCtx || !loginCtx.id) return;
   let st;
-  try { st = await fetchJSON('/api/login/status?id=' + encodeURIComponent(loginCtx.id)); }
+  try { st = await fetchJSON('/api/login/qr/poll?id=' + encodeURIComponent(loginCtx.id)); }
   catch (e) { stopLoginTimer(); $('#login-state').textContent = T('lg_fail'); return; }
-  // PNG 二维码优先（biliup 生成的 qrcode.png，比终端 ASCII 可靠）；否则展示终端块符码
-  const img = $('#login-img'), qr = $('#login-qr');
-  if (st.qr_png) {
-    img.style.display = 'block';
-    const src = '/api/login/qrpng?id=' + encodeURIComponent(loginCtx.id) + '&t=' + Date.now();
-    if (!img.src.includes(encodeURIComponent(loginCtx.id))) img.src = src;
-    qr.style.display = 'none';
-  } else {
-    img.style.display = 'none';
-    qr.style.display = 'block';
-    let out = st.output || '';
-    // 兜底：biliup 部分版本进入"浏览器登录"会给链接而不是二维码——把链接挖出来提示可点击
-    const m = out.match(/https?:\/\/passport\.bilibili\.com[^\s\r\n]+/);
-    if (m && !/[▀▄█]/.test(out)) {
-      out = (T('lg_running')) + '\n\n或点此链接在浏览器完成登录：\n' + m[0];
-    }
-    qr.textContent = out.length > 3000 ? out.slice(-3000) : out;
-    qr.scrollTop = qr.scrollHeight;
+  if (st.state === 'waiting') { $('#login-state').textContent = st.message || T('lg_running'); return; }
+  stopLoginTimer();
+  if (st.state === 'expired') {
+    $('#login-state').textContent = st.message + '（点「刷新二维码」重试）';
+    return;
   }
-  $('#login-console').textContent = st.output || '';
-  if (st.done) {
-    stopLoginTimer();
-    $('#login-state').textContent = st.ok ? T('lg_ok') : (T('lg_fail') + (st.error ? '（' + st.error + '）' : ''));
-    if (st.ok) refreshMatrix();
+  if (st.state === 'error') { $('#login-state').textContent = (st.message || '').slice(0, 120); return; }
+  $('#login-state').textContent = st.message || T('lg_ok');
+  if (st.state === 'ok') {
+    refreshMatrix();
+    setTimeout(closeLoginModal, 800); // 让用户看到"登录成功"再关
   }
 }
 function stopLoginTimer() { if (loginTimer) { clearInterval(loginTimer); loginTimer = null; } }

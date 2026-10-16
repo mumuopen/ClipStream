@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -16,8 +17,9 @@ import (
 	"sync"
 	"time"
 
-	pty "github.com/aymanbagabas/go-pty"
+	"github.com/skip2/go-qrcode"
 
+	"chopperbot/internal/biliapi"
 	"chopperbot/internal/config"
 	"chopperbot/internal/core"
 	"chopperbot/internal/live"
@@ -37,11 +39,11 @@ type Server struct {
 	bus     *core.Bus
 
 	loginMu      sync.Mutex
-	loginSessions map[string]*loginSession // 扫码登录会话（B站 biliup 子进程托管）
+	qrSessions   map[string]*qrSession // 扫码登录会话（B站 passport 原生 API）
 }
 
 func NewServer(cfg *config.Config, cfgPath string, st *store.Store, r *pipeline.Runner, bus *core.Bus) *Server {
-	return &Server{cfg: cfg, cfgPath: cfgPath, store: st, runner: r, bus: bus, loginSessions: map[string]*loginSession{}}
+	return &Server{cfg: cfg, cfgPath: cfgPath, store: st, runner: r, bus: bus, qrSessions: map[string]*qrSession{}}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -74,10 +76,9 @@ func (s *Server) Handler() http.Handler {
 	// 全部配置后台化：运营参数 + LLM/引擎/发布段免改文件
 	mux.HandleFunc("GET /api/config", s.getConfig)
 	mux.HandleFunc("PUT /api/config", s.updateConfig)
-	// 扫码登录：B站 biliup 二维码流式到浏览器弹窗
-	mux.HandleFunc("POST /api/login/start", s.loginStart)
-	mux.HandleFunc("GET /api/login/status", s.loginStatus)
-	mux.HandleFunc("GET /api/login/qrpng", s.loginQRPNG)
+	// 扫码登录：Go 原生 B站 passport 二维码（生成 + 轮询）
+	mux.HandleFunc("POST /api/login/qr/start", s.loginQRStart)
+	mux.HandleFunc("GET /api/login/qr/poll", s.loginQRPoll)
 	return logRequest(mux)
 }
 
@@ -389,229 +390,91 @@ func (s *Server) deletePool(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"ok": "true"})
 }
 
-// ── 扫码登录（UI 化：B站 biliup 终端二维码流到浏览器弹窗）──
+// ── 扫码登录（Go 原生：B站 passport TV 端二维码 API，协议与 biliup-rs 一致）──
+// 旧方案（ConPTY 伪终端驱动 biliup login + 终端菜单自动选择）在真机上因输出分帧
+// 识别失败而卡死（用户实测"扫不了码"），且二维码要走 ASCII/PNG 双通道极其脆弱。
+// 现直接调 B站原生接口：生成（auth_code）+ 轮询（poll），二维码 Go 渲染 PNG 送
+// 前端 <img>；落盘的 cookies.json 与 biliup LoginInfo 格式兼容（上传过渡期仍由
+// biliup 消费）。零子进程、零伪终端。
 
-// loginSession 一次扫码登录会话：ConPTY 伪终端跑 biliup login（它强制要求 TTY），
-// 终端输出（含二维码）持续供前端轮询渲染
-type loginSession struct {
-	id        string
-	platform  string
-	account   string
-	cmd       *pty.Cmd
-	tty       pty.Pty
-	qrPNG     string    // biliup 生成的 qrcode.png 路径（账号目录内）
-	mu        sync.Mutex
-	output    string    // 剥离 ANSI 后的累计输出（尾部截断）
-	done      bool
-	exitErr   string
-	cookieOK  bool
+// qrSession 一次扫码登录会话（原生 HTTP 轮询）。
+// preFillAccount 非空 = 既有账号重新登录（cookie 只回填不建账号）；
+// 空 = 新账号流程（登录成功后自动用 B站昵称建账号，用户零输入）。
+type qrSession struct {
+	id       string
+	platform string
+	account  string // 会话指定名（重新登录）；空则落账时自动起名
+	authCode string
 	startedAt time.Time
+	mu        sync.Mutex
+	state     string // waiting / ok / expired / error
+	message   string
+	result    string // 落定的账号名（ok 时回填前端展示）
 }
 
-var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07`)
-var blankRuns = regexp.MustCompile(`\n{4,}`) // ConPTY 屏幕滚动会堆积大量空行，压缩后前端才能看到二维码
-
-// loginStart 启动 B站扫码登录（当前仅 bilibili：抖音登录需要有头浏览器，不适合无人值守服务器）
-func (s *Server) loginStart(w http.ResponseWriter, r *http.Request) {
+// loginQRStart 生成扫码登录二维码（当前仅 bilibili：抖音登录需要有头浏览器，
+// 不适合无人值守服务器）。account 可选：传=既有账号重新登录；不传=新账号
+// （登录成功后自动用 B站昵称建账号，用户零输入）。
+func (s *Server) loginQRStart(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Platform string `json:"platform"`
 		Account  string `json:"account"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpError(w, 400, "参数错误: "+err.Error())
-		return
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Platform == "" {
+		req.Platform = "bilibili"
 	}
 	if req.Platform != "bilibili" {
 		httpError(w, 400, "当前仅支持 bilibili 扫码登录（抖音需在装有浏览器的电脑上操作）")
 		return
 	}
-	if req.Account == "" {
-		req.Account = "default"
-	}
-	if !accountNameRe.MatchString(req.Account) {
+	if req.Account != "" && !accountNameRe.MatchString(req.Account) {
 		httpError(w, 400, "账号名仅限中英文数字、下划线、连字符")
 		return
 	}
-	biliupBin := s.cfg.Engines.Biliup
-	if biliupBin == "" {
-		httpError(w, 400, "B站引擎未配置：请先在设置页填 biliup 路径（或用部署包内置 ./engines/biliup.exe）")
-		return
-	}
-	// 引擎路径可能是相对路径（如 ./engines/biliup.exe）：子进程工作目录将切到账号目录，必须先绝对化
-	bin, err := filepath.Abs(biliupBin)
+	authCode, qrURL, err := biliapi.QRGenerate()
 	if err != nil {
-		httpError(w, 500, err.Error())
+		httpError(w, 502, "B站二维码生成失败: "+err.Error())
 		return
 	}
-	// 同一账号并发登录：顶掉旧会话
-	s.loginMu.Lock()
-	for _, sess := range s.loginSessions {
-		if sess.platform == req.Platform && sess.account == req.Account && !sess.done {
-			if sess.cmd != nil && sess.cmd.Process != nil {
-				_ = sess.cmd.Process.Kill()
-			}
-			if sess.tty != nil {
-				_ = sess.tty.Close()
-			}
-		}
-	}
-	s.loginMu.Unlock()
-
-	dir := publish.AccountDir(s.cfg.DataDir, "bilibili", req.Account)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		httpError(w, 500, "创建账号目录失败: "+err.Error())
-		return
-	}
-	// cookie 路径绝对化：工作目录将切到账号目录（biliup 的 qrcode.png 落在那里，多会话互不覆盖）
-	cookieAbs, err := filepath.Abs(filepath.Join(dir, "cookies.json"))
+	// Go 渲染 PNG（512px，Medium 容错足够扫码），data URL 直接嵌前端 <img>
+	png, err := qrcode.Encode(qrURL, qrcode.Medium, 512)
 	if err != nil {
-		httpError(w, 500, err.Error())
+		httpError(w, 500, "二维码渲染失败: "+err.Error())
 		return
 	}
+	qrDataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
 
-	// biliup login 强制交互式终端（非 TTY 直接报 not a terminal）：
-	// 用 ConPTY 伪终端承载，二维码/提示输出流式回传浏览器
-	tty, err := pty.New()
-	if err != nil {
-		httpError(w, 500, "无法创建登录终端: "+err.Error())
-		return
-	}
-	_ = tty.Resize(110, 40)
-	cmd := tty.Command(bin, "-u", cookieAbs, "login")
-	cmd.Dir = dir
-
-	sess := &loginSession{
-		id:        fmt.Sprintf("login-%d-%s", time.Now().UnixNano(), strconv.Itoa(rand.Intn(1000))),
+	sess := &qrSession{
+		id:        fmt.Sprintf("qr-%d-%s", time.Now().UnixNano(), strconv.Itoa(rand.Intn(1000))),
 		platform:  req.Platform,
 		account:   req.Account,
-		cmd:       cmd,
-		tty:       tty,
-		qrPNG:     filepath.Join(dir, "qrcode.png"),
+		authCode:  authCode,
 		startedAt: time.Now(),
+		state:     "waiting",
 	}
-	if err := cmd.Start(); err != nil {
-		_ = tty.Close()
-		httpError(w, 500, "启动 biliup 登录失败: "+err.Error())
-		return
-	}
-	go func() {
-		menuDone := false // 菜单自动选择只触发一次
-		appendOut := func(b []byte) {
-			clean := ansiRe.ReplaceAllString(string(b), "")
-			clean = blankRuns.ReplaceAllString(clean, "\n\n\n")
-			sess.mu.Lock()
-			sess.output += clean
-			if len(sess.output) > 64<<10 { // 保留尾部 64KB（二维码输出足够）
-				sess.output = sess.output[len(sess.output)-64<<10:]
-			}
-			sess.mu.Unlock()
-		}
-		buf := make([]byte, 8192)
-		for {
-			n, rerr := tty.Read(buf)
-			if n > 0 {
-				appendOut(buf[:n])
-			}
-			// biliup 首屏是登录方式菜单（箭头选择）：自动选中「扫码登录」
-			if !menuDone {
-				sess.mu.Lock()
-				menuSeen := strings.Contains(sess.output, "选择一种登录方式")
-				sess.mu.Unlock()
-				if menuSeen {
-					time.Sleep(700 * time.Millisecond) // 等菜单渲染稳定
-					menuDone = true
-					sess.autoSelectQRLogin(tty)
-				}
-			}
-			if rerr != nil {
-				break
-			}
-		}
-		werr := cmd.Wait()
-		_ = tty.Close()
-		sess.mu.Lock()
-		sess.done = true
-		if werr != nil {
-			sess.exitErr = werr.Error()
-		}
-		sess.mu.Unlock()
-		// 登录成功：cookie 落盘 → 恢复账号可用状态（若有账号记录）
-		if s.accountCookieOK(req.Platform, req.Account) {
-			sess.mu.Lock()
-			sess.cookieOK = true
-			sess.mu.Unlock()
-			_ = s.store.SetAccountStatus(req.Platform, req.Account, "ok")
-		}
-	}()
-
 	s.loginMu.Lock()
-	s.loginSessions[sess.id] = sess
-	// 简单清理：保留最近 20 个会话
-	if len(s.loginSessions) > 20 {
-		for k, v := range s.loginSessions {
+	s.qrSessions[sess.id] = sess
+	// 清理：超 20 个或超 1 小时的旧会话
+	if len(s.qrSessions) > 20 {
+		for k, v := range s.qrSessions {
 			if time.Since(v.startedAt) > time.Hour {
-				delete(s.loginSessions, k)
+				delete(s.qrSessions, k)
 			}
 		}
 	}
 	s.loginMu.Unlock()
 
-	writeJSON(w, map[string]any{"id": sess.id, "account": req.Account})
+	writeJSON(w, map[string]any{"id": sess.id, "account": req.Account, "qr": qrDataURL})
 }
 
-// autoSelectQRLogin 在 biliup 登录方式菜单中自动选中「扫码登录」：
-// 菜单形如（❯ 指向当前项）：
-//   ? 选择一种登录方式 ›
-//     账号密码
-//   ❯ 短信登录
-//     扫码登录          ← 目标
-//     浏览器登录
-// 认准「扫码登录」的行号，计算与 ❯ 行的差值发方向键，最后回车确认。
-// 注意不能匹配 ❯ 行自身且必须要求菜单上下文（避免误判后续输出里的普通文字）。
-func (sess *loginSession) autoSelectQRLogin(tty pty.Pty) {
-	sess.mu.Lock()
-	out := sess.output
-	sess.mu.Unlock()
-	lines := strings.Split(out, "\n")
-	menu := -1 // 菜单标题行（"选择一种登录方式"）
-	cur, target := -1, -1
-	for i, ln := range lines {
-		if strings.Contains(ln, "选择一种登录方式") && menu < 0 {
-			menu = i
-		}
-		if menu >= 0 && i > menu {
-			if strings.Contains(ln, "❯") && cur < 0 {
-				cur = i
-			}
-			// 目标行必须仍在菜单区间内（菜单下最多 6 项，防越界吃到后续输出）
-			if i <= menu+8 && strings.Contains(ln, "扫码登录") && target < 0 {
-				target = i
-			}
-		}
-	}
-	if target < 0 || cur < 0 || target == cur {
-		// 结构识别失败或已选中：直接回车（菜单默认选中短信，识别失败时宁可重开）
-		if target != cur {
-			_, _ = tty.Write([]byte("\r"))
-		}
-		return
-	}
-	keys := ""
-	if target > cur {
-		keys = strings.Repeat("\x1b[B", target-cur) // 方向下键
-	} else {
-		keys = strings.Repeat("\x1b[A", cur-target) // 方向上键
-	}
-	_, _ = tty.Write([]byte(keys))
-	time.Sleep(250 * time.Millisecond)
-	_, _ = tty.Write([]byte("\r")) // 确认
-}
-
-// loginStatus 轮询登录进度：running=扫码中，ok=true 表示 cookie 已落盘
-func (s *Server) loginStatus(w http.ResponseWriter, r *http.Request) {
+// loginQRPoll 前端轮询扫码状态：state=waiting/ok/expired/error。
+// ok 时服务端把登录信息写入账号目录 cookies.json（biliup LoginInfo 兼容格式），
+// 新账号流程自动以 B站昵称建账号（用户零输入）；既有账号流程只回填登录态。
+func (s *Server) loginQRPoll(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	s.loginMu.Lock()
-	sess := s.loginSessions[id]
+	sess := s.qrSessions[id]
 	s.loginMu.Unlock()
 	if sess == nil {
 		httpError(w, 404, "登录会话不存在（可能已过期，请重新发起）")
@@ -619,34 +482,85 @@ func (s *Server) loginStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
-	// qrcode.png 存在且是本次会话写入的 → 前端优先展示 PNG（比终端 ASCII 码更可靠可扫）
-	qrPNG := false
-	if fi, err := os.Stat(sess.qrPNG); err == nil && fi.ModTime().After(sess.startedAt) {
-		qrPNG = true
+	// 会话超 5 分钟判过期（B站二维码本身 ~3 分钟有效期）
+	if sess.state == "waiting" && time.Since(sess.startedAt) > 5*time.Minute {
+		sess.state, sess.message = "expired", "二维码超时，请重新生成"
 	}
-	writeJSON(w, map[string]any{
-		"id":      sess.id,
-		"account": sess.account,
-		"running": !sess.done,
-		"done":    sess.done,
-		"ok":      sess.cookieOK,
-		"error":   sess.exitErr,
-		"output":  sess.output,
-		"qr_png":  qrPNG,
-	})
-}
-
-// loginQRPNG 返回 biliup 生成的二维码图片（前端 <img> 直接展示）
-func (s *Server) loginQRPNG(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("id")
-	s.loginMu.Lock()
-	sess := s.loginSessions[id]
-	s.loginMu.Unlock()
-	if sess == nil {
-		httpError(w, 404, "登录会话不存在")
+	if sess.state != "waiting" { // 终态缓存（ok/expired/error 不再打 B站）
+		writeJSON(w, map[string]any{"state": sess.state, "message": sess.message, "account": sess.result})
 		return
 	}
-	http.ServeFile(w, r, sess.qrPNG)
+	st, err := biliapi.QRPoll(sess.authCode)
+	if err != nil {
+		sess.state, sess.message = "error", err.Error()
+		writeJSON(w, map[string]any{"state": sess.state, "message": sess.message})
+		return
+	}
+	switch {
+	case st.OK:
+		name, aerr := s.settleBiliLogin(sess, &st.Info)
+		if aerr != nil {
+			sess.state, sess.message = "error", aerr.Error()
+			break
+		}
+		sess.result = name
+		sess.state, sess.message = "ok", "登录成功："+name
+	case st.Expired:
+		sess.state, sess.message = "expired", st.Message
+	default: // Waiting：保持 waiting，继续轮
+		sess.message = st.Message
+	}
+	writeJSON(w, map[string]any{"state": sess.state, "message": sess.message, "account": sess.result})
+}
+
+// settleBiliLogin 落账：写 cookies.json（biliup LoginInfo 兼容），并按会话类型
+// 建账号（新账号用 B站昵称自动命名，昵称不可用时 fallback mid）或回填既有账号。
+// 返回最终账号名。
+func (s *Server) settleBiliLogin(sess *qrSession, info *biliapi.TVLoginInfo) (string, error) {
+	name := sess.account // 既有账号重新登录：保持原名
+	if name == "" {
+		// 新账号：B站昵称自动命名（清掉目录不安全字符；空则用 mid）
+		nick := biliapi.Nickname(*info)
+		nick = accountNameRe.ReplaceAllString(nick, "")
+		if len([]rune(nick)) > 32 {
+			nick = string([]rune(nick)[:32])
+		}
+		if nick == "" {
+			nick = fmt.Sprintf("bili_%d", info.TokenInfo.MID)
+		}
+		name = nick
+	}
+	dir := publish.AccountDir(s.cfg.DataDir, "bilibili", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("账号目录创建失败: %w", err)
+	}
+	b, err := json.MarshalIndent(info, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cookies.json"), b, 0o644); err != nil {
+		return "", fmt.Errorf("cookie 写盘失败: %w", err)
+	}
+	// 新账号入库存档（同名已存在则只刷登录态，不重复建）
+	if sess.account == "" {
+		if as, lerr := s.store.ListAccounts(); lerr == nil {
+			dup := false
+			for _, a := range as {
+				if a.Platform == "bilibili" && a.Name == name {
+					dup = true
+					break
+				}
+			}
+			if !dup {
+				acc := &store.Account{Platform: "bilibili", Name: name, Priority: 0}
+				if _, cerr := s.store.CreateAccount(acc); cerr != nil {
+					return name, nil // 账号建档失败不回滚登录态（cookie 已在，功能可用）
+				}
+			}
+		}
+	}
+	_ = s.store.SetAccountStatus("bilibili", name, "ok")
+	return name, nil
 }
 
 // ── 直播关注 API ──
