@@ -326,6 +326,25 @@ func doServe(cfgPath string) error {
 	if err := os.MkdirAll(queueDir, 0o755); err != nil {
 		return err
 	}
+
+	// 启动恢复：上次进程退出（崩溃/重启/服务器断电）时未完成的任务重新入列。
+	// 不恢复的话这些任务会永远停在 queued/running 成孤儿——挂机系统不可接受。
+	// 各阶段产物按 job dir 覆盖写，重跑幂等；running 的从头重跑代价可接受。
+	if jobs, err := app.store.ListJobs(500); err == nil {
+		recovered := 0
+		for _, j := range jobs {
+			if j.Status == core.StatusQueued || j.Status == core.StatusRunning {
+				j.Status = core.StatusQueued
+				_ = app.store.UpdateJob(j)
+				app.runner.Enqueue(j.ID)
+				recovered++
+			}
+		}
+		if recovered > 0 {
+			fmt.Printf("[recover] 恢复 %d 个未完成任务（queued/running）\n", recovered)
+		}
+	}
+
 	go scanClipQueue(queueDir, func(segPath, roomTitle string) {
 		job, err := app.newJob(segPath, "clips")
 		if err != nil {
