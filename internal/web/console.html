@@ -564,6 +564,7 @@ let pubCtx = null, subCtx = null, dubCtx = null;
 let stats = null;           // {engines, accounts}
 let taskFilter = 'all';     // 任务中心筛选
 let page = 'board';         // 当前路由页
+let reviewSig = '';         // 审核台差分签名：review 任务 id 列表，变化才重建
 
 const esc = s => { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; };
 const fmtRange = (s, e) => { const f = t => Math.floor(t / 60) + ':' + String(Math.round(t % 60)).padStart(2, '0'); return f(s) + ' - ' + f(e); };
@@ -710,6 +711,16 @@ function renderReview(el) {
         <span style="font-size:12px;color:var(--muted)">${esc(jobSummary(j))}</span>
       </div>${body}</div>`;
   }).join('');
+}
+
+// 审核台差分渲染：review 任务 id 列表无变化时不重建 #page——
+// 否则 2.5s 轮询每次重建会反复替换 <video> 元素，预览播放永远被打断
+// （用户报"页面自动刷新、视频无法播放"的根因）。有切片进出 review 才重建。
+function renderReviewDiff(el) {
+  const sig = jobs.filter(j => j.status === 'review').map(j => j.id).join('|');
+  if (sig === reviewSig && el.querySelector('.clips')) return;
+  reviewSig = sig;
+  renderReview(el);
 }
 
 /* ═══════════ 页面：直播关注（M4，对齐原版 Live Follow/LiverFollower）═══════════ */
@@ -1517,7 +1528,7 @@ async function refresh() {
   // 输入框与动态区分离：轮询只刷动态区，永不重建页面（否则投喂框里贴的链接会被清空）
   if (page === 'board') { if ($('#strip')) renderStrip(); const jc = $('#board-jobs'); if (jc) renderJobList(jc, jobs.slice(0, 8), true); }
   else if (page === 'tasks') { const c = $('#task-jobs'); if (c) renderJobList(c, jobs.filter(j => taskFilter === 'all' || j.kind === taskFilter), true); }
-  else if (page === 'review') { renderReview($('#page')); }
+  else if (page === 'review') { renderReviewDiff($('#page')); }
 	else if (page === 'livefollow') { refreshWatches(); }
   else if (page === 'barrage') { refreshBarrage(); }
   else if (page === 'labels') { refreshMatrix(); }
