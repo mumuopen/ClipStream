@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -437,17 +438,22 @@ func (d *Daemon) mergeAndQueue(segs []string, title, segDir string) (int, error)
 		return 0, fmt.Errorf("无有效段")
 	}
 
+	// seq header 跨段提取（注入用）：h264/AAC 的 sequence header（解码配置）只在流首
+	// 出现一次——B站长连接流只在首段有，裸段组缺它会 "No start code found" 视频不可解。
+	// 虎牙短连接流每段都自带 seq header（每条连接都是流首），注入重复无害（demuxer
+	// 遇 seq header 只是刷新解码配置）。取第一个能扫到的段的 seq header。
+	var inject [][]byte
+	for _, seg := range segs {
+		if tags := extractSeqHeaders(seg); len(tags) > 0 {
+			inject = tags
+			break
+		}
+	}
+
 	queued := 0
 	for i, grp := range groups {
-		if len(grp) == 1 {
-			// 单段组直接送原文件（无需合并）
-			if err := d.queueClip(grp[0], title); err == nil {
-				queued++
-			}
-			continue
-		}
 		out := filepath.Join(segDir, fmt.Sprintf("merged_%03d.flv", i))
-		n, err := concatFLV(grp, out)
+		n, err := concatFLV(grp, out, inject)
 		if err != nil {
 			_ = os.Remove(out)
 			return queued, fmt.Errorf("第 %d 组拼接失败: %w", i, err)
@@ -469,12 +475,17 @@ func (d *Daemon) mergeAndQueue(segs []string, title, segDir string) (int, error)
 // size(3B) + ts(3B) + tsExt(1B) + streamID(3B) + data(sizeB) + prevTagSize(4B)]*；
 // prevTagSize 应等于本 tag 总长 11+size，不匹配即流损坏，止损丢弃其后所有字节
 // （CDN 断流时段尾 tag 常写一半，其后本就无数据）。
-func concatFLV(files []string, out string) (int, error) {
+// 兼容历史裸段（旧版 StreamFLV 无头分段产物）：文件头非 "FLV" 时从 offset 0 按
+// tag 流扫描，产物头用合成标准头补齐。inject 为可选的 seq header tag（ts 已清零），
+// 写在产物 tag 序列最前，保证每组产物自解码配置（缺 seq header 的裸段组可正常 Cut）。
+func concatFLV(files []string, out string, inject [][]byte) (int, error) {
 	f, err := os.Create(out)
 	if err != nil {
 		return 0, err
 	}
 	defer f.Close()
+	// 合成标准头：FLV v1 + audio/video flags + headerSize=9（裸段产物的兜底头）
+	synthHeader := []byte{'F', 'L', 'V', 0x01, 0x05, 0, 0, 0, 9}
 	var zeros [4]byte
 	total := 0
 	for _, file := range files {
@@ -482,18 +493,37 @@ func concatFLV(files []string, out string) (int, error) {
 		if err != nil {
 			return total, err
 		}
-		if len(b) < 13 || string(b[:3]) != "FLV" {
-			continue // 非 FLV：跳过（宁少勿坏）
+		offset := 0
+		if len(b) >= 13 && string(b[:3]) == "FLV" {
+			offset = 13 // 标准 FLV：跳过 header(9) + prevTagSize0(4)
+		} else if len(b) < 15 {
+			continue // 太小不成 tag，跳过（宁少勿坏）
 		}
 		if total == 0 {
-			if _, err := f.Write(b[:9]); err != nil { // FLV header（version/flags 透传）
-				return total, err
+			if offset == 13 {
+				if _, err := f.Write(b[:9]); err != nil { // 透传原头
+					return total, err
+				}
+				if _, err := f.Write(zeros[:]); err != nil { // prevTagSize0
+					return total, err
+				}
+			} else {
+				if _, err := f.Write(synthHeader); err != nil {
+					return total, err
+				}
+				if _, err := f.Write(zeros[:]); err != nil {
+					return total, err
+				}
 			}
-			if _, err := f.Write(zeros[:]); err != nil { // prevTagSize0
-				return total, err
+			// 注入 seq header（裸段组缺解码配置时视频不可解；重复注入无害）
+			for _, tag := range inject {
+				if _, err := f.Write(tag); err != nil {
+					return total, err
+				}
+				total++
 			}
 		}
-		pos := 13
+		pos := offset
 		for pos+11 <= len(b) {
 			t := b[pos]
 			size := int(uint32(b[pos+1])<<16 | uint32(b[pos+2])<<8 | uint32(b[pos+3]))
@@ -514,6 +544,50 @@ func concatFLV(files []string, out string) (int, error) {
 		}
 	}
 	return total, nil
+}
+
+// extractSeqHeaders 从段文件头部提取 FLV sequence header tag（视频 AVC 解码配置/
+// 音频 AudioSpecificConfig）的原始字节，ts 清零供拼接产物注入。seq header 总在流首的
+// 前几个 tag 里，只读前 64KB 即可。识别：video tag 数据首字节 0x17（keyframe+AVC）
+// 且次字节 0x00（AVCSeqHeader）；audio tag 数据首字节高 4bit 0xA（AAC）且次字节 0x00。
+func extractSeqHeaders(path string) [][]byte {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	head := make([]byte, 64<<10)
+	n, _ := io.ReadFull(f, head)
+	b := head[:n]
+	if n < 15 || string(b[:3]) != "FLV" {
+		return nil
+	}
+	var out [][]byte
+	pos := 13
+	for pos+11 <= len(b) && len(out) < 2 {
+		size := int(uint32(b[pos+1])<<16 | uint32(b[pos+2])<<8 | uint32(b[pos+3]))
+		dataEnd := pos + 11 + size
+		if dataEnd+4 > len(b) {
+			break
+		}
+		t := b[pos]
+		var d0, d1 byte
+		if size >= 1 {
+			d0 = b[pos+11]
+		}
+		if size >= 2 {
+			d1 = b[pos+12]
+		}
+		isVideoSeq := t == 9 && d0 == 0x17 && d1 == 0x00
+		isAudioSeq := t == 8 && (d0&0xF0) == 0xA0 && d1 == 0x00
+		if isVideoSeq || isAudioSeq {
+			tag := append([]byte{}, b[pos:dataEnd+4]...)
+			tag[4], tag[5], tag[6], tag[7] = 0, 0, 0, 0 // ts 清零（注入产物开头）
+			out = append(out, tag)
+		}
+		pos = dataEnd + 4
+	}
+	return out
 }
 
 // queueClip 写切片队列文件（serve 侧 watcher 消费）；内容 = 分段路径 \t 标题

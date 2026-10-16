@@ -60,7 +60,7 @@ func TestConcatFLV(t *testing.T) {
 	makeFLV(t, b, 3, false, true) // 无 script + 截断尾
 
 	out := filepath.Join(dir, "merged.flv")
-	n, err := concatFLV([]string{a, b}, out)
+	n, err := concatFLV([]string{a, b}, out, nil)
 	if err != nil {
 		t.Fatalf("concatFLV: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestConcatFLVBrokenChain(t *testing.T) {
 	data[13+11+64] = 0xFF // prevTagSize 高位（tag data size=64，尾偏移 = 13+11+64）
 	os.WriteFile(a, data, 0o644)
 	out := filepath.Join(dir, "merged.flv")
-	n, err := concatFLV([]string{a}, out)
+	n, err := concatFLV([]string{a}, out, nil)
 	if err != nil {
 		t.Fatalf("concatFLV: %v", err)
 	}
@@ -113,9 +113,13 @@ func TestMergeAndQueueRealData(t *testing.T) {
 		t.Skip("跳过：设置 CLIPSTREAM_MERGE_E2E=1 用真实录制数据验证碎段合并")
 	}
 	const tempServer = "../../temp_server"
-	cases := []struct{ room, title string }{
-		{"660000_20261015_164249", "WE vs BRO 德玛西亚杯淘汰赛"},
-		{"998_20261015_164249", "新主播，双5090顶尖画质！"},
+	cases := []struct {
+		room, title string
+		minSegs     int // 碎段流要求 >=20；B站裸段重放仅要求 >=5
+	}{
+		{"660000_20261015_164249", "WE vs BRO 德玛西亚杯淘汰赛", 20},
+		{"998_20261015_164249", "新主播，双5090顶尖画质！", 20},
+		{"7734200_20261015_164248", "【直播】WE vs BRO", 5},
 	}
 	oldWD, _ := os.Getwd()
 	if err := os.Chdir(tempServer); err != nil {
@@ -131,11 +135,17 @@ func TestMergeAndQueueRealData(t *testing.T) {
 				t.Skipf("无录制目录 %s", dir)
 			}
 			cfg := &config.Config{DataDir: "./data"}
+			if os.Getenv("CLIPSTREAM_MERGE_DRY_QUEUE") == "1" {
+				// 干跑模式：queue 任务写临时目录（重放已有队列任务引用的文件时
+				// 避免重复入队），merged 产物路径不受影响（segDir 是显式参数）
+				cfg.DataDir = filepath.Join(os.TempDir(), "clipstream-merge-test-queue")
+				_ = os.MkdirAll(filepath.Join(cfg.DataDir, "live", "queue"), 0o755)
+			}
 			cfg.Live.SegmentSec = 600
 			d := &Daemon{cfg: cfg}
 			segs := listSegFiles(dir)
-			if len(segs) < 20 {
-				t.Fatalf("测试数据异常：仅 %d 段（不构成碎段流）", len(segs))
+			if len(segs) < c.minSegs {
+				t.Fatalf("测试数据异常：仅 %d 段（期望 >=%d）", len(segs), c.minSegs)
 			}
 			merged, err := d.mergeAndQueue(segs, c.title, dir)
 			if err != nil {
