@@ -63,7 +63,7 @@ type Pushme struct {
 }
 
 type Chrome struct {
-	Path string `yaml:"path"` // 本机 Chrome 可执行路径，留空则 rod 自动探测
+	Path string `yaml:"path"` // 浏览器路径（Chrome 或 Edge 均可），留空自动探测：Chrome → 系统 Edge；都找不到报错，绝不自动下载
 }
 
 type Live struct {

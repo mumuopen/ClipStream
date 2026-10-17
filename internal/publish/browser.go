@@ -12,32 +12,76 @@ import (
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/go-rod/stealth"
+	"golang.org/x/sys/windows/registry"
 )
 
 // BrowserOptions 浏览器启动参数
 type BrowserOptions struct {
 	UserDataDir string // 登录态目录（长期复用）
-	ChromePath  string // 本机 Chrome，留空自动探测
+	ChromePath  string // 显式指定的浏览器（Chrome 或 Edge 均可），留空自动探测
 	Headless    bool
 }
 
-// Launch 启动带登录态的 Chrome（rod + stealth 反检测）
+// detectBrowser 浏览器二进制定位：显式配置 → 本机 Chrome → Edge——找不到就
+// 报错，绝不静默下载（rod 默认行为：Bin 为空时自动下载 ~600MB Chromium 到
+// Roaming 目录，挂机完全无法接受；Edge 是 Chromium 内核（CDP 协议一致），
+// Windows 自带、服务器标配，优先级紧随 Chrome）。
+func detectBrowser(explicit string) (string, error) {
+	if explicit != "" {
+		if _, err := os.Stat(explicit); err != nil {
+			return "", fmt.Errorf("chrome.path 指定的浏览器不存在: %s", explicit)
+		}
+		return explicit, nil
+	}
+	// 注册表 App Paths（安装版 Chrome / Edge 都会登记）
+	for _, name := range []string{"chrome.exe", "msedge.exe"} {
+		for _, root := range []registry.Key{registry.LOCAL_MACHINE, registry.CURRENT_USER} {
+			k, err := registry.OpenKey(root, `SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\`+name, registry.QUERY_VALUE)
+			if err != nil {
+				continue
+			}
+			v, _, err := k.GetStringValue("")
+			k.Close()
+			if err == nil && v != "" {
+				if _, serr := os.Stat(v); serr == nil {
+					return v, nil
+				}
+			}
+		}
+	}
+	// 常见固定路径兜底（绿色版/精简系统）
+	for _, p := range []string{
+		`C:\Program Files\Google\Chrome\Application\chrome.exe`,
+		`C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`,
+		`C:\Program Files\Microsoft\Edge\Application\msedge.exe`,
+		`C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`,
+	} {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("未找到 Chromium 内核浏览器（Chrome / Edge 均未检出）：Windows 自带 Edge 即可工作，若被卸载请在 config.yaml 的 chrome.path 显式指定浏览器路径（系统不会自动下载浏览器）")
+}
+
+// Launch 启动带登录态的浏览器（rod + stealth 反检测；Chrome 或 Edge 均可）
 func Launch(ctx context.Context, opts BrowserOptions) (b *rod.Browser, cleanup func(), err error) {
+	bin, err := detectBrowser(opts.ChromePath)
+	if err != nil {
+		return nil, nil, err
+	}
 	l := launcher.New().
+		Bin(bin).
 		UserDataDir(opts.UserDataDir).
 		Headless(opts.Headless).
 		Set("disable-blink-features", "AutomationControlled").
 		Leakless(false) // leakless.exe 常被 Windows Defender 误杀导致启动失败；关闭后由 rod 进程句柄兜底回收
-	if opts.ChromePath != "" {
-		l = l.Bin(opts.ChromePath)
-	}
 	wsURL, err := l.Context(ctx).Launch()
 	if err != nil {
-		return nil, nil, fmt.Errorf("启动 Chrome 失败（可在 config.yaml 的 chrome.path 指定本机浏览器）: %w", err)
+		return nil, nil, fmt.Errorf("启动浏览器失败（%s，可在 config.yaml 的 chrome.path 换一个）: %w", filepath.Base(bin), err)
 	}
 	b = rod.New().Context(ctx).ControlURL(wsURL)
 	if err := b.Connect(); err != nil {
-		return nil, nil, fmt.Errorf("连接 Chrome 失败: %w", err)
+		return nil, nil, fmt.Errorf("连接浏览器失败: %w", err)
 	}
 	cleanup = func() { _ = b.Close() } // rod Close 会一并回收 launcher 拉起的进程
 	return b, cleanup, nil
