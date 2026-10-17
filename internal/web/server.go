@@ -238,10 +238,15 @@ func (s *Server) listAccounts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, as)
 }
 
-// accountCookieOK 登录态以磁盘为准：cookie 文件在 = 已登录
+// accountCookieOK 登录态以磁盘为准：B站=cookies.json 在；抖音=user-data-dir
+// 登录态目录存在（真实失效由发布时页面级检测并标 login_expired）
 func (s *Server) accountCookieOK(platform, name string) bool {
-	cookie := filepath.Join(publish.AccountDir(s.cfg.DataDir, platform, name), "cookies.json")
-	_, err := os.Stat(cookie)
+	dir := publish.AccountDir(s.cfg.DataDir, platform, name)
+	if platform == "douyin" {
+		fi, err := os.Stat(dir)
+		return err == nil && fi.IsDir() && !strings.Contains(filepath.Base(dir), "pending-")
+	}
+	_, err := os.Stat(filepath.Join(dir, "cookies.json"))
 	return err == nil
 }
 
@@ -397,24 +402,36 @@ func (s *Server) deletePool(w http.ResponseWriter, r *http.Request) {
 // 前端 <img>；落盘的 cookies.json 与 biliup LoginInfo 格式兼容（上传过渡期仍由
 // biliup 消费）。零子进程、零伪终端。
 
-// qrSession 一次扫码登录会话（原生 HTTP 轮询）。
-// preFillAccount 非空 = 既有账号重新登录（cookie 只回填不建账号）；
-// 空 = 新账号流程（登录成功后自动用 B站昵称建账号，用户零输入）。
+// qrSession 一次扫码登录会话。
+// bilibili：原生 HTTP 轮询（auth_code + poll）；douyin：rod headless 驱动
+// 登录页（dy 非空时）。account 非空 = 既有账号重新登录；空 = 新账号流程
+// （登录成功后自动用平台昵称建账号，用户零输入）。
 type qrSession struct {
 	id       string
 	platform string
 	account  string // 会话指定名（重新登录）；空则落账时自动起名
-	authCode string
+	authCode string // bilibili 轮询凭证
+	dy       *publish.DouyinLoginSession // 抖音 rod 会话（bilibili 为 nil）
 	startedAt time.Time
 	mu        sync.Mutex
-	state     string // waiting / ok / expired / error
+	state     string // booting / waiting / ok / expired / error
 	message   string
 	result    string // 落定的账号名（ok 时回填前端展示）
 }
 
-// loginQRStart 生成扫码登录二维码（当前仅 bilibili：抖音登录需要有头浏览器，
-// 不适合无人值守服务器）。account 可选：传=既有账号重新登录；不传=新账号
-// （登录成功后自动用 B站昵称建账号，用户零输入）。
+// sanitizeAccountName 平台昵称 → 合法账号名（目录名安全 + 长度限 32 rune）
+func sanitizeAccountName(nick string) string {
+	name := accountNameRe.ReplaceAllString(nick, "")
+	if len([]rune(name)) > 32 {
+		name = string([]rune(name)[:32])
+	}
+	return name
+}
+
+// loginQRStart 生成扫码登录二维码。account 可选：传=既有账号重新登录；不传
+// =新账号（登录成功后自动用平台昵称建账号，用户零输入）。
+// bilibili：原生 passport API（快，同步返回二维码）；douyin：rod headless 后台
+// 起浏览器（~10-30s），先返回 booting 态，二维码由 poll 阶段送达。
 func (s *Server) loginQRStart(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Platform string `json:"platform"`
@@ -424,14 +441,66 @@ func (s *Server) loginQRStart(w http.ResponseWriter, r *http.Request) {
 	if req.Platform == "" {
 		req.Platform = "bilibili"
 	}
-	if req.Platform != "bilibili" {
-		httpError(w, 400, "当前仅支持 bilibili 扫码登录（抖音需在装有浏览器的电脑上操作）")
+	if req.Platform != "bilibili" && req.Platform != "douyin" {
+		httpError(w, 400, "不支持的平台（支持 bilibili / douyin）")
 		return
 	}
 	if req.Account != "" && !accountNameRe.MatchString(req.Account) {
 		httpError(w, 400, "账号名仅限中英文数字、下划线、连字符")
 		return
 	}
+
+	if req.Platform == "douyin" {
+		sess := &qrSession{
+			id:        fmt.Sprintf("qr-%d-%s", time.Now().UnixNano(), strconv.Itoa(rand.Intn(1000))),
+			platform:  req.Platform,
+			account:   req.Account,
+			startedAt: time.Now(),
+			state:     "booting",
+			message:   "正在启动浏览器…",
+		}
+		s.loginMu.Lock()
+		s.qrSessions[sess.id] = sess
+		s.loginMu.Unlock()
+		go func() {
+			pc, err := publish.LoadPlatformConfig("douyin", s.cfg.Publish.PlatformsDir)
+			if err != nil {
+				sess.mu.Lock()
+				sess.state, sess.message = "error", "加载抖音配置失败: "+err.Error()
+				sess.mu.Unlock()
+				return
+			}
+			dy, err := publish.StartDouyinLogin(context.Background(), s.cfg, pc, req.Account)
+			if err != nil {
+				sess.mu.Lock()
+				sess.state, sess.message = "error", err.Error()
+				sess.mu.Unlock()
+				return
+			}
+			sess.mu.Lock()
+			sess.dy = dy
+			if sess.state == "booting" {
+				sess.state, sess.message = "waiting", "等待扫码确认"
+			}
+			sess.mu.Unlock()
+		}()
+		// 兜底自回收：用户关闭弹窗（前端停 poll）后无人触发超时，浏览器进程
+		// 会泄漏——8 分钟后无条件收尾（幂等：终态/已 Close 的会话不受影响）
+		time.AfterFunc(8*time.Minute, func() {
+			sess.mu.Lock()
+			defer sess.mu.Unlock()
+			if sess.state == "waiting" || sess.state == "booting" {
+				sess.state, sess.message = "expired", "二维码超时，请重新生成"
+			}
+			if sess.dy != nil {
+				sess.dy.Close()
+				sess.dy = nil
+			}
+		})
+		writeJSON(w, map[string]any{"id": sess.id, "account": req.Account, "qr": ""})
+		return
+	}
+
 	authCode, qrURL, err := biliapi.QRGenerate()
 	if err != nil {
 		httpError(w, 502, "B站二维码生成失败: "+err.Error())
@@ -482,14 +551,57 @@ func (s *Server) loginQRPoll(w http.ResponseWriter, r *http.Request) {
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
-	// 会话超 5 分钟判过期（B站二维码本身 ~3 分钟有效期）
-	if sess.state == "waiting" && time.Since(sess.startedAt) > 5*time.Minute {
+	// 会话超 8 分钟判过期（B站二维码 ~3 分钟；抖音浏览器慢启动 + 扫码窗口放宽）
+	if (sess.state == "waiting" || sess.state == "booting") && time.Since(sess.startedAt) > 8*time.Minute {
 		sess.state, sess.message = "expired", "二维码超时，请重新生成"
+		if sess.dy != nil {
+			sess.dy.Close() // 终态释放浏览器
+			sess.dy = nil
+		}
 	}
-	if sess.state != "waiting" { // 终态缓存（ok/expired/error 不再打 B站）
+	if sess.state != "waiting" && sess.state != "booting" { // 终态缓存，不再外呼
 		writeJSON(w, map[string]any{"state": sess.state, "message": sess.message, "account": sess.result})
 		return
 	}
+
+	// ── 抖音（rod 会话）──
+	if sess.platform == "douyin" {
+		if sess.dy == nil { // 浏览器仍在后台启动（启动失败已置 error，不会到这）
+			writeJSON(w, map[string]any{"state": sess.state, "message": sess.message})
+			return
+		}
+		if !sess.dy.Ready() {
+			sess.state, sess.message = "error", "浏览器会话异常退出（Chrome 崩溃/被系统回收），请重试"
+			sess.dy.Close()
+			sess.dy = nil
+			writeJSON(w, map[string]any{"state": sess.state, "message": sess.message})
+			return
+		}
+		if !sess.dy.LoggedIn() {
+			writeJSON(w, map[string]any{"state": "waiting", "message": "等待扫码确认", "qr": sess.dy.LoginQR()})
+			return
+		}
+		nick := sess.dy.Nickname()
+		name := sess.account
+		if name == "" {
+			// 新账号：关闭浏览器（释放目录锁）→ pending 目录 rename 为昵称目录
+			sess.dy.Close()
+			_, name, _ = sess.dy.Settle(nick, sanitizeAccountName)
+		} else {
+			sess.dy.Close()
+		}
+		sess.dy = nil
+		if name == "" {
+			name = "douyin_" + time.Now().Format("0102-1504")
+		}
+		s.upsertAccount("douyin", name)
+		sess.result = name
+		sess.state, sess.message = "ok", "登录成功："+name
+		writeJSON(w, map[string]any{"state": sess.state, "message": sess.message, "account": sess.result})
+		return
+	}
+
+	// ── B站（原生 passport API）──
 	st, err := biliapi.QRPoll(sess.authCode)
 	if err != nil {
 		sess.state, sess.message = "error", err.Error()
@@ -543,24 +655,23 @@ func (s *Server) settleBiliLogin(sess *qrSession, info *biliapi.TVLoginInfo) (st
 	}
 	// 新账号入库存档（同名已存在则只刷登录态，不重复建）
 	if sess.account == "" {
-		if as, lerr := s.store.ListAccounts(); lerr == nil {
-			dup := false
-			for _, a := range as {
-				if a.Platform == "bilibili" && a.Name == name {
-					dup = true
-					break
-				}
-			}
-			if !dup {
-				acc := &store.Account{Platform: "bilibili", Name: name, Priority: 0}
-				if _, cerr := s.store.CreateAccount(acc); cerr != nil {
-					return name, nil // 账号建档失败不回滚登录态（cookie 已在，功能可用）
-				}
-			}
-		}
+		s.upsertAccount("bilibili", name)
 	}
 	_ = s.store.SetAccountStatus("bilibili", name, "ok")
 	return name, nil
+}
+
+// upsertAccount 新账号入库存档（同名平台账号已存在则跳过，不重复建）
+func (s *Server) upsertAccount(platform, name string) {
+	if as, lerr := s.store.ListAccounts(); lerr == nil {
+		for _, a := range as {
+			if a.Platform == platform && a.Name == name {
+				return
+			}
+		}
+	}
+	acc := &store.Account{Platform: platform, Name: name, Priority: 0}
+	_, _ = s.store.CreateAccount(acc)
 }
 
 // ── 直播关注 API ──

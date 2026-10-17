@@ -13,6 +13,10 @@ success_url_contains: "creator.douyin.com/creator-micro/content/manage"
 login_markers: ["扫码登录", "手机号登录"]
 # 登录成功标志（URL 含此片段）
 logged_in_url_contains: "creator.douyin.com/creator-micro"
+# Web 扫码登录：二维码 img 选择器（src 即 data URL，直接回传前端）
+login_qr_img: "#animate_qrcode_container img"
+# 登录成功后取昵称的候选选择器（逗号分隔，全 miss 则用 douyin_<时间> 自动命名）
+nickname_selectors: "[class*='userInfo'] [class*='name'], [class*='accountInfo'] [class*='name'], [class*='nickname']"
 
 selectors:
   # 文件上传 input（多个逗号分隔依次尝试）

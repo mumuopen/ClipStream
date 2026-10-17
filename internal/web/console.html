@@ -360,13 +360,13 @@
 <!-- 扫码登录弹窗（B站原生二维码） -->
 <div id="login-bg" class="modal-bg" onclick="if(event.target===this)closeLoginModal()">
   <div class="modal" style="max-width:420px">
-    <h3 id="login-title">扫码登录 B站</h3>
+    <h3 id="login-title">扫码登录</h3>
     <div id="login-meta" class="mmeta"></div>
     <div id="login-qr-wrap" style="display:flex;justify-content:center;margin:14px 0">
       <img id="login-img" alt="登录二维码" style="max-width:280px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px">
     </div>
     <div class="hint" id="login-state" style="margin:6px 0;text-align:center">生成二维码中…</div>
-    <div class="hint" style="text-align:center">打开手机 B站 App → 首页右上角扫一扫</div>
+    <div class="hint" id="login-scan-tip" style="text-align:center">打开手机 App 扫一扫</div>
     <div class="modal-actions">
       <button class="ghost" onclick="startLogin(loginCtx.platform, loginCtx.account)">刷新二维码</button>
       <button class="ghost" onclick="closeLoginModal()">关闭</button>
@@ -451,7 +451,7 @@ const I18N = {
     'barrage_min30': '近 30 分', 'barrage_min120': '近 2 小时', 'barrage_min360': '近 6 小时',
     /* ── 发布中心 ── */
     m5_acc: '发布账号', m5_acc_hint: '定时发布时自动选用：标签匹配 + 高优先级先用',
-    m5_acc_qr_btn: '＋ 扫码添加 B站账号', m5_acc_qr_hint: '手机 B站 App 扫码即完成添加与登录，账号名自动取B站昵称，无需填写',
+    m5_acc_qr_btn: '＋ 扫码添加 B站账号', m5_acc_qr_dy_btn: '＋ 扫码添加 抖音账号', m5_acc_qr_hint: '手机 App 扫码即完成添加与登录（B站昵称自动取名），抖音首次会启动浏览器稍候片刻',
     m5_acc_qr_new: '新账号（扫码后自动命名）',
     m5_plat: '平台', m5_name: '账号名', m5_labels: '内容标签', m5_labels_ph: '游戏,高燃,赛事（逗号分隔，选填）', m5_prio: '优先级',
     m5_acc_name_ph: '如：电竞主号（将作为登录账号名）',
@@ -518,7 +518,7 @@ const I18N = {
     barrage_total: 'Total', barrage_peak: 'Peak', barrage_rate: 'count', barrage_per5: 'per 5s',
     'barrage_min30': '30 min', 'barrage_min120': '2 hours', 'barrage_min360': '6 hours',
     m5_acc: 'Publish Accounts', m5_acc_hint: 'auto-picked at publish: label match + priority',
-    m5_acc_qr_btn: '＋ Add Bilibili account (scan QR)', m5_acc_qr_hint: 'Scan with the bilibili App — account auto-named from your nickname, zero typing',
+    m5_acc_qr_btn: '＋ Add Bilibili account (scan QR)', m5_acc_qr_dy_btn: '＋ Add Douyin account (scan QR)', m5_acc_qr_hint: 'Scan with the App — bilibili accounts auto-named from nickname; douyin launches a browser first',
     m5_acc_qr_new: 'new account (auto-named after scan)',
     m5_plat: 'Platform', m5_name: 'Account name', m5_labels: 'Content labels', m5_labels_ph: 'game,hype,tournament (comma-sep, optional)', m5_prio: 'Priority',
     m5_acc_name_ph: 'e.g. esports-main (used as login name)',
@@ -1060,7 +1060,10 @@ function renderLabels(el) {
     <div class="m5-grid">
       <div class="m5-panel">
         <h4>${T('m5_acc')} <span class="hint">${T('m5_acc_hint')}</span></h4>
-        <button class="b-login" style="width:100%;margin-bottom:12px;padding:10px;font-size:14px" onclick="startLogin('bilibili','')">${T('m5_acc_qr_btn')}</button>
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <button class="b-login" style="flex:1;padding:10px;font-size:14px" onclick="startLogin('bilibili','')">${T('m5_acc_qr_btn')}</button>
+          <button class="b-login" style="flex:1;padding:10px;font-size:14px" onclick="startLogin('douyin','')">${T('m5_acc_qr_dy_btn')}</button>
+        </div>
         <div class="hint" style="margin-bottom:12px">${T('m5_acc_qr_hint')}</div>
         <div class="acc-list" id="acc-list"></div>
       </div>
@@ -1113,6 +1116,7 @@ function renderMatrixLists() {
         <span class="acc-star" title="${T('m5_prio')}">${'★'.repeat(Math.max(1, Math.min(5, Math.ceil((a.priority || 0) / 2))))}</span>
         <span class="badge ${state}">${label}</span>
         ${a.platform === 'bilibili' && needLogin ? `<button class="b-login" onclick="startLogin('${esc(a.platform)}','${esc(a.name)}')">${T('m5_login_btn')}</button>` : ''}
+        ${a.platform === 'douyin' && needLogin ? `<button class="b-login" onclick="startLogin('douyin','${esc(a.name)}')">${T('m5_login_btn')}</button>` : ''}
         <button class="del" title="${T('btn_del')}" onclick="delAccount(${a.id})">✕</button></div>
       <div class="acc-tags">${tagChips(a.labels)}</div>
     </div>`;
@@ -1436,12 +1440,16 @@ async function submitPool() {
 /* ═══════════ 扫码登录（B站，biliup 二维码流到弹窗）═══════════ */
 async function startLogin(platform, account) {
   try {
-    // account 传空 = 新账号流程：登录成功后自动用 B站昵称建账号（服务端降账）
+    // account 传空 = 新账号流程：登录成功后自动用平台昵称建账号（服务端降账）
     const res = await fetchJSON('/api/login/qr/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform, account: account || '' }) });
     loginCtx = { ...res, platform, account: account || '' };
-    $('#login-meta').textContent = account ? ('B站 · ' + account) : 'B站 · ' + T('m5_acc_qr_new');
+    const platCN = platform === 'douyin' ? '抖音' : 'B站';
+    $('#login-title').textContent = '扫码登录 ' + platCN;
+    $('#login-meta').textContent = account ? (platCN + ' · ' + account) : (platCN + ' · ' + T('m5_acc_qr_new'));
+    $('#login-scan-tip').textContent = platform === 'douyin' ? '打开抖音 App → 首页右上角扫一扫' : '打开 B站 App → 首页右上角扫一扫';
     $('#login-state').textContent = T('lg_running');
-    $('#login-img').src = res.qr; // data URL（Go 原生渲染 PNG）
+    $('#login-img').src = res.qr || ''; // B站同步返回；抖音 booting 后由 poll 送二维码
+    $('#login-img').style.visibility = res.qr ? 'visible' : 'hidden';
     $('#login-bg').style.display = 'flex';
     if (loginTimer) clearInterval(loginTimer);
     loginTimer = setInterval(pollLogin, 1500);
@@ -1453,13 +1461,19 @@ async function pollLogin() {
   let st;
   try { st = await fetchJSON('/api/login/qr/poll?id=' + encodeURIComponent(loginCtx.id)); }
   catch (e) { stopLoginTimer(); $('#login-state').textContent = T('lg_fail'); return; }
-  if (st.state === 'waiting') { $('#login-state').textContent = st.message || T('lg_running'); return; }
+  // 抖音二维码动态到达/刷新（含过期自动换新）；B站首次已带码不重复设
+  if (st.qr) {
+    const img = $('#login-img');
+    if (img.src !== st.qr) img.src = st.qr;
+    img.style.visibility = 'visible';
+  }
+  if (st.state === 'waiting' || st.state === 'booting') { $('#login-state').textContent = st.message || T('lg_running'); return; }
   stopLoginTimer();
   if (st.state === 'expired') {
     $('#login-state').textContent = st.message + '（点「刷新二维码」重试）';
     return;
   }
-  if (st.state === 'error') { $('#login-state').textContent = (st.message || '').slice(0, 120); return; }
+  if (st.state === 'error') { $('#login-state').textContent = (st.message || '').slice(0, 160); return; }
   $('#login-state').textContent = st.message || T('lg_ok');
   if (st.state === 'ok') {
     refreshMatrix();
