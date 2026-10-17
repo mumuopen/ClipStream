@@ -1,125 +1,185 @@
-# ClipStream
+<div align="center">
 
-> One pipeline for live recording · smart clipping · download & port · translate & dub · multi-platform auto-publishing.
+# ⚡ ClipStream
 
-**Credits**: This project is a **Go rewrite & fusion** of [Geniusay/ChopperBot](https://github.com/Geniusay/ChopperBot) (Apache-2.0, a Java live-clip robot). Module map (Board / Task Center / Live Follow / Barrage Curve / Label Manage ...), dual-signal highlight ideas, and multi-platform publishing concepts are inspired by the original. The original source is for study only and is **not** distributed with this repo.
+### Stream in, videos out. · 直播流进，成片自动出。
 
-## Screenshots
+**Live-watch detection → auto-record → danmaku × speech highlight mining → smart clipping → translate & dub → scheduled multi-account publishing → phone battle reports**
 
-| Dashboard | Live Follow (auto record) | Barrage Curve |
-|---|---|---|
+[English] · [中文](README.md)
+
+[![Release](https://img.shields.io/github/v/release/mumuopen/ClipStream?color=2ea44f&label=Release)](https://github.com/mumuopen/ClipStream/releases)
+[![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Platform](https://img.shields.io/badge/platforms-Bilibili%20%C2%B7%20Huya%20%C2%B7%20Douyin%20(planned)-orange)](#️-roadmap)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue)](LICENSE)
+[![inspired by ChopperBot](https://img.shields.io/badge/inspired%20by-ChopperBot-ff69b4)](https://github.com/Geniusay/ChopperBot)
+
+</div>
+
+---
+
+## 🎬 The problem, solved by one pipeline
+
+The 4 a.m. comeback, the moment chat exploded with five thousand barrages — by next morning it's already clipped, subtitled, published, and the report is on your phone.
+
+That's ClipStream: **an unattended live-clipping factory**. Recording starts when the stream starts, cutting starts when the stream ends. AI picks only the segments where chat heat and commentary peak, the review gate blocks the flops, the pool publishes off-peak on schedule — nobody needs to sit at the machine.
+
+A Go rewrite inspired by [ChopperBot](https://github.com/Geniusay/ChopperBot): single pure-Go binary, no cgo, hardened on a production Windows server.
+
+---
+
+## ✨ Feature Matrix
+
+| | Capability | Notes |
+|:---:|---|---|
+| 🎥 | **Live chain** | Bilibili + Huya detection · segmented recording · reconnect · stale-session auto-close · preview-state filtering |
+| 💬 | **Danmaku signal** | Dual-platform WebSocket collection · 5s density buckets · live curve in console |
+| 🎯 | **Dual-signal highlights** | whisper offline ASR × barrage interaction peaks → LLM picks 20-60s segments; falls back to barrage-peak clipping without an LLM |
+| 🔪 | **Frame-accurate cutting** | FLV tag-level concat · timestamp normalization across merged segments · measured cut length matches annotation exactly |
+| 📖 | **Subtitles** | LLM translation + bilingual/Chinese burn-in |
+| 🎙️ | **AI narration** | edge-tts synthesis · speed-matched alignment |
+| 🤖 | **Unattended loop** | 3-tier auto-review gate → pool → label-routed multi-account scheduled publishing → PushMe phone reports |
+| 📱 | **Scan & done** | Bilibili + Douyin web QR login — **zero input, zero CLI**; nicknames auto-fetched, tags auto-generated from titles |
+| 🌐 | **Console** | Bilingual Web UI · single URL · dual-platform QR modal |
+| 🛡️ | **Server-grade hardening** | Fully isolated engine subprocesses (survive RDP drops / console closes / logoffs) · task recovery after crashes · 3-tier disk cleanup |
+
+> 🔭 Additional platforms are scheduled via [Issues](https://github.com/mumuopen/ClipStream/issues).
+
+---
+
+## 🔄 Pipeline at a glance
+
+```mermaid
+flowchart LR
+    A["Live detection<br/>Bilibili · Huya"] --> B["Segmented recording<br/>reconnect · stale close"]
+    B --> C["Dual-signal analysis<br/>whisper ASR × barrage heat"]
+    C --> D["LLM highlight<br/>20-60s precision cut"]
+    D --> E["Processing<br/>bilingual subs · AI dub"]
+    E --> F["Review gate<br/>reject / human / auto-pass"]
+    F --> G["Content pool<br/>off-peak schedule"]
+    G --> H["Multi-account routing<br/>label match · priority"]
+    H --> I["PushMe report<br/>straight to phone"]
+```
+
+---
+
+## 🆕 Highlights in v0.5.0
+
+- **Zero-input QR login on both platforms** — one click, one scan, account auto-created with nickname and tags pulled automatically
+- **Unattended-process immunity** (0xC000013A production incident) — RDP disconnects, console closes and logoffs no longer kill engine subprocesses; reproduced & verified on a real server
+- **Cut precision** — timestamp normalization unifies the three axes on merged streams; the "30s annotated, 0.9s cut" class of bugs is fixed
+- **Task recovery across restarts** — queue auto-resumes after crashes or power loss
+
+Full history in [CHANGELOG](CHANGELOG.md) (Chinese).
+
+---
+
+## 🖼️ Screenshots
+
+| Dashboard | Live Follow | Barrage Curve |
+|:---:|:---:|:---:|
 | ![board](docs/screenshots/shot-board.png) | ![live](docs/screenshots/shot-livefollow.png) | ![barrage](docs/screenshots/shot-barrage.png) |
 
-The console UI supports **English / Chinese** (switch in Settings, choice is remembered):
+| Review | Publish Center | 中文 UI 🇨🇳 |
+|:---:|:---:|:---:|
+| ![review](docs/screenshots/shot-review.png) | ![labels](docs/screenshots/shot-labels.png) | ![board](docs/screenshots/shot-board.png) |
 
-![board-en](docs/screenshots/shot-board-en.png)
+---
 
-| Review (human gate before publish) | Label Matrix (accounts & scheduling) |
-|---|---|
-| ![review](docs/screenshots/shot-review.png) | ![labels](docs/screenshots/shot-labels.png) |
+## 🚀 Quick Start
 
-## What it does
+### Option A: Deploy package (recommended · zero environment)
 
-A **live → clip → publish** automation pipeline:
+> For unattended servers: unzip → double-click the launcher → done. Engines bundled; no Go/Python/Node required.
 
+```text
+ClipStream deploy package
+├── bin\clipstream.exe            main program (web console)
+├── bin\clipstream-daemon.exe     recording daemon
+├── engines\                      yt-dlp / ffmpeg / whisper ... all bundled
+├── config.yaml                   pre-filled template
+└── start-unattended.cmd          double-click to run (self-detaching processes)
 ```
-live-detection → auto-record(segments) → danmaku-density buckets → highlight(ASR + barrage hotspots)
-              → cut → review gate (auto or human) → content pool → off-peak publish to Bilibili (biliup)
-              → push notification
-```
 
-Plus a **port/download chain**: any video URL (YouTube / Bilibili / Douyin ...) → download → transcript → highlight → clip → subtitle/dub → review → publish.
+Then open `http://127.0.0.1:8899`: paste a room ID in **Live Follow** → fill your LLM key in **Settings** → scan a QR code in **Publish Center**.
 
-## Architecture
-
-![architecture](docs/architecture.png)
-
-- Pure Go, single binary; SQLite via `modernc.org/sqlite` (no cgo).
-- **Process separation**: the live-recording daemon runs apart from the Web/pipeline process (avoids a Windows FLV streaming I/O pitfall).
-- **All engines external with graceful degradation**: no whisper → skip ASR; no LLM → equal-chunk / barrage-hotspot slicing.
-- **Unattended loop**: tiered auto-review gates → content pool → off-peak scheduling (platform × label account routing) → publish → PushMe notify & daily digest.
-- Danmaku: Bilibili WebSocket (wbi + uid=0), Huya va-node subscription; both stored as 5s density buckets.
-
-> Diagram source: `docs/architecture.drawio` (editable at [app.diagrams.net](https://app.diagrams.net)).
-
-## Current support
-
-| Capability | Status |
-|---|---|
-| Download / Transcribe / Highlight / Clip / Review | ✅ |
-| Live recording (**Bilibili + Huya**: detection, segments, reconnect) | ✅ |
-| Danmaku density (Bilibili + Huya, 5s buckets, live curve) | ✅ |
-| Dual-signal highlight (ASR + barrage hotspots → LLM selection) | ✅ |
-| Subtitles (LLM translate + burn-in) / dub (edge-tts narration) | ✅ |
-| Publish (**Bilibili**: biliup upload; auto/human review gates) | ✅ |
-| Matrix accounts / off-peak publish scheduling (content pool + account routing) | ✅ (Bilibili) |
-
-Other platforms (Douyin / Xiaohongshu / Kuaishou) are **not yet wired**; they will be scheduled via Issues.
-
-## Quick start
+### Option B: Build from source
 
 ```bash
-# 1. Go 1.22+; optional engines (auto-degrade when missing):
-#    yt-dlp / ffmpeg / ffprobe / whisper.cpp(ASR) / biliup(Bilibili publish) / LLM(DeepSeek etc., OpenAI-compatible)
-
-# 2. Build
+# Requires Go 1.21+; engines optional (graceful degradation when missing)
 go build -o bin/clipstream.exe ./cmd/clipstream
 go build -o bin/clipstream-daemon.exe ./cmd/clipstream-daemon
 
-# 3. Init
-cp config.example.yaml config.yaml    # fill engine paths & LLM key as needed
-./bin/clipstream init
+cp config.example.yaml config.yaml   # fill engine paths & LLM key
+./bin/clipstream init                 # engine health check
+./bin/clipstream serve                # console → http://127.0.0.1:8899
+./bin/clipstream-daemon               # live daemon (separate process)
 
-# 4. Console
-./bin/clipstream serve                # http://127.0.0.1:8899
-
-# 5. Live-record daemon (separate process from serve)
-./bin/clipstream-daemon
-
-# 6. Run one task from CLI (URL or local file)
-./bin/clipstream run -i "https://www.youtube.com/watch?v=..."
+# One-shot CLI: paste a video URL, run the full pipeline
+./bin/clipstream run -i "https://www.bilibili.com/video/BVxxxx"
 ```
 
-Console pages: Dashboard / Tasks / Review / Live Follow / Barrage Curve / Label Matrix / Settings.
+---
 
-## Notes
+## 🏗️ Architecture
 
-- **Review gate, your choice**: default is the human Review page; set `auto_review.enabled: true` in `config.yaml` for unattended mode — tiered gates (hard rejects / quality-hold / auto-pool at score ≥ 60).
-- **Bilibili login**: `./bin/clipstream login --platform bilibili` (biliup QR in a terminal window). Credentials stay under `data/accounts/` (never committed).
-- **Live recording**: add a room on the Live Follow page → daemon auto-detects/records/auto-clips when the stream ends.
-- **LLM optional**: without an `api_key`, highlight falls back to equal-chunk or barrage-hotspot slicing; the whole pipeline still runs.
-- **Config**: `config.yaml` is gitignored (secrets never committed).
+![architecture](docs/architecture.png)
 
-## Tech notes
+- **Pure Go · single binary**: cgo-free SQLite (modernc.org/sqlite), production-hardened on Windows Server
+- **Process separation**: recorder daemon and web/pipeline run independently, avoiding parent-child FLV streaming IO pitfalls
+- **Pluggable engines · graceful degradation**: no whisper → skip ASR; no LLM → barrage-peak clipping; no biliup → review-only
+- **Unattended loop**: review gate → pool → off-peak scheduling (platform × label account routing) → publish → PushMe reports
 
-- Pure Go, single binary; SQLite via `modernc.org/sqlite` (no cgo).
-- All engines are external: yt-dlp / ffmpeg / whisper.cpp / biliup / LLM, each with graceful degradation.
-- The recording daemon runs as a **separate process** from the Web console, avoiding a Windows pitfall where child processes spawned from a heavy parent cannot do FLV streaming I/O.
-- Danmaku: Bilibili via WebSocket (wbi signature + uid=0 auth); Huya via va-edge-node subscription protocol (baseinfo + live/chat channels); both stored as 5s density buckets.
-- Dual-signal highlight: ASR transcript (LLM semantics) + danmaku density (real-time audience peaks); without an LLM, barrage hotspots become clips directly.
+> Source file `docs/architecture.drawio`, editable at [app.diagrams.net](https://app.diagrams.net).
 
-## Layout
+---
 
+## 📂 Layout
+
+```text
+├── cmd/clipstream           main program (serve / run / init / login / status)
+├── cmd/clipstream-daemon    live-recording daemon
+├── internal/biliapi         Bilibili login protocol (native Go, following biliup-rs MIT)
+├── internal/config          configuration
+├── internal/core            job model & event bus
+├── internal/detach / wexec  process isolation (DETACHED engines · self-detaching services)
+├── internal/engine          engine adapters
+├── internal/live            live chain: Bilibili / Huya
+├── internal/pipeline        five pipelines (clips / publish / subs / dub / live)
+├── internal/publish         publishing & login sessions (Bilibili biliup / Douyin rod)
+├── internal/store           SQLite storage
+├── internal/web             console (embedded single-file)
+└── configs/platforms        platform configs
 ```
-├── cmd/clipstream          main (serve/run/init/login/status)
-├── cmd/clipstream-daemon   live recording daemon
-├── internal/config         config (config.example.yaml)
-├── internal/core           job model & event bus
-├── internal/engine         yt-dlp / ffmpeg / whisper / LLM / biliup adapters
-├── internal/live           live chain: Bilibili/Huya API, recording, danmaku
-├── internal/pipeline       pipelines (clips/publish/subtitle/dub/live)
-├── internal/store          SQLite (jobs/watches/barrage/accounts/schedules)
-├── internal/web            console (single-page embed)
-└── configs/platforms       platform adapter selectors
-```
 
-## License
+---
 
-[Apache-2.0](LICENSE).
+## 🗺️ Roadmap
 
-This project is an **independent rewrite** of ChopperBot: the code is brand-new Go, inspired by [Geniusay/ChopperBot](https://github.com/Geniusay/ChopperBot) (Apache-2.0) — thanks to the original author. Third-party engines/libs keep their own licenses (biliup / whisper.cpp / yt-dlp / rod ...).
+- [x] **v0.5.0** zero-input QR login · unattended immunity · cut precision · task recovery · 3-section console
+- [ ] **Phase 2** — native-Go Bilibili upload (retire biliup.exe), zero external binaries end to end
+- [ ] Douyin / Xiaohongshu / Kuaishou publishing
+- [ ] More highlight strategies (voice emotion / scene detection); multi-recorder horizontal scaling
 
-## Feedback
+---
 
-- Bugs / feature requests: welcome via GitHub **Issues** (new platform adapters, new engines, new publish channels...).
-- Maintained on a best-effort basis; no delivery schedule is guaranteed.
+## 📖 Docs & Feedback
+
+- [中文 README](README.md) · [CHANGELOG](CHANGELOG.md) · [Config example](config.example.yaml)
+- Bugs & feature requests: open an [Issue](https://github.com/mumuopen/ClipStream/issues) (platform integrations, engines, publish channels…) · PRs welcome
+
+## 🙏 Credits
+
+A **standalone Go rewrite** inspired by [Geniusay/ChopperBot](https://github.com/Geniusay/ChopperBot) (Apache-2.0). The original source is for study only and is **not** distributed with this repo. Bilibili login protocol follows [biliup-rs](https://github.com/biliup/biliup-rs) (MIT). All bundled engines/libraries remain under their own licenses.
+
+---
+
+<div align="center">
+
+**"Stream in, videos out."**
+
+⭐ Star if it helps
+
+</div>
+
+> AI生成
