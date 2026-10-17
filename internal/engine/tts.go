@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"chopperbot/internal/wexec"
 )
 
 // EdgeTTS 微软 edge-tts 引擎（子进程，联网合成，免费音色）
@@ -51,7 +52,7 @@ func (e *EdgeTTS) Synthesize(ctx context.Context, text, voice, out string) error
 		return err
 	}
 	args := []string{"--voice", NormalizeVoice(voice), "--text", text, "--write-media", out}
-	if b, err := exec.CommandContext(ctx, bin, args...).CombinedOutput(); err != nil {
+	if b, err := wexec.Command(ctx, bin, args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("edge-tts 合成失败: %v\n%s", err, tail(b, 1000))
 	}
 	if _, err := os.Stat(out); err != nil {
@@ -91,7 +92,7 @@ func (f *FFMPEG) FitAudioToDuration(ctx context.Context, in, out string, target 
 		"-c:a", "pcm_s16le",
 		out,
 	}
-	if b, err := exec.CommandContext(ctx, f.Bin, args...).CombinedOutput(); err != nil {
+	if b, err := wexec.Command(ctx, f.Bin, args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("音轨时长对齐失败: %v\n%s", err, tail(b, 1000))
 	}
 	return nil
@@ -122,7 +123,7 @@ func (f *FFMPEG) ReplaceAudio(ctx context.Context, video, audioWav, out string, 
 		"-shortest",
 		out,
 	)
-	if b, err := exec.CommandContext(ctx, f.Bin, args...).CombinedOutput(); err != nil {
+	if b, err := wexec.Command(ctx, f.Bin, args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("替换音轨失败: %v\n%s", err, tail(b, 1500))
 	}
 	return nil

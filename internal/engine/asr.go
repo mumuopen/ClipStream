@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"chopperbot/internal/wexec"
 )
 
 // WhisperTranscriber whisper.cpp 的 whisper-cli 引擎
@@ -53,7 +55,7 @@ func (w *WhisperTranscriber) Transcribe(ctx context.Context, media, workDir stri
 		"-of", filepath.Join(workDir, "whisper"),
 		"-np",
 	}
-	if b, err := exec.CommandContext(ctx, w.Bin, args...).CombinedOutput(); err != nil {
+	if b, err := wexec.Command(ctx, w.Bin, args...).CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("whisper 转写失败: %v\n%s", err, tail(b, 2000))
 	}
 	data, err := os.ReadFile(filepath.Join(workDir, "whisper.json"))

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"chopperbot/internal/config"
+	"chopperbot/internal/detach"
 	"chopperbot/internal/live"
 	"chopperbot/internal/notify"
 	"chopperbot/internal/store"
@@ -36,6 +37,11 @@ func main() {
 	var cfgPath string
 	flag.StringVar(&cfgPath, "config", "config.yaml", "配置文件路径")
 	flag.Parse()
+
+	// 无人值守自脱离：RDP 断开/注销/误关黑窗不再杀录制守护（0xC000013A 实战教训）
+	if detach.Self("daemon.log") {
+		return
+	}
 
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
@@ -52,8 +58,11 @@ func main() {
 	defer st.Close()
 
 	// 单实例锁：防止误起多个 daemon 重复录制。
-	// 残留锁处理：锁文件在但心跳已陈旧（>3 个轮询间隔）说明持有者已死，
-	// 自动接管删除；心跳新鲜则视为有活实例，退出。
+	// 残留锁处理：锁文件在但持有者已死则接管。旧版只看心跳新鲜度——持有者被
+	// 强杀（断电/任务管理器/0xC000013A 类事件）后心跳仍新鲜，重启被"已有实例"
+	// 拒绝几分钟（本地实测踩坑），需手动删心跳文件。现锁里写了 PID，复核两步：
+	// ①心跳陈旧 → 接管；②心跳新鲜但锁内 PID 已不是活着的 clipstream-daemon →
+	// 同样接管（PID 存活详见 winlock.go / unixlock.go）。
 	lockPath := filepath.Join(cfg.DataDir, "live", "daemon.lock")
 	if _, err := os.Stat(lockPath); err == nil {
 		stale := true
@@ -63,7 +72,18 @@ func main() {
 			}
 		}
 		if !stale {
-			log.Fatalf("已有 daemon 实例在运行（心跳新鲜）；如需重启先停掉旧实例")
+			if raw, rerr := os.ReadFile(lockPath); rerr == nil {
+				if oldPID, perr := strconv.Atoi(strings.TrimSpace(string(raw))); perr == nil && oldPID > 0 && oldPID != os.Getpid() {
+					if daemonAlive(oldPID) {
+						log.Fatalf("已有 daemon 实例在运行（PID %d，心跳新鲜）；如需重启先停掉旧实例", oldPID)
+					}
+					fmt.Printf("接管残留锁：锁内 PID %d 进程已不存在（上次被强杀）\n", oldPID)
+					stale = true
+				}
+			}
+			if !stale {
+				log.Fatalf("已有 daemon 实例在运行（心跳新鲜）；如需重启先停掉旧实例")
+			}
 		}
 		_ = os.Remove(lockPath) // 残留锁接管
 		fmt.Println("接管残留锁：上次 daemon 已退出")

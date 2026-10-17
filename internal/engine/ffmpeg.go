@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"chopperbot/internal/wexec"
 )
 
 // FFMPEG ffmpeg/ffprobe 引擎
@@ -25,7 +26,7 @@ func (f *FFMPEG) probeBin() string {
 
 // ProbeDuration 获取视频时长（秒）
 func (f *FFMPEG) ProbeDuration(ctx context.Context, path string) (float64, error) {
-	out, err := exec.CommandContext(ctx, f.probeBin(),
+	out, err := wexec.Command(ctx, f.probeBin(),
 		"-v", "error", "-show_entries", "format=duration",
 		"-of", "default=noprint_wrappers=1:nokey=1", path).Output()
 	if err != nil {
@@ -52,7 +53,7 @@ func (f *FFMPEG) Cut(ctx context.Context, in, out string, start, end float64) er
 		"-c:a", "aac", "-movflags", "+faststart",
 		out,
 	}
-	if b, err := exec.CommandContext(ctx, f.Bin, args...).CombinedOutput(); err != nil {
+	if b, err := wexec.Command(ctx, f.Bin, args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("ffmpeg 切片失败: %v\n%s", err, tail(b, 1500))
 	}
 	return nil
@@ -70,7 +71,7 @@ func (f *FFMPEG) ExtractFrame(ctx context.Context, in, out string, t float64) er
 		"-frames:v", "1", "-q:v", "2",
 		out,
 	}
-	if b, err := exec.CommandContext(ctx, f.Bin, args...).CombinedOutput(); err != nil {
+	if b, err := wexec.Command(ctx, f.Bin, args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("ffmpeg 封面提取失败: %v\n%s", err, tail(b, 1500))
 	}
 	return nil
@@ -88,7 +89,7 @@ func (f *FFMPEG) ExtractAudio16k(ctx context.Context, in, out string) error {
 		"-c:a", "pcm_s16le",
 		out,
 	}
-	if b, err := exec.CommandContext(ctx, f.Bin, args...).CombinedOutput(); err != nil {
+	if b, err := wexec.Command(ctx, f.Bin, args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("ffmpeg 抽音频失败: %v\n%s", err, tail(b, 1500))
 	}
 	return nil
@@ -120,7 +121,7 @@ func (f *FFMPEG) BurnSubtitles(ctx context.Context, in, out, srtDir, srtName str
 		"-c:a", "copy",
 		out,
 	}
-	cmd := exec.CommandContext(ctx, f.Bin, args...)
+	cmd := wexec.Command(ctx, f.Bin, args...)
 	cmd.Dir = srtDir
 	if b, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("ffmpeg 烧字幕失败: %v\n%s", err, tail(b, 2000))

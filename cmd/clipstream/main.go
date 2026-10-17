@@ -23,6 +23,7 @@ import (
 
 	"chopperbot/internal/config"
 	"chopperbot/internal/core"
+	"chopperbot/internal/detach"
 	"chopperbot/internal/engine"
 	"chopperbot/internal/live"
 	"chopperbot/internal/notify"
@@ -51,6 +52,10 @@ func main() {
 	case "init":
 		doInit(cfgPath)
 	case "serve":
+		// 无人值守自脱离：RDP 断开/注销/误关黑窗不再杀服务（0xC000013A 实战教训）
+		if detach.Self("serve.log") {
+			return
+		}
 		if err := doServe(cfgPath); err != nil {
 			log.Fatalf("serve 退出: %v", err)
 		}

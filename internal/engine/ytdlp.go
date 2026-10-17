@@ -5,9 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"chopperbot/internal/wexec"
 )
 
 // YTDLP yt-dlp 下载引擎（子进程）
@@ -50,7 +51,7 @@ func (y *YTDLP) Download(ctx context.Context, url, outDir, proxy string) (string
 	}
 	args = append(args, url)
 
-	cmd := exec.CommandContext(ctx, y.Bin, args...)
+	cmd := wexec.Command(ctx, y.Bin, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("yt-dlp 下载失败: %v\n%s", err, tail(out, 2000))
