@@ -557,6 +557,7 @@ func concatFLV(files []string, out string, inject [][]byte) (int, core.MergedSeg
 	total := 0
 	var meta core.MergedSegMeta
 	var contentOffset float64
+	var outEnd uint32 // 产物时间轴已写末尾（时间戳归一化的续接基准）
 	for _, file := range files {
 		b, err := os.ReadFile(file)
 		if err != nil {
@@ -598,7 +599,9 @@ func concatFLV(files []string, out string, inject [][]byte) (int, core.MergedSeg
 			ms.Wall = fi.ModTime().Unix()
 		}
 		firstTS, lastTS := uint32(0), uint32(0)
+		seen := false // 本段是否已见第一个 A/V tag（firstTS 有效）
 		pos := offset
+		tag := make([]byte, 0, 64<<10)
 		for pos+11 <= len(b) {
 			t := b[pos]
 			size := int(uint32(b[pos+1])<<16 | uint32(b[pos+2])<<8 | uint32(b[pos+3]))
@@ -610,22 +613,35 @@ func concatFLV(files []string, out string, inject [][]byte) (int, core.MergedSeg
 				break // tag 链断裂，其后不可信
 			}
 			if t == 8 || t == 9 { // 只保留音频/视频，剥 script(18) 等杂轨
-				if _, err := f.Write(b[pos : dataEnd+4]); err != nil {
-					return total, meta, err
-				}
-				total++
 				// FLV tag ts：Timestamp(3B) + TimestampExtended(1B)，大端毫秒
 				ts := uint32(b[pos+4])<<16 | uint32(b[pos+5])<<8 | uint32(b[pos+6]) |
 					uint32(b[pos+7])<<24
-				if total == len(inject)+1 || firstTS == 0 && lastTS == 0 {
-					firstTS = ts
+				if !seen {
+					firstTS, seen = ts, true
 				}
+				// 时间戳归一化：段间重连空洞消除（虎牙流段间 ts 有 5-15s 跳跃，
+				// 但无数据）。若保留跳跃，产物时间戳轴 ≠ whisper 转写轴（抽音频
+				// 遇跳跃直接压实），LLM 高光区间会错位且 Cut 按含空洞轴 seek 出
+				// 缺斤短两的切片（实测标注 19.5s 只切出 12.3s、极端 0.9s）。
+				// 改写：newTS = ts - 本段首tag ts + 产物已写末尾，段内相对 ts
+				// 不变（音视频同步保留），产物时间轴 = 纯内容轴，与转写/Cut 一致。
+				newTS := ts - firstTS + outEnd
+				tag = append(tag[:0], b[pos:dataEnd+4]...)
+				tag[4] = byte(newTS >> 16)
+				tag[5] = byte(newTS >> 8)
+				tag[6] = byte(newTS)
+				tag[7] = byte(newTS >> 24)
+				if _, err := f.Write(tag); err != nil {
+					return total, meta, err
+				}
+				total++
 				lastTS = ts
 			}
 			pos = dataEnd + 4
 		}
-		if lastTS >= firstTS {
+		if seen && lastTS >= firstTS {
 			ms.Dur = float64(lastTS-firstTS) / 1000
+			outEnd += lastTS - firstTS // 下一段接在本段内容末尾之后
 		}
 		contentOffset += ms.Dur
 		meta.Segs = append(meta.Segs, ms)

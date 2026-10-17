@@ -178,12 +178,12 @@ func TestFilterClips(t *testing.T) {
 		wantRejected int
 	}{
 		{"LLM 正常区间", []engine.Clip{mk(10, 90)}, 300, true, 1, 0},
-		{"LLM 越界终点裁齐到时长", []engine.Clip{mk(50, 200)}, 60, true, 1, 0},
+		{"LLM 越界裁齐后短于 15s 拒绝", []engine.Clip{mk(50, 200)}, 60, true, 0, 1},
 		{"LLM 负起点归零", []engine.Clip{mk(-10, 30)}, 100, true, 1, 0},
 		{"LLM 整段越界丢弃", []engine.Clip{mk(120, 200)}, 100, true, 0, 1},
 		{"LLM 超 300s 上限拒绝", []engine.Clip{mk(0, 400)}, 500, true, 0, 1},
-		{"下限 8s：7.9s 拒绝", []engine.Clip{mk(0, 7.9)}, 100, true, 0, 1},
-		{"下限 8s：恰好 8s 保留", []engine.Clip{mk(0, 8)}, 100, true, 1, 0},
+		{"下限 15s：14.9s 拒绝", []engine.Clip{mk(0, 14.9)}, 100, true, 0, 1},
+		{"下限 15s：恰好 15s 保留", []engine.Clip{mk(0, 15)}, 100, true, 1, 0},
 		{"非 LLM 不钩制（等分按构造）", []engine.Clip{mk(0, 500)}, 100, false, 1, 0},
 		{"时长未知不钩制但守 300s", []engine.Clip{mk(0, 30), mk(0, 400)}, 0, true, 1, 1},
 		{"混合：保留+拒绝各计", []engine.Clip{mk(10, 60), mk(0, 5), mk(200, 280)}, 300, true, 2, 1},
@@ -199,13 +199,13 @@ func TestFilterClips(t *testing.T) {
 }
 
 func TestFilterClipsClamp(t *testing.T) {
-	// LLM 给出 [50, 200] 而视频只有 60s：应裁成 [50, 60] 而不是丢弃
-	kept, _ := filterClips([]engine.Clip{{Start: 50, End: 200, Title: "x", Score: 70}}, 60, true)
+	// LLM 给出 [50, 200] 而视频只有 150s：应裁成 [50, 150]（100s ≥ 下限）保留
+	kept, _ := filterClips([]engine.Clip{{Start: 50, End: 200, Title: "x", Score: 70}}, 150, true)
 	if len(kept) != 1 {
 		t.Fatalf("kept=%d, want 1", len(kept))
 	}
-	if kept[0].Start != 50 || kept[0].End != 60 {
-		t.Fatalf("钩制结果 [%.1f, %.1f], want [50, 60]", kept[0].Start, kept[0].End)
+	if kept[0].Start != 50 || kept[0].End != 150 {
+		t.Fatalf("钩制结果 [%.1f, %.1f], want [50, 150]", kept[0].Start, kept[0].End)
 	}
 }
 

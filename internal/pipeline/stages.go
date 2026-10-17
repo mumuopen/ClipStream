@@ -334,7 +334,7 @@ func stageHighlight(ctx context.Context, job *core.Job, env *Env) error {
 	}
 
 	// 过滤非法区间：LLM 输出先钳制到视频时长内（负起点归零/越界终点裁齐/整段越界丢弃），
-	// 下限 8s 对所有来源生效；上限 300s 仅约束 LLM 输出（等分回退按构造保证全覆盖）
+	// 下限 15s 对所有来源生效；上限 300s 仅约束 LLM 输出（等分回退按构造保证全覆盖）
 	kept, rejected := filterClips(clips, duration, fromLLM)
 	if len(kept) == 0 && rejected > 0 {
 		// 候选全灭不硬失败：降级等分兜底（挂机哲学——宁发等分片，不整单报废）
@@ -350,7 +350,7 @@ func stageHighlight(ctx context.Context, job *core.Job, env *Env) error {
 		}
 	}
 	if len(kept) == 0 {
-		return fmt.Errorf("高光切片为空：视频时长 %.1fs，候选 %d 段（过滤 %d）均未通过校验——源视频短于 8s 最小切片下限或区间全非法，请检查下载/录制产物是否只有几秒存根", duration, len(clips), rejected)
+		return fmt.Errorf("高光切片为空：视频时长 %.1fs，候选 %d 段（过滤 %d）均未通过校验——源视频短于 15s 最小切片下限或区间全非法，请检查下载/录制产物是否只有几秒存根", duration, len(clips), rejected)
 	}
 	b, _ := json.MarshalIndent(kept, "", "  ")
 	if err := os.WriteFile(jobFile(job, "clips.json"), b, 0o644); err != nil {
@@ -362,7 +362,8 @@ func stageHighlight(ctx context.Context, job *core.Job, env *Env) error {
 
 // filterClips 校验并裁剪高光候选：
 //   - LLM 输出钳制到视频时长内：负起点归零、超时长终点裁齐、整段越界丢弃
-//   - 下限 8s 对所有来源生效；上限 300s 仅约束 LLM（等分/弹幕按构造有效）
+//   - 下限 15s 对所有来源生效（几秒的碎片没有传播价值——用户实测吐槽“1秒切片”）；
+//     上限 300s 仅约束 LLM（等分/弹幕按构造有效）
 func filterClips(clips []engine.Clip, duration float64, fromLLM bool) (kept []engine.Clip, rejected int) {
 	for _, c := range clips {
 		if fromLLM && duration > 0 {
@@ -378,7 +379,7 @@ func filterClips(clips []engine.Clip, duration float64, fromLLM bool) (kept []en
 			}
 		}
 		d := c.End - c.Start
-		if d >= 8 && c.Start >= 0 && c.End > c.Start && (!fromLLM || d <= 300) {
+		if d >= 15 && c.Start >= 0 && c.End > c.Start && (!fromLLM || d <= 300) {
 			kept = append(kept, c)
 		} else {
 			rejected++
@@ -400,7 +401,7 @@ func llmHighlight(ctx context.Context, llm *engine.LLMClient, segs []engine.Segm
 			break
 		}
 	}
-	system := `你是一个短视频高光剪辑师。根据带时间戳的直播/视频转写文本，挑选最有传播潜力的高光片段（爆点、金句、名场面、高能操作）。只输出 JSON 数组，不要任何其他文字，格式：[{"start":秒,"end":秒,"title":"爆款标题","score":0-100}]。要求：每段 15-120 秒，区间互不重叠，最多 6 段，时间必须严格取自文本时间戳。`
+	system := `你是一个短视频高光剪辑师。根据带时间戳的直播/视频转写文本，挑选最有传播潜力的高光片段（爆点、金句、名场面、高能操作）。只输出 JSON 数组，不要任何其他文字，格式：[{"start":秒,"end":秒,"title":"爆款标题","score":0-100}]。要求：每段 20-60 秒（低于 15 秒的碎片绝不要），区间互不重叠，最多 6 段，时间必须严格取自文本时间戳。`
 	user := "转写文本：\n" + sb.String()
 	// 双信号：弹幕互动峰值作为第二信号注入（观众真实反应验证过的效果点，优先采纳）
 	if len(hotspots) > 0 {

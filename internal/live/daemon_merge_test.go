@@ -60,7 +60,7 @@ func TestConcatFLV(t *testing.T) {
 	makeFLV(t, b, 3, false, true) // 无 script + 截断尾
 
 	out := filepath.Join(dir, "merged.flv")
-	n, _, err := concatFLV([]string{a, b}, out, nil)
+	n, meta, err := concatFLV([]string{a, b}, out, nil)
 	if err != nil {
 		t.Fatalf("concatFLV: %v", err)
 	}
@@ -75,14 +75,37 @@ func TestConcatFLV(t *testing.T) {
 	if len(data) < 13 || string(data[:3]) != "FLV" {
 		t.Fatalf("产物 FLV header 损坏")
 	}
-	// 产物中不应有 script tag（type 18）
+	// 时间戳归一化验证：两段（tag ts 均从 1000 起，段间本有 ts 倒退"空洞"），
+	// 产物 ts 必须从 0 起、单调不减且续接（段1 末=120ms，段2 首 tag 应=120ms）。
+	// 无归一化时段2 ts 回到 1000 造成倒退——LLM 高光区间错位 + Cut 缺斤短两的根源
+	var tsList []uint32
 	for pos := 13; pos+11 <= len(data); {
 		typ := data[pos]
 		if typ != 8 && typ != 9 {
 			t.Fatalf("产物中混入了非音视频 tag（type=%d）@offset %d", typ, pos)
 		}
 		size := int(uint32(data[pos+1])<<16 | uint32(data[pos+2])<<8 | uint32(data[pos+3]))
+		ts := uint32(data[pos+4])<<16 | uint32(data[pos+5])<<8 | uint32(data[pos+6]) |
+			uint32(data[pos+7])<<24
+		tsList = append(tsList, ts)
 		pos += 11 + size + 4
+	}
+	if len(tsList) != 7 {
+		t.Fatalf("ts 校验的 tag 数 %d ≠ 7", len(tsList))
+	}
+	if tsList[0] != 0 {
+		t.Fatalf("产物首 tag ts=%d，归一化后应为 0", tsList[0])
+	}
+	for i := 1; i < len(tsList); i++ {
+		if tsList[i] < tsList[i-1] {
+			t.Fatalf("ts 倒退 @%d: %d < %d（段间空洞未归一化）", i, tsList[i], tsList[i-1])
+		}
+	}
+	if tsList[4] != 120 { // 段1 4 tag（0..120ms），段2 首 tag 续接 120
+		t.Fatalf("段2 首 tag ts=%d，应续接在段1 末尾 120", tsList[4])
+	}
+	if len(meta.Segs) != 2 || meta.Segs[1].Offset < 0.11 || meta.Segs[1].Offset > 0.13 {
+		t.Fatalf("meta 段偏移异常: %+v", meta.Segs)
 	}
 }
 
