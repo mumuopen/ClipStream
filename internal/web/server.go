@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -395,6 +396,10 @@ func (s *Server) addPool(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.store.AddPoolItem(&it)
 	if err != nil {
+		if errors.Is(err, store.ErrAlreadyInPool) {
+			httpError(w, 409, err.Error())
+			return
+		}
 		httpError(w, 500, err.Error())
 		return
 	}
@@ -886,11 +891,20 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	if kind == "" {
 		kind = "clips"
 	}
-	// 发布任务：Input 必须是合法的发布请求 JSON
+	// 发布任务：Input 必须是合法的发布请求 JSON；非演练走三闸（防手点连发
+	// 复现批量风控——手动路径旧版零限制，是 2026-10-17 事故的手动复现面；
+	// dry-run 不真发不占闸；需要立即强发可在设置页把间隔/每日上限临时调 0）
 	if kind == "publish" {
-		if _, err := publish.ParseRequest(req.Input); err != nil {
+		preq, err := publish.ParseRequest(req.Input)
+		if err != nil {
 			httpError(w, 400, err.Error())
 			return
+		}
+		if !preq.DryRun && preq.Account != "" {
+			if why := throttleReason(s.store, s.cfg.Publish.RateLimit, preq.Account); why != "" {
+				httpError(w, 429, why+"（防风控限流：手动发布同样受限；如需救急可在设置页临时调大间隔/上限参数）")
+				return
+			}
 		}
 	}
 	// 字幕任务：Input 必须是合法的字幕请求 JSON
@@ -950,11 +964,39 @@ func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	// 池联动：发布任务被删时，对应池条目回 pending 供泵重发——否则孤儿
+	// dispatched（全库唯一回 pending 的路径是 finalize，任务没了就永远卡住）
+	if job, err := s.store.GetJob(id); err == nil && job.Kind == "publish" {
+		if req, perr := publish.ParseRequest(job.Input); perr == nil && req.PoolItemID > 0 {
+			_ = s.store.SetPoolItemStatus(req.PoolItemID, "pending")
+		}
+	}
 	if err := s.store.DeleteJob(id); err != nil {
 		httpError(w, 404, err.Error())
 		return
 	}
 	writeJSON(w, map[string]string{"ok": "true"})
+}
+
+// throttleReason 手动发布三闸判定（与调度侧同语义；main.go 的 publishThrottled
+// 在 cmd 包，这里复用同套 SQL 语义）
+func throttleReason(st *store.Store, rl config.RateLimit, accName string) string {
+	now := time.Now()
+	if rl.MinIntervalMin > 0 {
+		if last, err := st.LastPublishAt(accName); err == nil && last > 0 {
+			if wait := time.Duration(rl.MinIntervalMin)*time.Minute - now.Sub(time.Unix(last, 0)); wait > 0 {
+				minutes := int(wait.Minutes()) + 1
+				return fmt.Sprintf("距上次发布间隔不足（还需约 %d 分钟）", minutes)
+			}
+		}
+	}
+	if rl.DailyMax > 0 {
+		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
+		if n, err := st.CountPublishSince(accName, today); err == nil && n >= rl.DailyMax {
+			return fmt.Sprintf("该账号今日已达上限（%d/%d 条）", n, rl.DailyMax)
+		}
+	}
+	return ""
 }
 
 // events SSE 实时日志/状态

@@ -13,7 +13,6 @@ engines:
   asr:
     binary: ""                   # whisper.cpp 可执行文件（whisper-cli）
     model: ""                    # ggml 模型路径（如 ggml-medium.bin）
-    language: auto
 
 llm:
   base_url: "https://api.deepseek.com/v1"  # OpenAI 兼容端点
@@ -30,10 +29,10 @@ publish:
   headless: false                # 抖音浏览器发布是否无头（当前平台规划中）
   screenshots: true
   platforms_dir: "configs/platforms"
-  rate_limit:                    # 发布节流（防风控：高频投稿易被平台限流/封号）
-    batch_max: 1                 # 一次计划到点最多派发条数，其余留池下轮再发（0=不限）
-    min_interval_min: 60         # 同账号两次发布最小间隔分钟，手动发布也计入（0=不限）
-    daily_max: 3                 # 每账号每日最大发布数（0=不限）
+  rate_limit:                    # 发布节流（防风控：高频投稿易被平台限流/封号；手动+自动统一受限）
+    batch_max: 1                 # 一次计划到点最多派发条数，其余留池由发布泵按间隔续发（0=不限）
+    min_interval_min: 60         # 同账号两次发布最小间隔分钟（手动发布同样拦截，0=解除）
+    daily_max: 3                 # 每账号每日最大发布数（0=解除）
 
 notify:
   pushme:
@@ -45,9 +44,11 @@ chrome:
   path: ""                       # 本机 Chrome 可执行路径，留空则自动探测
 
 live:
-  check_interval: 60             # 开播检测轮询秒
-  segment_time: 600              # 录制分段秒
-  auto_clip: true                # 下播后自动送切片管线
+  check_interval: 60            # 开播检测轮询秒
+  segment_time: 600             # 录制分段秒
+  auto_clip: true               # 下播后自动送切片管线
+  max_stale_sec: 300            # 素材停滞兑底：超过此时长无新分段即强制收工（0=关，不建议关——下播后 API 仍报在播时会挂死）
+  preview_keywords: ["预告", "凌晨见"]  # 标题含任一关键词不视为真开播（赛事房轮播预告画面 API 也在播，只有标题能区分）
 
 retention:                       # 磁盘清理（挂机刚需，daemon 定时执行）
   enabled: true

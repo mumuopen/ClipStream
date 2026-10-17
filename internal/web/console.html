@@ -1158,14 +1158,16 @@ function renderMatrixLists() {
     </div>`).join('') || `<div class="hint">${T('m5_sch_empty')}</div>`;
 
   // 内容池全量展示（待发/已派发/已退池三态）：发布泵按间隔匀速消化待发条目，
-  // 每条的去向一目了然——不再"入池后凭空消失"（旧版只拉 pending，派发后即隐身）
+  // 每条的去向一目了然；fails 失败次数角标（重试 n/3，接近终态预警）
   const POOL_ST = { pending: ['queued', 'm5_pool_pending'], dispatched: ['running', 'm5_pool_dispatched'], failed: ['failed', 'm5_pool_failed'] };
   $('#pool-list').innerHTML = (poolItems||[]).map(it => {
     const st = POOL_ST[it.status] || POOL_ST.pending;
+    const fails = (it.status === 'pending' && it.fails > 0) ? `<span class="tag" style="color:#e5484d">重试 ${it.fails}/3</span>` : '';
     return `
     <div class="acc-card">
       <div class="acc-top"><span class="time-badge">${T('m5_pool_title')}</span><b title="${esc(it.clip)}">${esc(it.title)}</b>
         <span class="badge ${st[0]}">${it.status === 'pending' ? '○ ' : '● '}${T(st[1])}</span>
+        ${fails}
         <span class="jtime">${platChipsFor(it.platforms)}</span>
         <span class="tag">${esc(it.tags || T('m5_unlabel'))}</span>
         <button class="del" title="${T('rv_pool_btn')}" onclick="delPoolItem(${it.id})">✕</button></div>
@@ -1432,7 +1434,11 @@ async function submitPublish() {
   try {
     await fetchJSON('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'publish', input: JSON.stringify(req) }) });
     closePubModal(); refresh();
-  } catch (e) { alert('创建发布任务失败：' + e.message); }
+  } catch (e) {
+    // 429 = 三闸拦截（间隔/每日上限）：不是失败，是风控保护——把原因说清
+    if (String(e.message).startsWith('429')) { alert('发布被节奏保护拦下：' + String(e.message).replace(/^429\s*/, '') + '\n\n若确需立即发布，可到「设置」页把发布间隔/每日上限临时调大（或设 0 解除）。'); return; }
+    alert('创建发布任务失败：' + e.message); 
+  }
 }
 // 不采用：丢弃整个待审任务的全部切片（现状粒度：一次录制/下载的产物一起处理）
 async function discardJob(jobId) {
@@ -1487,7 +1493,11 @@ async function submitPool() {
     await fetchJSON('/api/pool', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item) });
     closePoolModal(); refreshMatrix();
     alert(T('rv_pool_done'));
-  } catch (e) { alert('入池失败：' + e.message); }
+  } catch (e) {
+    // 409 = 已在池（查重保护）：提示但不弹错误样式语义
+    if (String(e.message).startsWith('409')) { closePoolModal(); alert(String(e.message).replace(/^409\s*/, '')); return; }
+    alert('入池失败：' + e.message);
+  }
 }
 
 /* ═══════════ 扫码登录（B站，biliup 二维码流到弹窗）═══════════ */

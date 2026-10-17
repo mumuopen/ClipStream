@@ -103,17 +103,21 @@ func stagePublishFinalize(_ context.Context, job *core.Job, env *Env) error {
 	req, _ := publish.ParseRequest(job.Input)
 	postmortem := ""
 	if !result.AllOK && req != nil {
-		loginExpired := false
+		// 1) 登录态/认证类失败：对应平台账号标 login_expired（routeAccount 自动
+		// 避开，UI 提示重新扫码）。按失败平台逐一停号（旧版写死 bilibili，
+		// 抖音账号永不停号）；文案匹配走 publish.IsAuthError（覆盖两平台措辞
+		// 与 biliup -101/csrf/401 退出特征，旧版只认"登录态缺失"四字形同虚设）
+		stopped := []string{}
 		for _, r := range result.Results {
-			if !r.OK && strings.Contains(r.Detail, "登录态缺失") {
-				loginExpired = true
+			if r.OK || !publish.IsAuthError(r.Detail) {
+				continue
+			}
+			if req.Account != "" && env.Store.SetAccountStatus(r.Platform, req.Account, "login_expired") == nil {
+				stopped = append(stopped, r.Platform+"·"+req.Account)
 			}
 		}
-		// 1) 登录态缺失：账号标 login_expired（routeAccount 自动避开，UI 提示重新扫码）
-		if loginExpired && req.Account != "" {
-			if err := env.Store.SetAccountStatus("bilibili", req.Account, "login_expired"); err == nil {
-				postmortem = fmt.Sprintf("\n账号「%s」登录态已过期，已停用其自动发布——请在发布中心重新扫码登录。", req.Account)
-			}
+		if len(stopped) > 0 {
+			postmortem = fmt.Sprintf("\n账号「%s」登录态已失效，已停用其自动发布——请在发布中心重新扫码登录后续用。", strings.Join(stopped, "、"))
 		}
 		// 2) 调度派发的任务失败：回池冷却重试（连续失败 3 次置 failed 终态，
 		// 不再自动派发——防坏条目反复撞墙吃光当日配额；UI"已退池"红色提示人工处置）

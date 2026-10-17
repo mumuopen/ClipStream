@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -475,13 +476,23 @@ type PoolItem struct {
 	Tags      string `json:"tags"`      // 内容标签（逗号分隔）
 	Platforms string `json:"platforms"` // 目标平台（逗号分隔，空=全部）
 	Status    string `json:"status"`    // pending | dispatched | failed
+	Fails     int    `json:"fails"`     // 连续发布失败次数（≥3 终态退池；UI 重试角标）
 	CreatedAt int64  `json:"created_at"`
 }
 
-// AddPoolItem 切片入池（审核通过）
+// ErrAlreadyInPool 同一切片已有待发条目（入池查重：审核台双击/重复审核防护）
+var ErrAlreadyInPool = errors.New("该切片已在待发池中，请勿重复入池")
+
+// AddPoolItem 切片入池（审核通过）。同 (source_job, clip) 已有 pending 条目时
+// 拒绝（ErrAlreadyInPool）：旧版无查重，双击入池即重复发布同一视频
 func (s *Store) AddPoolItem(it *PoolItem) (int64, error) {
 	if it.Status == "" {
 		it.Status = "pending"
+	}
+	var existing int64
+	if err := s.db.QueryRow(`SELECT id FROM content_pool WHERE source_job=? AND clip=? AND status='pending' LIMIT 1`,
+		it.SourceJob, it.Clip).Scan(&existing); err == nil {
+		return existing, ErrAlreadyInPool
 	}
 	res, err := s.db.Exec(`INSERT INTO content_pool (source_job,clip,cover,title,desc,tags,platforms,status,created_at)
 		VALUES (?,?,?,?,?,?,?,?,?)`,
@@ -492,9 +503,9 @@ func (s *Store) AddPoolItem(it *PoolItem) (int64, error) {
 	return res.LastInsertId()
 }
 
-// ListPoolItems 列内容池（默认只看待发布）
+// ListPoolItems 列内容池（默认只看待发；含 fails 供 UI 重试角标与排障）
 func (s *Store) ListPoolItems(all bool) ([]*PoolItem, error) {
-	q := `SELECT id,source_job,clip,cover,title,desc,tags,platforms,status,created_at FROM content_pool`
+	q := `SELECT id,source_job,clip,cover,title,desc,tags,platforms,status,fails,created_at FROM content_pool`
 	if !all {
 		q += ` WHERE status='pending'`
 	}
@@ -507,7 +518,7 @@ func (s *Store) ListPoolItems(all bool) ([]*PoolItem, error) {
 	var out []*PoolItem
 	for rows.Next() {
 		var it PoolItem
-		if err := rows.Scan(&it.ID, &it.SourceJob, &it.Clip, &it.Cover, &it.Title, &it.Desc, &it.Tags, &it.Platforms, &it.Status, &it.CreatedAt); err != nil {
+		if err := rows.Scan(&it.ID, &it.SourceJob, &it.Clip, &it.Cover, &it.Title, &it.Desc, &it.Tags, &it.Platforms, &it.Status, &it.Fails, &it.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, &it)
@@ -521,24 +532,28 @@ func (s *Store) SetPoolItemStatus(id int64, status string) error {
 	return err
 }
 
-// MarkPoolItemRetry 发布失败回池：失败计数 +1；连续失败 ≥ maxFails 次
-// 置 failed 终态（返回 final=true，泵/调度不再自动派发，UI 红色"已退池"
-// 等人工处置）；否则回 pending 由发布泵按间隔冷却重试——防单个坏条目
-// （素材损坏等）反复撞墙吃光当日配额
+// MarkPoolItemRetry 发布失败回池（单条 SQL 原子化：多步 UPDATE/SELECT/UPDATE
+// 中途崩溃会出现"计数已加但状态未回"的卡 dispatched 条目）。连续失败 ≥ maxFails
+// 次置 failed 终态（返回 final=true，泵/调度不再自动派发，UI 红色"已退池"等
+// 人工处置）；否则回 pending 由发布泵按间隔冷却重试——防单个坏条目反复撞墙
+// 吃光当日配额。成功路径不调用本方法（fails 不清零：终态后需人工处置重置）
 func (s *Store) MarkPoolItemRetry(id int64, maxFails int) (final bool, err error) {
-	if _, err = s.db.Exec(`UPDATE content_pool SET fails = fails + 1 WHERE id=?`, id); err != nil {
+	res, err := s.db.Exec(`UPDATE content_pool
+		SET fails = fails + 1,
+		    status = CASE WHEN fails + 1 >= ? THEN 'failed' ELSE 'pending' END
+		WHERE id=?`, maxFails, id)
+	if err != nil {
 		return false, err
 	}
-	var fails int
-	if err = s.db.QueryRow(`SELECT fails FROM content_pool WHERE id=?`, id).Scan(&fails); err != nil {
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return false, fmt.Errorf("池条目 %d 不存在", id)
+	}
+	var status string
+	if err := s.db.QueryRow(`SELECT status FROM content_pool WHERE id=?`, id).Scan(&status); err != nil {
 		return false, err
 	}
-	status := "pending"
-	if fails >= maxFails {
-		status = "failed"
-	}
-	_, err = s.db.Exec(`UPDATE content_pool SET status=? WHERE id=?`, status, id)
-	return status == "failed", err
+	return status == "failed", nil
 }
 
 // DeletePoolItem 删除池条目
@@ -558,11 +573,15 @@ func acctInputPattern(account string) string {
 	return `%"account":"` + r.Replace(account) + `"%`
 }
 
+// dryRunFilter 排除演练任务：dry-run 不真投稿（B站零网络接触），计入间隔/
+// 每日闸只会白白锁死配额。手动与自动路径序列化 dry_run 布尔字段，负向匹配可靠
+const dryRunFilter = ` AND input NOT LIKE '%"dry_run":true%'`
+
 // LastPublishAt 最近一次发布任务的派发时刻（Unix 秒）。account 为空查全局。
-// 保守口径：不含状态过滤——失败的投稿尝试同样是风控行为特征
+// 保守口径：不含状态过滤——失败的投稿尝试同样是风控行为特征；排除 dry-run
 func (s *Store) LastPublishAt(account string) (int64, error) {
 	var last sql.NullInt64
-	q := `SELECT MAX(created_at) FROM jobs WHERE kind='publish'`
+	q := `SELECT MAX(created_at) FROM jobs WHERE kind='publish'` + dryRunFilter
 	var args []any
 	if account != "" {
 		q += ` AND input LIKE ? ESCAPE '\'`
@@ -575,9 +594,9 @@ func (s *Store) LastPublishAt(account string) (int64, error) {
 }
 
 // CountPublishSince 某账号自 since 起的发布任务数（account 为空查全局），
-// 供每日上限判定
+// 供每日上限判定；排除 dry-run（同 LastPublishAt）
 func (s *Store) CountPublishSince(account string, since int64) (int, error) {
-	q := `SELECT COUNT(*) FROM jobs WHERE kind='publish' AND created_at >= ?`
+	q := `SELECT COUNT(*) FROM jobs WHERE kind='publish' AND created_at >= ?` + dryRunFilter
 	var args []any
 	args = append(args, since)
 	if account != "" {

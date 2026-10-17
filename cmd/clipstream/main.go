@@ -11,13 +11,16 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -334,19 +337,36 @@ func doServe(cfgPath string) error {
 
 	// 启动恢复：上次进程退出（崩溃/重启/服务器断电）时未完成的任务重新入列。
 	// 不恢复的话这些任务会永远停在 queued/running 成孤儿——挂机系统不可接受。
-	// 各阶段产物按 job dir 覆盖写，重跑幂等；running 的从头重跑代价可接受。
+	// clips 等本地管线重跑幂等（产物覆盖写）；publish 例外：投稿有外部副作用，
+	// 盲目重跑同一视频会重复发表——置 failed 终止自动重试，池条目回 pending 由泵
+	// 冷却后重发（受间隔闸限速，不会立即双投），通知用户确认。
 	if jobs, err := app.store.ListJobs(500); err == nil {
-		recovered := 0
+		recovered, publishDropped := 0, 0
 		for _, j := range jobs {
-			if j.Status == core.StatusQueued || j.Status == core.StatusRunning {
-				j.Status = core.StatusQueued
-				_ = app.store.UpdateJob(j)
-				app.runner.Enqueue(j.ID)
-				recovered++
+			if j.Status != core.StatusQueued && j.Status != core.StatusRunning {
+				continue
 			}
+			if j.Kind == "publish" {
+				j.Status = core.StatusFailed
+				j.Error = "服务中断：发布不自动重试（防重复投稿），对应待发池条目已回池，由发布泵冷却后重发"
+				_ = app.store.UpdateJob(j)
+				if req, err := publish.ParseRequest(j.Input); err == nil && req.PoolItemID > 0 {
+					_ = app.store.SetPoolItemStatus(req.PoolItemID, "pending")
+				}
+				publishDropped++
+				continue
+			}
+			j.Status = core.StatusQueued
+			_ = app.store.UpdateJob(j)
+			app.runner.Enqueue(j.ID)
+			recovered++
 		}
 		if recovered > 0 {
 			fmt.Printf("[recover] 恢复 %d 个未完成任务（queued/running）\n", recovered)
+		}
+		if publishDropped > 0 {
+			fmt.Printf("[recover] %d 个中断的发布任务置 failed（防重复投稿），池条目已回池\n", publishDropped)
+			app.notifier.Notify("ClipStream 服务重启", fmt.Sprintf("%d 个发布任务因服务中断终止自动重试，对应切片已退回待发池（冷却后自动重发）", publishDropped))
 		}
 	}
 
@@ -401,22 +421,37 @@ func doServe(cfgPath string) error {
 // scheduleTicker M5 发布调度：30s 检查两件事——
 // ①每日 HH:MM 计划到点且当天未执行 → dispatchSchedule（发当轮首条，batch_max 截断）
 // ②发布泵 pumpTick：当日已有计划触发过 → 待发池续发（间隔闸限速，见 pumpTick）
+// check 包 recover：任一 panic 不能杀死调度 goroutine（否则挂机形态下静默停发，
+// 数日无人察觉）
 func scheduleTicker(app *app) {
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
 	check := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf("[schedule] panic 已拦截（继续调度）: %v\n%s\n", r, debug.Stack())
+			}
+		}()
 		now := time.Now()
-		hhmm := now.Format("15:04")
 		scs, err := app.store.ListSchedules()
 		if err != nil {
 			return
 		}
+		today := now.Format("2006-01-02")
 		for _, sc := range scs {
-			if !sc.Enabled || sc.Time != hhmm {
+			if !sc.Enabled {
 				continue
 			}
 			// 当天已执行过则跳过
-			if sc.LastRun > 0 && time.Unix(sc.LastRun, 0).Format("2006-01-02") == now.Format("2006-01-02") {
+			ranToday := sc.LastRun > 0 && time.Unix(sc.LastRun, 0).Format("2006-01-02") == today
+			// 错过窗口补偿：不要求精确命中 HH:MM（进程卡顿/休眠丢 tick 会静默跳过
+			// 当天整份计划），改为"已过计划时刻且今日未执行"即触发
+			plan, err := time.ParseInLocation("15:04", sc.Time, now.Location())
+			if err != nil {
+				continue // 非法时间格式：建计划时已校验，防御双重保险
+			}
+			plannedAt := time.Date(now.Year(), now.Month(), now.Day(), plan.Hour(), plan.Minute(), 0, 0, now.Location())
+			if ranToday || now.Before(plannedAt) {
 				continue
 			}
 			_ = app.store.UpdateScheduleLastRun(sc.ID)
@@ -456,17 +491,60 @@ func pumpTick(app *app) {
 	if err != nil || len(items) == 0 {
 		return
 	}
-	it := items[0] // 先进先出：最老条目先发
-	platforms := it.Platforms
-	if platforms == "" {
-		platforms = "bilibili"
+	// 遍历池（FIFO 尽力而为）：旧版只取 items[0]，头部条目无匹配账号时
+	// 整池永久冻结且零感知（队头阻塞）。全池无可派（账号全被节流/无匹配/
+	// 配额尽）则本轮空转；无匹配账号属于需要人工介入的状态（不再是节流
+	// 自愈场景），首次发现时告警一次（进程级去重，防每 30s 刷屏）。
+	noMatchNotified := false
+	for _, it := range items {
+		platforms := it.Platforms
+		if platforms == "" {
+			platforms = "bilibili"
+		}
+		acc := dispatchOne(app, it, platforms, map[string]string{}, "pump", false)
+		if acc != nil {
+			fmt.Printf("[pump] 续发：《%s》→ 账号「%s」\n", it.Title, acc.Name)
+			app.notifier.Notify("ClipStream 发布泵续发",
+				fmt.Sprintf("《%s》→ 账号「%s」（按间隔自动匀速续发，配额尽自动停）", it.Title, acc.Name))
+			return // 每 tick 至多 1 条：间隔限速，不多发
+		}
+		// 区分失败原因：dispatchOne 内部节流让位会被 blocked 吞掉，无匹配
+		// 账号（含全部过期）才是真卡死信号——通过探测一次路由确认
+		if acc2 := probeRoute(app, platforms, it.Tags); acc2 == nil {
+			noMatchNotified = true
+		} else {
+			return // 有可用账号但被节流：正常等待，本轮到此为止
+		}
 	}
-	acc := dispatchOne(app, it, platforms, map[string]string{}, "pump", false)
-	if acc != nil {
-		fmt.Printf("[pump] 续发：《%s》→ 账号「%s」\n", it.Title, acc.Name)
-		app.notifier.Notify("ClipStream 发布泵续发",
-			fmt.Sprintf("《%s》→ 账号「%s」（按间隔自动匀速续发，配额尽自动停）", it.Title, acc.Name))
+	if noMatchNotified && maybeNotifyNoMatch(app) {
+		fmt.Println("[pump] 待发池有条目但无可用账号（无匹配或全部过期）——需要人工检查账号/标签")
 	}
+}
+
+// pumpNoMatchState 无匹配告警去重：同一天只提醒一次（进程级）
+var pumpNoMatchState = struct {
+	mu   sync.Mutex
+	last string // yyyymmdd
+}{}
+
+func maybeNotifyNoMatch(app *app) bool {
+	pumpNoMatchState.mu.Lock()
+	defer pumpNoMatchState.mu.Unlock()
+	today := time.Now().Format("20060102")
+	if pumpNoMatchState.last == today {
+		return false
+	}
+	pumpNoMatchState.last = today
+	app.notifier.Notify("ClipStream 待发池阻塞",
+		"待发池有条目，但当前无可用发布账号（无匹配平台/标签，或账号登录已过期）——发布已暂停，请到发布中心检查账号状态")
+	return true
+}
+
+// probeRoute 只探测不派发：该条目现在有没有能通过路由的账号（状态 ok+
+// 平台+标签匹配），供泵区分"被节流（自愈）"与"无匹配（需人工）"
+func probeRoute(app *app, platforms, tags string) *store.Account {
+	all, _ := app.store.ListAccounts()
+	return routeAccount(all, commaSet(platforms), tags)
 }
 
 // dispatchSchedule 调度触发：取内容池 → 账号路由 → 逐条创建发布任务。
@@ -574,25 +652,37 @@ func dispatchOne(app *app, it *store.PoolItem, platforms string, blocked map[str
 		"pool_item_id": it.ID, // 失败回池依据：发布任务失败时把池条目置回 pending 供泵重试
 	}
 	reqJSON, _ := json.Marshal(req)
+	// 先置 dispatched 再建任务：newJob+Enqueue 是异步消费，极快失败路径
+	// （prepare 素材缺失→回池 pending）可能跑赢本行的 dispatched 覆盖，条目永久卡 dispatched
+	_ = app.store.SetPoolItemStatus(it.ID, "dispatched")
 	job, err := app.newJob(string(reqJSON), "publish")
 	if err != nil {
+		// 建任务失败：条目退回 pending 供下轮重试
+		_ = app.store.SetPoolItemStatus(it.ID, "pending")
 		fmt.Printf("[%s] 创建发布任务失败 %s: %v\n", source, it.Clip, err)
 		return nil
 	}
 	app.runner.Enqueue(job.ID)
-	_ = app.store.SetPoolItemStatus(it.ID, "dispatched")
 	fmt.Printf("[%s] 已派发：《%s》→ 账号「%s」(优先级 %d) 任务 %s\n",
 		source, it.Title, acc.Name, acc.Priority, job.ID)
 	return acc
 }
 
 // publishThrottled 发布三闸判定：通过返回空串；被拦返回原因（日志与通知用）。
-// 间隔闸按 jobs 表派发时刻（含手动发布与失败尝试——保守口径，失败投稿也是风控行为）
+// 间隔闸按 jobs 表派发时刻（含手动发布与失败尝试但不含 dry-run 演练——见 store 计数过滤）。
+// 间隔闸叠加 ±5% 随机抖动：精确的整分钟间隔（每天同一时刻起跳、严格执行 60min
+// 整点节拍器）本身是机器行为签名；随机化放行时刻（通过即立即派发，不会“放行又
+// 收回”），对可用性无实际影响（daily_max 兑底总量）。
 func publishThrottled(st *store.Store, rl config.RateLimit, accName string) string {
 	now := time.Now()
 	if rl.MinIntervalMin > 0 {
 		if last, err := st.LastPublishAt(accName); err == nil && last > 0 {
-			if wait := time.Duration(rl.MinIntervalMin)*time.Minute - now.Sub(time.Unix(last, 0)); wait > 0 {
+			base := time.Duration(rl.MinIntervalMin) * time.Minute
+			// threshold ∈ [95%, 105%] * base：随机提前或延后最多 5%（3 分钟档位 ±3s，
+			// 60 分钟档位 ±3min），通过即立即派发，不会"放行又收回"
+			jitter := rand.Int63n(int64(float64(base) * 0.10))
+			threshold := base - base/20 + time.Duration(jitter)
+			if wait := threshold - now.Sub(time.Unix(last, 0)); wait > 0 {
 				return fmt.Sprintf("距上次发布间隔不足（还需约 %s）", (wait / time.Minute * time.Minute).String())
 			}
 		}
@@ -601,7 +691,7 @@ func publishThrottled(st *store.Store, rl config.RateLimit, accName string) stri
 		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
 		if n, err := st.CountPublishSince(accName, today); err == nil && n >= rl.DailyMax {
 			return fmt.Sprintf("已达每日上限（今日 %d/%d 条）", n, rl.DailyMax)
-		}
+			}
 	}
 	return ""
 }

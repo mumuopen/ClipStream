@@ -17,6 +17,7 @@ package pipeline
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -139,6 +140,12 @@ func applyAutoReview(job *core.Job, env *Env) (auto, manual, rejected int) {
 				Platforms: "bilibili",
 			}
 			if _, err := env.Store.AddPoolItem(item); err != nil {
+				if errors.Is(err, store.ErrAlreadyInPool) {
+					// 已在池（人工先入过池/上一轮已自动入过）：不算失败，不退回人工
+					env.log(job, "[auto] 《%s》已在待发池，跳过重复入池", v.Clip.Title)
+					auto++
+					continue
+				}
 				env.log(job, "自动入池失败《%s》：%v", v.Clip.Title, err)
 				manual++
 				continue
