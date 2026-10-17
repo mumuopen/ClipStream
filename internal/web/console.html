@@ -480,7 +480,7 @@ const I18N = {
     /* ── 设置页 ── */
     set_engines: '引擎状态', set_accounts: '账号', set_notify: '通知', set_cmds: '常用命令',
     set_bsub: 'B站投稿', set_douyin: '抖音', set_bili: 'B站', set_douyin_acc: '需要装浏览器的电脑，暂不支持无人值守',
-    set_bili_login: 'B站登录态（default 账号）', set_ok: '已登录', set_scan2: '待扫码', set_enabled: '已启用', set_disabled: '未启用',
+    set_acc_add: '发布中心扫码添加', set_none: '未添加', set_ok: '已登录', set_scan2: '待扫码', set_enabled: '已启用', set_disabled: '未启用',
     set_cg_ops: '运行规则', set_cg_llm: 'AI 模型（高光选择 / 翻译 / 解说稿）', set_cg_paths: '引擎路径（一般不用改，部署包已内置）',
     set_cg_pub: '发布行为',
     'set_eng_ytdlp': '视频下载（数千站点）', 'set_eng_ffmpeg': '转码 / 切片 / 烧字幕', 'set_eng_whisper': '离线语音转写 whisper.cpp',
@@ -544,7 +544,7 @@ const I18N = {
     pool_modal_title: 'Queue for publish', pool_modal_hint: 'Queued items auto-publish at plan time in Publish Center: account matched automatically, result to your phone.',
     set_engines: 'Engines', set_accounts: 'Accounts', set_notify: 'Notify', set_cmds: 'Commands',
     set_bsub: 'Bilibili upload', set_douyin: 'Douyin', set_bili: 'Bilibili', set_douyin_acc: 'requires a desktop browser; not for unattended servers',
-    set_bili_login: 'Bilibili login (default account)', set_ok: 'logged in', set_scan2: 'to scan', set_enabled: 'enabled', set_disabled: 'disabled',
+    set_acc_add: 'add via publish center QR scan', set_none: 'not added', set_ok: 'logged in', set_scan2: 'to scan', set_enabled: 'enabled', set_disabled: 'disabled',
     set_cg_ops: 'Runtime rules', set_cg_llm: 'AI model (highlight / translate / narration)', set_cg_paths: 'Engine paths (bundled, usually no change)',
     set_cg_pub: 'Publish behavior',
     'set_eng_ytdlp': 'video download (thousands of sites)', 'set_eng_ffmpeg': 'transcode / clip / burn subtitles', 'set_eng_whisper': 'offline ASR whisper.cpp',
@@ -866,7 +866,6 @@ function renderSettings(el) {
 // 引擎/账号状态卡（fetchStats 轮询单独刷新，不碰运营配置表单）
 function renderSettingsStatus() {
   const eng = stats ? stats.engines : null;
-  const acc = stats ? stats.accounts : null;
   const engDesc = k => T('set_eng_' + k) || '';
   const ec = $('#set-engines-card'), ac = $('#set-accounts-card');
   if (ec) ec.innerHTML = `
@@ -875,12 +874,27 @@ function renderSettingsStatus() {
       <div class="kv"><span class="k">${engineCN(k)}</span>
         <span class="v">${engDesc(k)}</span>
         <span class="st ${on ? 'on' : 'off'}">${on ? '● ' + T('ready') : '○ ' + T('not_set')}</span></div>`).join('') : ''}`;
+  // 账号行=真账号列表（/api/stats account_list，语义同 /api/accounts）：
+  // 此前是硬编码状态卡——只认 bilibili-default 且抖音恒"待扫码"，
+  // 用户扫码建的账号永远显示待扫码，与发布中心状态自相矛盾
+  const accList = (stats && stats.account_list) ? stats.account_list : [];
+  const pfName = p => p === 'douyin' ? T('set_douyin') : T('set_bili');
+  const accRow = a => {
+    const expired = a.status === 'login_expired';
+    const ok = a.logged_in && !expired;
+    const st = ok ? `<span class="st on">● ${T('set_ok')}</span>`
+      : `<span class="st ${expired ? 'off' : 'warn'}">○ ${expired ? T('m5_expired') : T('set_scan2')}</span>`;
+    return `<div class="kv"><span class="k">${pfName(a.platform)}</span><span class="v">${esc(a.name)}</span>${st}</div>`;
+  };
+  let accRows = accList.map(accRow).join('');
+  // 平台无账号时给占位行：指路发布中心扫码（抖音附注浏览器限制）
+  if (!accList.some(a => a.platform === 'bilibili'))
+    accRows += `<div class="kv"><span class="k">${T('set_bili')}</span><span class="v">${T('set_acc_add')}</span><span class="st off">○ ${T('set_none')}</span></div>`;
+  if (!accList.some(a => a.platform === 'douyin'))
+    accRows += `<div class="kv"><span class="k">${T('set_douyin')}</span><span class="v">${T('set_douyin_acc')}</span><span class="st off">○ ${T('set_none')}</span></div>`;
   if (ac) ac.innerHTML = `
     <h4>${T('set_accounts')}</h4>
-    <div class="kv"><span class="k">${T('set_bili')}</span><span class="v">${T('set_bili_login')}</span>
-      <span class="st ${acc && acc.bilibili ? 'on' : 'warn'}">${acc && acc.bilibili ? '● ' + T('set_ok') : '○ ' + T('set_scan2')}</span></div>
-    <div class="kv"><span class="k">${T('set_douyin')}</span><span class="v">${T('set_douyin_acc')}</span>
-      <span class="st off">○ ${T('set_scan2')}</span></div>
+    ${accRows}
     <h4 style="margin-top:16px">${T('set_notify')}</h4>
     <div class="kv"><span class="k">pushme</span><span class="v">${T('set_eng_pushme')}</span>
       <span class="st ${eng && eng.pushme ? 'on' : 'off'}">${eng && eng.pushme ? '● ' + T('set_enabled') : '○ ' + T('set_disabled')}</span></div>`;

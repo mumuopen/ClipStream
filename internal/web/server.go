@@ -816,15 +816,31 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 		"deepseek": cfg.LLM.APIKey != "",
 		"pushme":   cfg.Notify.Pushme.Enable && cfg.Notify.Pushme.URL != "" && cfg.Notify.Pushme.PushKey != "",
 	}
-	// 账号登录态：B站=biliup cookie 文件存在；抖音=仅能报"配置过浏览器目录"，真实扫码态发布时验证
+	// 账号登录态：以 store 真账号列表为准（此前硬编码只查 bilibili-default——
+	// 用户扫码建的账号如 bili_xxx 在设置页永远显示"待扫码"，与发布中心的
+	// "正常"自相矛盾）。登录态语义同 /api/accounts 的 accountCookieOK：
+	// B站=cookies.json 在；抖音=登录态目录在。accounts 平台级汇总保留向后
+	// 兼容，account_list 供设置页逐账号渲染。
 	accounts := map[string]bool{
 		"bilibili": false,
 		"douyin":   false,
 	}
-	if _, err := os.Stat(filepath.Join(cfg.DataDir, "accounts", "bilibili-default", "cookies.json")); err == nil {
-		accounts["bilibili"] = true
+	accountList := []map[string]any{}
+	if as, err := s.store.ListAccounts(); err == nil {
+		for _, a := range as {
+			ok := s.accountCookieOK(a.Platform, a.Name)
+			accountList = append(accountList, map[string]any{
+				"platform":  a.Platform,
+				"name":      a.Name,
+				"status":    a.Status,
+				"logged_in": ok,
+			})
+			if _, known := accounts[a.Platform]; known && ok && a.Status != "login_expired" {
+				accounts[a.Platform] = true
+			}
+		}
 	}
-	writeJSON(w, map[string]any{"engines": engines, "accounts": accounts})
+	writeJSON(w, map[string]any{"engines": engines, "accounts": accounts, "account_list": accountList})
 }
 
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
