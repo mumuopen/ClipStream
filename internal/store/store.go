@@ -113,7 +113,17 @@ func (s *Store) migrate() error {
 		status TEXT NOT NULL DEFAULT 'pending', -- pending | dispatched | failed
 		created_at INTEGER
 	)`)
-	return err
+	if err != nil {
+		return err
+	}
+	// 发布失败计数（MarkPoolItemRetry：连续失败 ≥3 次置 failed 终态）。
+	// 幂等升级：老库补列，已存在则忽略
+	if _, err := s.db.Exec(`ALTER TABLE content_pool ADD COLUMN fails INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column") {
+			return err
+		}
+	}
+	return nil
 }
 
 // ── 直播关注（watches）──
@@ -509,6 +519,26 @@ func (s *Store) ListPoolItems(all bool) ([]*PoolItem, error) {
 func (s *Store) SetPoolItemStatus(id int64, status string) error {
 	_, err := s.db.Exec(`UPDATE content_pool SET status=? WHERE id=?`, status, id)
 	return err
+}
+
+// MarkPoolItemRetry 发布失败回池：失败计数 +1；连续失败 ≥ maxFails 次
+// 置 failed 终态（返回 final=true，泵/调度不再自动派发，UI 红色"已退池"
+// 等人工处置）；否则回 pending 由发布泵按间隔冷却重试——防单个坏条目
+// （素材损坏等）反复撞墙吃光当日配额
+func (s *Store) MarkPoolItemRetry(id int64, maxFails int) (final bool, err error) {
+	if _, err = s.db.Exec(`UPDATE content_pool SET fails = fails + 1 WHERE id=?`, id); err != nil {
+		return false, err
+	}
+	var fails int
+	if err = s.db.QueryRow(`SELECT fails FROM content_pool WHERE id=?`, id).Scan(&fails); err != nil {
+		return false, err
+	}
+	status := "pending"
+	if fails >= maxFails {
+		status = "failed"
+	}
+	_, err = s.db.Exec(`UPDATE content_pool SET status=? WHERE id=?`, status, id)
+	return status == "failed", err
 }
 
 // DeletePoolItem 删除池条目

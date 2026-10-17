@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
+	"os/exec" // BiliupLogin：CLI 交互式终端登录（需挂 stdin/stdout 扫码，不走 wexec）
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"chopperbot/internal/config"
+	"chopperbot/internal/wexec"
 )
 
 // BiliupPublish B站发布：biliup CLI 引擎（子进程直传，免浏览器）
@@ -83,7 +84,9 @@ func BiliupLogin(cfg *config.Config, account string) error {
 }
 
 func runBiliup(ctx context.Context, bin string, args []string) (string, error) {
-	cmd := exec.CommandContext(ctx, bin, args...)
+	// wexec：DETACHED 隔离子进程（同 whisper/ffmpeg，挂机控制台事件免疫；
+	// 2026-10-19 补漏：此前此路径漏走裸 exec）
+	cmd := wexec.Command(ctx, bin, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), err

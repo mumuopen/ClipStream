@@ -464,6 +464,7 @@ const I18N = {
     m5_rule: '自动发布是怎么运作的', m5_step1: '切片送入待发池', m5_step1b: '（审核通过后）',
     m5_step2: '按标签匹配账号', m5_step2b: '优先级高的先用', m5_step3: '到点自动发布', m5_step3b: '结果推送到手机',
     m5_ok: '正常', m5_login: '待登录', m5_expired: '登录已过期', m5_on: '启用', m5_off: '已停用', m5_last: '上次', m5_never: '未触发',
+    m5_pool_pending: '待发', m5_pool_dispatched: '已派发', m5_pool_failed: '已退池',
     m5_unlabel: '无标签', m5_confirm_acc: '删除该发布账号？（已保存的登录不受影响）', m5_confirm_sch: '删除该定时计划？',
     m5_acc_need: '账号名必填', m5_sch_need: '计划名必填',
     m5_login_btn: '扫码登录', m5_login_now: '登录中…', m5_toggle_on: '启用', m5_toggle_off: '停用',
@@ -531,6 +532,7 @@ const I18N = {
     m5_rule: 'How auto-publish works', m5_step1: 'Clip enters queue', m5_step1b: '(after review)',
     m5_step2: 'Match account by label', m5_step2b: 'highest priority first', m5_step3: 'Publish on time', m5_step3b: 'result pushed to phone',
     m5_ok: 'OK', m5_login: 'login', m5_expired: 'login expired', m5_on: 'ON', m5_off: 'OFF', m5_last: 'last', m5_never: 'never',
+    m5_pool_pending: 'pending', m5_pool_dispatched: 'dispatched', m5_pool_failed: 'returned',
     m5_unlabel: 'no labels', m5_confirm_acc: 'Delete this account? (saved login untouched)', m5_confirm_sch: 'Delete this plan?',
     m5_acc_need: 'Account name required', m5_sch_need: 'Plan name required',
     m5_login_btn: 'QR Login', m5_login_now: 'Logging in…', m5_toggle_on: 'Enable', m5_toggle_off: 'Disable',
@@ -1057,7 +1059,7 @@ let loginTimer = null;
 async function refreshMatrix() {
   try { accounts = await fetchJSON('/api/accounts'); } catch (e) { accounts = []; }
   try { schedules = await fetchJSON('/api/schedules'); } catch (e) { schedules = []; }
-  try { poolItems = await fetchJSON('/api/pool'); } catch (e) { poolItems = []; }
+  try { poolItems = await fetchJSON('/api/pool?all=1'); } catch (e) { poolItems = []; }
   if (page !== 'labels') return;
   // 表单与列表分离：轮询只刷列表，永不重建表单（填一半的账号/调度不再被清空）
   if ($('#acc-list')) renderMatrixLists(); else renderLabels($('#page'));
@@ -1155,14 +1157,21 @@ function renderMatrixLists() {
         <span class="jtime" style="margin-left:auto">${T('m5_last')} ${sc.last_run ? fmtClock(sc.last_run) : T('m5_never')}</span></div>
     </div>`).join('') || `<div class="hint">${T('m5_sch_empty')}</div>`;
 
-  $('#pool-list').innerHTML = (poolItems||[]).map(it => `
+  // 内容池全量展示（待发/已派发/已退池三态）：发布泵按间隔匀速消化待发条目，
+  // 每条的去向一目了然——不再"入池后凭空消失"（旧版只拉 pending，派发后即隐身）
+  const POOL_ST = { pending: ['queued', 'm5_pool_pending'], dispatched: ['running', 'm5_pool_dispatched'], failed: ['failed', 'm5_pool_failed'] };
+  $('#pool-list').innerHTML = (poolItems||[]).map(it => {
+    const st = POOL_ST[it.status] || POOL_ST.pending;
+    return `
     <div class="acc-card">
       <div class="acc-top"><span class="time-badge">${T('m5_pool_title')}</span><b title="${esc(it.clip)}">${esc(it.title)}</b>
+        <span class="badge ${st[0]}">${it.status === 'pending' ? '○ ' : '● '}${T(st[1])}</span>
         <span class="jtime">${platChipsFor(it.platforms)}</span>
         <span class="tag">${esc(it.tags || T('m5_unlabel'))}</span>
         <button class="del" title="${T('rv_pool_btn')}" onclick="delPoolItem(${it.id})">✕</button></div>
       <div class="acc-tags"><span class="jtime">${esc(it.source_job)} / ${esc(it.clip)}</span></div>
-    </div>`).join('') || `<div class="hint">${T('m5_pool_empty')}</div>`;
+    </div>`;
+  }).join('') || `<div class="hint">${T('m5_pool_empty')}</div>`;
 
   $('#sch-plats').innerHTML = Object.entries(PLAT_META).map(([k, v]) =>
     `<span class="plat ${schedPlats.includes(k) ? 'sel' : ''}" data-p="${k}" onclick="toggleSchedPlat('${k}')">${v.cn}</span>`).join('');

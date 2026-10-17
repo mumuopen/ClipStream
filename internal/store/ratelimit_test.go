@@ -68,10 +68,10 @@ func TestCountPublishSince(t *testing.T) {
 	now := time.Now()
 	today0 := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
 
-	addPublishJob(t, s, "j1", "a", today0-3600)     // 昨天：不计
-	addPublishJob(t, s, "j2", "a", today0+100)      // 今日
-	addPublishJob(t, s, "j3", "a", today0+200)      // 今日
-	addPublishJob(t, s, "j4", "b", today0+300)      // 今日但另一账号
+	addPublishJob(t, s, "j1", "a", today0-3600) // 昨天：不计
+	addPublishJob(t, s, "j2", "a", today0+100)  // 今日
+	addPublishJob(t, s, "j3", "a", today0+200)  // 今日
+	addPublishJob(t, s, "j4", "b", today0+300)  // 今日但另一账号
 
 	n, err := s.CountPublishSince("a", today0)
 	if err != nil {
@@ -82,5 +82,35 @@ func TestCountPublishSince(t *testing.T) {
 	}
 	if g, _ := s.CountPublishSince("", today0); g != 3 {
 		t.Fatalf("全局今日应 3 条，得到 %d", g)
+	}
+}
+
+// TestMarkPoolItemRetry 失败回池：连续失败 <max 次回 pending 冷却重试，
+// 达到 max 次置 failed 终态（泵/调度不再自动派发）
+func TestMarkPoolItemRetry(t *testing.T) {
+	s := mkStore(t)
+	id, err := s.AddPoolItem(&PoolItem{SourceJob: "j1", Clip: "clips/a.mp4", Title: "t", Status: "dispatched"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	final, err := s.MarkPoolItemRetry(id, 3)
+	if err != nil || final {
+		t.Fatalf("第 1 次失败应回 pending（final=false），得到 final=%v err=%v", final, err)
+	}
+	final, _ = s.MarkPoolItemRetry(id, 3)
+	if final {
+		t.Fatal("第 2 次失败仍应为 pending")
+	}
+	items, _ := s.ListPoolItems(false)
+	if len(items) != 1 {
+		t.Fatalf("failed 未到终态前应留在待发列表，得到 %d 条", len(items))
+	}
+	final, err = s.MarkPoolItemRetry(id, 3)
+	if err != nil || !final {
+		t.Fatalf("第 3 次失败应置终态 failed（final=true），得到 final=%v err=%v", final, err)
+	}
+	items, _ = s.ListPoolItems(false)
+	if len(items) != 0 {
+		t.Fatalf("failed 终态条目不应出现在待发列表，仍有 %d 条", len(items))
 	}
 }

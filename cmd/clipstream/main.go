@@ -398,8 +398,9 @@ func doServe(cfgPath string) error {
 	return httpSrv.Serve(listener)
 }
 
-// scheduleTicker M5 发布调度：每分钟检查每日 HH:MM 调度，到点且当天未执行则
-// 取内容池待发布条目 → 按账号路由（平台+标签匹配+优先级）→ 创建 publish 任务 → pushme 通知
+// scheduleTicker M5 发布调度：30s 检查两件事——
+// ①每日 HH:MM 计划到点且当天未执行 → dispatchSchedule（发当轮首条，batch_max 截断）
+// ②发布泵 pumpTick：当日已有计划触发过 → 待发池续发（间隔闸限速，见 pumpTick）
 func scheduleTicker(app *app) {
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
@@ -421,10 +422,50 @@ func scheduleTicker(app *app) {
 			_ = app.store.UpdateScheduleLastRun(sc.ID)
 			dispatchSchedule(app, sc)
 		}
+		pumpTick(app)
 	}
 	check()
 	for range t.C {
 		check()
+	}
+}
+
+// pumpTick 发布泵：当日有计划已触发即持续匀速消化待发池。
+// 背景：旧版留池条目只能等下一次计划时点（每日一个 HH:MM）——batch_max 留下的
+// N 条要锁到明天同一时刻，待发池形同虚设。泵语义：计划时点发首条后，后续条目
+// 每次tick尝试续发 1 条，间隔/每日闸天然限速（如 60min 间隔 → 每小时一条），
+// 配额用尽或池空即静默空转。失败回池的条目同样走泵重试（失败尝试计入间隔计时，
+// 自然冷却，不会拿头撞风控）。
+func pumpTick(app *app) {
+	scs, err := app.store.ListSchedules()
+	if err != nil || len(scs) == 0 {
+		return
+	}
+	today := time.Now().Format("2006-01-02")
+	armed := false
+	for _, sc := range scs {
+		if sc.Enabled && sc.LastRun > 0 && time.Unix(sc.LastRun, 0).Format("2006-01-02") == today {
+			armed = true
+			break
+		}
+	}
+	if !armed {
+		return // 今天没有任何计划触发过：不动池（尊重定时意图，没点发就不发）
+	}
+	items, err := app.store.ListPoolItems(false)
+	if err != nil || len(items) == 0 {
+		return
+	}
+	it := items[0] // 先进先出：最老条目先发
+	platforms := it.Platforms
+	if platforms == "" {
+		platforms = "bilibili"
+	}
+	acc := dispatchOne(app, it, platforms, map[string]string{}, "pump", false)
+	if acc != nil {
+		fmt.Printf("[pump] 续发：《%s》→ 账号「%s」\n", it.Title, acc.Name)
+		app.notifier.Notify("ClipStream 发布泵续发",
+			fmt.Sprintf("《%s》→ 账号「%s」（按间隔自动匀速续发，配额尽自动停）", it.Title, acc.Name))
 	}
 }
 
@@ -445,9 +486,8 @@ func dispatchSchedule(app *app, sc *store.Schedule) {
 
 	rl := app.cfg.Publish.RateLimit
 	allAccounts, _ := app.store.ListAccounts()
-	blocked := map[string]string{} // 账号名 → 被节流原因（本轮让位）
-	dispatched, skipped, throttled := 0, 0, 0
-	batchCut := 0
+	blocked := map[string]string{} // 账号名 → 被节流原因（本轮让位，跨条目共享）
+	dispatched, skipped, batchCut := 0, 0, 0
 
 	for i, it := range items {
 		if rl.BatchMax > 0 && dispatched >= rl.BatchMax {
@@ -462,80 +502,88 @@ func dispatchSchedule(app *app, sc *store.Schedule) {
 		if platforms == "" {
 			platforms = "bilibili"
 		}
-		platSet := commaSet(platforms)
-
-		// 账号路由（带节流重试）：从候选中取最高优先级，被节流闸拦下则拉黑该账号
-		// 并让次优账号接手——节流挡账号不挡发布；候选耗尽则条目留池
-		var acc *store.Account
-		for {
-			candidates := make([]*store.Account, 0, len(allAccounts))
-			for _, a := range allAccounts {
-				if _, hit := blocked[a.Name]; !hit {
-					candidates = append(candidates, a)
-				}
-			}
-			acc = routeAccount(candidates, platSet, it.Tags)
-			if acc == nil {
-				break
-			}
-			why := publishThrottled(app.store, rl, acc.Name)
-			if why == "" {
-				break // 通过三闸，放行
-			}
-			if _, dup := blocked[acc.Name]; !dup {
-				throttled++ // 新账号首次被拦
-			}
-			blocked[acc.Name] = why
-			fmt.Printf("[schedule] 《%s》账号「%s」%s——本轮让位\n", sc.Name, acc.Name, why)
-			acc = nil
-		}
-		if acc == nil {
-			// 无匹配账号：真无匹配（skipped）或可用账号全被节流（throttled 已计）
-			if len(blocked) < len(allAccounts) {
-				skipped++
-			}
-			fmt.Printf("[schedule] 《%s》条目 %s《%s》无可用账号（标签 %s），暂留池中\n", sc.Name, it.Clip, it.Title, it.Tags)
+		before := len(blocked)
+		acc := dispatchOne(app, it, platforms, blocked, "schedule", true)
+		if acc != nil {
+			dispatched++
 			continue
 		}
-
-		req := map[string]any{
-			"source_job": it.SourceJob,
-			"clip":       it.Clip,
-			"cover":      it.Cover,
-			"title":      it.Title,
-			"desc":       it.Desc,
-			"tags":       commaSlice(it.Tags),
-			"platforms":  platSlice(platforms), // Request.platforms 是 []string，不能传 map
-			"account":    acc.Name,
-			"dry_run":    false,
-			"pool_item_id": it.ID, // 失败回池依据：发布任务失败时把池条目置回 pending 供下轮重试
+		// 未派发：账号全被节流（blocked 增长）或真无匹配（blocked 未动）
+		if len(blocked) > before || len(blocked) >= len(allAccounts) {
+			// 让位已计（blocked 长度即被节流账号数）；条目留给发布泵按间隔自动续发
+		} else {
+			skipped++
 		}
-		reqJSON, _ := json.Marshal(req)
-		job, err := app.newJob(string(reqJSON), "publish")
-		if err != nil {
-			fmt.Printf("[schedule] 《%s》创建发布任务失败 %s: %v\n", sc.Name, it.Clip, err)
-			continue
-		}
-		app.runner.Enqueue(job.ID)
-		_ = app.store.SetPoolItemStatus(it.ID, "dispatched")
-		dispatched++
-		fmt.Printf("[schedule] 《%s》已派发：《%s》→ 账号「%s」(优先级 %d) 任务 %s\n",
-			sc.Name, it.Title, acc.Name, acc.Priority, job.ID)
+		fmt.Printf("[schedule] 《%s》条目 %s《%s》无可用账号（标签 %s），暂留池中\n", sc.Name, it.Clip, it.Title, it.Tags)
 	}
 
-	if dispatched+skipped+throttled+batchCut > 0 {
+	if dispatched+skipped+batchCut > 0 {
 		msg := fmt.Sprintf("《%s》（每日 %s）：派发 %d 条", sc.Name, sc.Time, dispatched)
-		if throttled > 0 {
-			msg += fmt.Sprintf("，%d 个账号被节流让位", throttled)
+		if throttled := len(blocked); throttled > 0 {
+			msg += fmt.Sprintf("，%d 个账号被节流（等间隔释放）", throttled)
 		}
 		if skipped > 0 {
 			msg += fmt.Sprintf("，%d 条无匹配账号", skipped)
 		}
-		if batchCut > 0 {
-			msg += fmt.Sprintf("，%d 条因单轮上限留池（下轮再发）", batchCut)
+		if rest := skipped + batchCut; rest > 0 {
+			msg += fmt.Sprintf("；留池 %d 条，将由发布泵按间隔自动续发（今日配额内）", rest)
 		}
 		app.notifier.Notify("ClipStream 调度派发", msg)
 	}
+}
+
+// dispatchOne 派发单条池条目（计划触发与发布泵共用）：
+// 账号路由 + 节流让位重试——挡账号不挡发布（被拦账号拉黑让位次优，全被拦
+// 则返回 nil 条目留池）。blocked 跨条目共享（计划轮次内已让位账号不重复探测）。
+// source 用于日志前缀与降噪：pump 每 30s 一轮会被间隔闸拦住，仅 schedule
+// 轮次（verbose=true）打印让位明细，泵静默空转不打日志。
+func dispatchOne(app *app, it *store.PoolItem, platforms string, blocked map[string]string, source string, verbose bool) *store.Account {
+	var acc *store.Account
+	for {
+		allAccounts, _ := app.store.ListAccounts()
+		var candidates []*store.Account
+		for _, a := range allAccounts {
+			if _, hit := blocked[a.Name]; !hit {
+				candidates = append(candidates, a)
+			}
+		}
+		acc = routeAccount(candidates, commaSet(platforms), it.Tags)
+		if acc == nil {
+			return nil
+		}
+		why := publishThrottled(app.store, app.cfg.Publish.RateLimit, acc.Name)
+		if why == "" {
+			break // 通过三闸，放行
+		}
+		if _, exists := blocked[acc.Name]; !exists && verbose {
+			fmt.Printf("[%s] 账号「%s」%s——让位\n", source, acc.Name, why)
+		}
+		blocked[acc.Name] = why
+	}
+
+	req := map[string]any{
+		"source_job": it.SourceJob,
+		"clip":       it.Clip,
+		"cover":      it.Cover,
+		"title":      it.Title,
+		"desc":       it.Desc,
+		"tags":       commaSlice(it.Tags),
+		"platforms":  platSlice(platforms), // Request.platforms 是 []string，不能传 map
+		"account":    acc.Name,
+		"dry_run":    false,
+		"pool_item_id": it.ID, // 失败回池依据：发布任务失败时把池条目置回 pending 供泵重试
+	}
+	reqJSON, _ := json.Marshal(req)
+	job, err := app.newJob(string(reqJSON), "publish")
+	if err != nil {
+		fmt.Printf("[%s] 创建发布任务失败 %s: %v\n", source, it.Clip, err)
+		return nil
+	}
+	app.runner.Enqueue(job.ID)
+	_ = app.store.SetPoolItemStatus(it.ID, "dispatched")
+	fmt.Printf("[%s] 已派发：《%s》→ 账号「%s」(优先级 %d) 任务 %s\n",
+		source, it.Title, acc.Name, acc.Priority, job.ID)
+	return acc
 }
 
 // publishThrottled 发布三闸判定：通过返回空串；被拦返回原因（日志与通知用）。

@@ -5,7 +5,7 @@
 //（当日事故：whisper-cli 子进程 exit 0xC000013A 转写全灭；serve 因 Go
 // signal.Notify 拦截侥幸存活，但关窗场景它同样活不了）。
 // 用法：进程入口先调 Self("xxx.log")，返回 true = 当前进程是一次性引导壳，
-// 应立即退出（真正的工作进程已 DETACHED 后台运行，日志转 data\xxx.log）。
+// 应立即退出（真正的工作进程已 DETACHED 后台运行，日志转 log\xxx.log）。
 package detach
 
 import (
@@ -19,7 +19,7 @@ const envMark = "CLIPSTREAM_DETACHED"
 
 // Self 以无控制台方式 re-exec 当前进程。
 // 返回 true 表示调用方是引导壳，应立即正常退出。
-// redirectFile：日志落盘名（相对 data\，如 "serve.log"）。返回 false = 已是
+// redirectFile：日志落盘名（相对 log\，如 "serve.log"）。返回 false = 已是
 // 后台本体或脱离失败（退化为前台运行，行为同旧版）。
 func Self(redirectFile string) bool {
 	if os.Getenv(envMark) == "1" {
@@ -30,8 +30,9 @@ func Self(redirectFile string) bool {
 		fmt.Fprintf(os.Stderr, "[detach] 无法定位自身（退化为前台）: %v\n", err)
 		return false
 	}
-	logPath := filepath.Join("data", redirectFile)
-	if err := os.MkdirAll("data", 0o755); err != nil {
+	// 运行日志统一收拢到根目录 log\（serve/daemon 一处可查；data\ 只放数据不混日志）
+	logPath := filepath.Join("log", redirectFile)
+	if err := os.MkdirAll("log", 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "[detach] 日志目录不可建（退化为前台）: %v\n", err)
 		return false
 	}
