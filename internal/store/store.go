@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"chopperbot/internal/core"
@@ -514,4 +515,48 @@ func (s *Store) SetPoolItemStatus(id int64, status string) error {
 func (s *Store) DeletePoolItem(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM content_pool WHERE id=?`, id)
 	return err
+}
+
+// ── 发布节流（防风控：B站高频投稿限流/封号）──
+
+// acctInputPattern 生成 jobs.input 的 LIKE 匹配模式：发布任务 input JSON
+// 紧凑序列化含 "account":"<name>"。账号名允许下划线（bili_395147691），
+// LIKE 里 _ 是单字符通配——必须 ESCAPE 消歧，否则 biliX... 会误匹配
+func acctInputPattern(account string) string {
+	const esc = `\`
+	r := strings.NewReplacer(esc, esc+esc, "%", esc+"%", "_", esc+"_")
+	return `%"account":"` + r.Replace(account) + `"%`
+}
+
+// LastPublishAt 最近一次发布任务的派发时刻（Unix 秒）。account 为空查全局。
+// 保守口径：不含状态过滤——失败的投稿尝试同样是风控行为特征
+func (s *Store) LastPublishAt(account string) (int64, error) {
+	var last sql.NullInt64
+	q := `SELECT MAX(created_at) FROM jobs WHERE kind='publish'`
+	var args []any
+	if account != "" {
+		q += ` AND input LIKE ? ESCAPE '\'`
+		args = append(args, acctInputPattern(account))
+	}
+	if err := s.db.QueryRow(q, args...).Scan(&last); err != nil {
+		return 0, err
+	}
+	return last.Int64, nil
+}
+
+// CountPublishSince 某账号自 since 起的发布任务数（account 为空查全局），
+// 供每日上限判定
+func (s *Store) CountPublishSince(account string, since int64) (int, error) {
+	q := `SELECT COUNT(*) FROM jobs WHERE kind='publish' AND created_at >= ?`
+	var args []any
+	args = append(args, since)
+	if account != "" {
+		q += ` AND input LIKE ? ESCAPE '\'`
+		args = append(args, acctInputPattern(account))
+	}
+	var n int
+	if err := s.db.QueryRow(q, args...).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
 }

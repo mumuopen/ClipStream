@@ -813,6 +813,9 @@ function renderSettings(el) {
           <label>已消费分段(天) <input id="cfg-rt-consumed" type="number" min="0" style="width:60px"></label>
           <label>水位% <input id="cfg-rt-free" type="number" min="1" max="95" style="width:60px"></label>
           <label>清理间隔(min) <input id="cfg-rt-min" type="number" min="5" style="width:60px"></label>
+          <label>发布间隔(min) <input id="cfg-pub-interval" type="number" min="0" max="1440" style="width:65px" title="同一账号两次发布的最小间隔（0=不限）"></label>
+          <label>每日上限/账号 <input id="cfg-pub-daily" type="number" min="0" max="100" style="width:55px" title="每账号每天最多发布条数（0=不限）"></label>
+          <label>单轮上限 <input id="cfg-pub-batch" type="number" min="0" max="50" style="width:55px" title="一次计划到点最多派发条数，其余留池（0=不限）"></label>
           <label>pushme <input id="cfg-nt-on" type="checkbox" style="width:auto"></label>
           <label>地址 <input id="cfg-nt-url" style="width:170px" placeholder="http://server:36591"></label>
           <label>push_key <input id="cfg-nt-key" style="width:140px"></label>
@@ -914,6 +917,9 @@ async function loadConfig() {
     setF('cfg-llm-think', c.llm?.thinking || 'disabled');
     setF('cfg-eng-ytdlp', c.engines?.ytdlp); setF('cfg-eng-ffmpeg', c.engines?.ffmpeg); setF('cfg-eng-ffprobe', c.engines?.ffprobe);
     setF('cfg-eng-biliup', c.engines?.biliup); setF('cfg-eng-asr-bin', c.engines?.asr?.binary); setF('cfg-eng-asr-model', c.engines?.asr?.model);
+    setF('cfg-pub-interval', c.publish?.rate_limit?.min_interval_min ?? 60);
+    setF('cfg-pub-daily', c.publish?.rate_limit?.daily_max ?? 3);
+    setF('cfg-pub-batch', c.publish?.rate_limit?.batch_max ?? 1);
   } catch (e) {}
 }
 async function saveConfig() {
@@ -930,6 +936,7 @@ async function saveConfig() {
       thinking: g('cfg-llm-think').value, proxy: '' },
     engines: { ytdlp: g('cfg-eng-ytdlp').value.trim(), ffmpeg: g('cfg-eng-ffmpeg').value.trim(), ffprobe: g('cfg-eng-ffprobe').value.trim(),
       biliup: g('cfg-eng-biliup').value.trim(), asr: { binary: g('cfg-eng-asr-bin').value.trim(), model: g('cfg-eng-asr-model').value.trim() } },
+    publish: { rate_limit: { min_interval_min: num('cfg-pub-interval'), daily_max: num('cfg-pub-daily'), batch_max: num('cfg-pub-batch') } },
   };
   // engines 段里 asr 可能全空：后端把空 binary/model 视为保持原值，这里不传 asr 键更简单——直接不包含空字符串路径
   for (const k of ['ytdlp','ffmpeg','ffprobe','biliup']) { if (!payload.engines[k]) delete payload.engines[k]; }

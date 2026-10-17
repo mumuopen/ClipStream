@@ -30,6 +30,10 @@ publish:
   headless: false                # 抖音浏览器发布是否无头（当前平台规划中）
   screenshots: true
   platforms_dir: "configs/platforms"
+  rate_limit:                    # 发布节流（防风控：高频投稿易被平台限流/封号）
+    batch_max: 1                 # 一次计划到点最多派发条数，其余留池下轮再发（0=不限）
+    min_interval_min: 60         # 同账号两次发布最小间隔分钟，手动发布也计入（0=不限）
+    daily_max: 3                 # 每账号每日最大发布数（0=不限）
 
 notify:
   pushme:

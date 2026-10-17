@@ -100,7 +100,12 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"biliup": s.cfg.Engines.Biliup,
 			"asr":    map[string]string{"binary": s.cfg.Engines.ASR.Binary, "model": s.cfg.Engines.ASR.Model},
 		},
-		"publish": map[string]any{"headless": s.cfg.Publish.Headless, "screenshots": s.cfg.Publish.Screenshots},
+		"publish": map[string]any{"headless": s.cfg.Publish.Headless, "screenshots": s.cfg.Publish.Screenshots,
+			"rate_limit": map[string]any{
+				"batch_max":        s.cfg.Publish.RateLimit.BatchMax,
+				"min_interval_min": s.cfg.Publish.RateLimit.MinIntervalMin,
+				"daily_max":        s.cfg.Publish.RateLimit.DailyMax,
+			}},
 		"chrome":  map[string]string{"path": s.cfg.Chrome.Path},
 	})
 }
@@ -119,6 +124,7 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		Publish *struct {
 			Headless    *bool `json:"headless"`
 			Screenshots *bool `json:"screenshots"`
+			RateLimit   *config.RateLimit `json:"rate_limit"`
 		} `json:"publish"`
 		Chrome *struct {
 			Path string `json:"path"`
@@ -208,6 +214,16 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Publish.Screenshots != nil {
 			s.cfg.Publish.Screenshots = *req.Publish.Screenshots
+		}
+		if req.Publish.RateLimit != nil {
+			rl := req.Publish.RateLimit
+			// 三闸均为 0 = 不限制；负数或离谱值拒绝（防误填把自己锁死）
+			if rl.BatchMax < 0 || rl.MinIntervalMin < 0 || rl.DailyMax < 0 ||
+				rl.BatchMax > 50 || rl.MinIntervalMin > 1440 || rl.DailyMax > 100 {
+				httpError(w, 400, "节流参数需在 0-50（单轮）/ 0-1440（间隔分钟）/ 0-100（每日）内，0=不限制")
+				return
+			}
+			s.cfg.Publish.RateLimit = *rl
 		}
 	}
 	if req.Chrome != nil {

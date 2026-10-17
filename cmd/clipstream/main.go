@@ -428,8 +428,10 @@ func scheduleTicker(app *app) {
 	}
 }
 
-// dispatchSchedule 调度触发：取内容池 → 账号路由 → 逐条创建发布任务
+// dispatchSchedule 调度触发：取内容池 → 账号路由 → 逐条创建发布任务。
 // 平台筛选优先级：调度.Platforms > 条目.Platforms > 全部配置平台（当前 bilibili）
+// 发布节流（防风控）：单轮上限/发布间隔/每日上限三闸；命中挡账号不挡发布——
+// 被拦账号让位给次优账号，全部被拦则条目留池等下轮。手动发布不受限但计入计时。
 func dispatchSchedule(app *app, sc *store.Schedule) {
 	items, err := app.store.ListPoolItems(false)
 	if err != nil {
@@ -441,9 +443,17 @@ func dispatchSchedule(app *app, sc *store.Schedule) {
 		return
 	}
 
-	accounts, _ := app.store.ListAccounts()
-	dispatched, skipped := 0, 0
-	for _, it := range items {
+	rl := app.cfg.Publish.RateLimit
+	allAccounts, _ := app.store.ListAccounts()
+	blocked := map[string]string{} // 账号名 → 被节流原因（本轮让位）
+	dispatched, skipped, throttled := 0, 0, 0
+	batchCut := 0
+
+	for i, it := range items {
+		if rl.BatchMax > 0 && dispatched >= rl.BatchMax {
+			batchCut = len(items) - i // 本轮配额用尽：其余全部留池（含本条）
+			break
+		}
 		// 平台取交集：调度限定 > 条目携带；都空则默认 bilibili
 		platforms := sc.Platforms
 		if platforms == "" {
@@ -454,12 +464,37 @@ func dispatchSchedule(app *app, sc *store.Schedule) {
 		}
 		platSet := commaSet(platforms)
 
-		// 账号路由：同平台 + 标签交集（条目 tags 命中账号人设标签）+ 可用状态 → 优先级降序取最高
-		acc := routeAccount(accounts, platSet, it.Tags)
+		// 账号路由（带节流重试）：从候选中取最高优先级，被节流闸拦下则拉黑该账号
+		// 并让次优账号接手——节流挡账号不挡发布；候选耗尽则条目留池
+		var acc *store.Account
+		for {
+			candidates := make([]*store.Account, 0, len(allAccounts))
+			for _, a := range allAccounts {
+				if _, hit := blocked[a.Name]; !hit {
+					candidates = append(candidates, a)
+				}
+			}
+			acc = routeAccount(candidates, platSet, it.Tags)
+			if acc == nil {
+				break
+			}
+			why := publishThrottled(app.store, rl, acc.Name)
+			if why == "" {
+				break // 通过三闸，放行
+			}
+			if _, dup := blocked[acc.Name]; !dup {
+				throttled++ // 新账号首次被拦
+			}
+			blocked[acc.Name] = why
+			fmt.Printf("[schedule] 《%s》账号「%s」%s——本轮让位\n", sc.Name, acc.Name, why)
+			acc = nil
+		}
 		if acc == nil {
-			// 无匹配账号：跳过并标记（不 fail，等账号补齐后下轮调度可重新入池场景少，直接留池）
-			skipped++
-			fmt.Printf("[schedule] 《%s》条目 %s《%s》无匹配账号（标签 %s），暂留池中\n", sc.Name, it.Clip, it.Title, it.Tags)
+			// 无匹配账号：真无匹配（skipped）或可用账号全被节流（throttled 已计）
+			if len(blocked) < len(allAccounts) {
+				skipped++
+			}
+			fmt.Printf("[schedule] 《%s》条目 %s《%s》无可用账号（标签 %s），暂留池中\n", sc.Name, it.Clip, it.Title, it.Tags)
 			continue
 		}
 
@@ -487,10 +522,40 @@ func dispatchSchedule(app *app, sc *store.Schedule) {
 		fmt.Printf("[schedule] 《%s》已派发：《%s》→ 账号「%s」(优先级 %d) 任务 %s\n",
 			sc.Name, it.Title, acc.Name, acc.Priority, job.ID)
 	}
-	if dispatched+skipped > 0 {
-		app.notifier.Notify("ClipStream 调度派发",
-			fmt.Sprintf("《%s》（每日 %s）：派发 %d 条，%d 条无匹配账号暂留池", sc.Name, sc.Time, dispatched, skipped))
+
+	if dispatched+skipped+throttled+batchCut > 0 {
+		msg := fmt.Sprintf("《%s》（每日 %s）：派发 %d 条", sc.Name, sc.Time, dispatched)
+		if throttled > 0 {
+			msg += fmt.Sprintf("，%d 个账号被节流让位", throttled)
+		}
+		if skipped > 0 {
+			msg += fmt.Sprintf("，%d 条无匹配账号", skipped)
+		}
+		if batchCut > 0 {
+			msg += fmt.Sprintf("，%d 条因单轮上限留池（下轮再发）", batchCut)
+		}
+		app.notifier.Notify("ClipStream 调度派发", msg)
 	}
+}
+
+// publishThrottled 发布三闸判定：通过返回空串；被拦返回原因（日志与通知用）。
+// 间隔闸按 jobs 表派发时刻（含手动发布与失败尝试——保守口径，失败投稿也是风控行为）
+func publishThrottled(st *store.Store, rl config.RateLimit, accName string) string {
+	now := time.Now()
+	if rl.MinIntervalMin > 0 {
+		if last, err := st.LastPublishAt(accName); err == nil && last > 0 {
+			if wait := time.Duration(rl.MinIntervalMin)*time.Minute - now.Sub(time.Unix(last, 0)); wait > 0 {
+				return fmt.Sprintf("距上次发布间隔不足（还需约 %s）", (wait / time.Minute * time.Minute).String())
+			}
+		}
+	}
+	if rl.DailyMax > 0 {
+		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
+		if n, err := st.CountPublishSince(accName, today); err == nil && n >= rl.DailyMax {
+			return fmt.Sprintf("已达每日上限（今日 %d/%d 条）", n, rl.DailyMax)
+		}
+	}
+	return ""
 }
 
 // routeAccount 账号路由：平台匹配 + 标签命中（任一）+ 状态 ok，按优先级降序取第一个

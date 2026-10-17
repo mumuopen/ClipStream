@@ -50,6 +50,19 @@ type Publish struct {
 	Headless     bool   `yaml:"headless"`      // 抖音浏览器发布是否无头（默认有头，风控更稳）
 	Screenshots  bool   `yaml:"screenshots"`   // 发布前/后截图存档
 	PlatformsDir string `yaml:"platforms_dir"` // 平台选择器配置目录
+	RateLimit    RateLimit `yaml:"rate_limit"`  // 发布节流（防风控：高频投稿限流/封号）
+}
+
+// RateLimit 发布节流三闸：单轮上限 / 发布间隔 / 每日上限。
+// 0 = 不限制。节流命中时挡账号不挡发布（被拦账号让位给次优账号，
+// 都被拦则条目留池等下轮）。手动发布不受限，但计入间隔计时。
+type RateLimit struct {
+	// 单轮调度最大派发数：一次计划到点最多发 N 条，其余留池（默认 1）
+	BatchMax int `yaml:"batch_max" json:"batch_max"`
+	// 同账号两次派发最小间隔分钟（默认 60）：手动发布也计入
+	MinIntervalMin int `yaml:"min_interval_min" json:"min_interval_min"`
+	// 每账号每日最大发布数（默认 3）：全天总量闹门
+	DailyMax int `yaml:"daily_max" json:"daily_max"`
 }
 
 type Notify struct {
@@ -111,7 +124,8 @@ func Default() *Config {
 		Proxy:   "http://127.0.0.1:7897",
 		Engines: Engines{YtDlp: "yt-dlp", FFmpeg: "ffmpeg", Probe: "ffprobe"},
 		Web:     Web{Listen: "127.0.0.1:8899"},
-		Publish: Publish{Headless: false, Screenshots: true, PlatformsDir: "configs/platforms"},
+		Publish: Publish{Headless: false, Screenshots: true, PlatformsDir: "configs/platforms",
+			RateLimit: RateLimit{BatchMax: 1, MinIntervalMin: 60, DailyMax: 3}},
 		Live:      Live{CheckIntervalSec: 60, SegmentSec: 600, AutoClip: true, MaxStaleSec: 300, PreviewKeywords: []string{"预告", "凌晨见"}},
 		Retention: Retention{Enabled: true, SegmentsDays: 7, ConsumedSegDays: 1, MinFreePercent: 10, CheckMinutes: 60},
 		AutoReview: AutoReview{Enabled: false, MinScore: 60, HardMinDurSec: 15, HardMaxDurSec: 120, BannedWords: []string{}},
