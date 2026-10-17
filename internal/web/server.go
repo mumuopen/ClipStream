@@ -465,6 +465,7 @@ func (s *Server) loginQRStart(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			pc, err := publish.LoadPlatformConfig("douyin", s.cfg.Publish.PlatformsDir)
 			if err != nil {
+				log.Printf("[douyin-login] 配置加载失败: %v", err)
 				sess.mu.Lock()
 				sess.state, sess.message = "error", "加载抖音配置失败: "+err.Error()
 				sess.mu.Unlock()
@@ -472,6 +473,7 @@ func (s *Server) loginQRStart(w http.ResponseWriter, r *http.Request) {
 			}
 			dy, err := publish.StartDouyinLogin(context.Background(), s.cfg, pc, req.Account)
 			if err != nil {
+				log.Printf("[douyin-login] 浏览器启动失败: %v", err)
 				sess.mu.Lock()
 				sess.state, sess.message = "error", err.Error()
 				sess.mu.Unlock()

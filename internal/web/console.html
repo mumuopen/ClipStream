@@ -366,6 +366,7 @@
       <img id="login-img" alt="登录二维码" style="max-width:280px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px">
     </div>
     <div class="hint" id="login-state" style="margin:6px 0;text-align:center">生成二维码中…</div>
+    <div class="hint" id="login-booting-tip" style="text-align:center;display:none"></div>
     <div class="hint" id="login-scan-tip" style="text-align:center">打开手机 App 扫一扫</div>
     <div class="modal-actions">
       <button class="ghost" onclick="startLogin(loginCtx.platform, loginCtx.account)">刷新二维码</button>
@@ -451,7 +452,7 @@ const I18N = {
     'barrage_min30': '近 30 分', 'barrage_min120': '近 2 小时', 'barrage_min360': '近 6 小时',
     /* ── 发布中心 ── */
     m5_acc: '发布账号', m5_acc_hint: '定时发布时自动选用：标签匹配 + 高优先级先用',
-    m5_acc_qr_btn: '＋ 扫码添加 B站账号', m5_acc_qr_dy_btn: '＋ 扫码添加 抖音账号', m5_acc_qr_hint: '手机 App 扫码即完成添加与登录（B站昵称自动取名），抖音首次会启动浏览器稍候片刻',
+    m5_acc_qr_btn: '＋ 扫码添加 B站账号', m5_acc_qr_dy_btn: '＋ 扫码添加 抖音账号', m5_acc_qr_hint: '手机 App 扫码即完成添加与登录；抖音在后台无头浏览器中出码（约 20-30 秒，桌面不弹窗）',
     m5_acc_qr_new: '新账号（扫码后自动命名）',
     m5_plat: '平台', m5_name: '账号名', m5_labels: '内容标签', m5_labels_ph: '游戏,高燃,赛事（逗号分隔，选填）', m5_prio: '优先级',
     m5_acc_name_ph: '如：电竞主号（将作为登录账号名）',
@@ -518,7 +519,7 @@ const I18N = {
     barrage_total: 'Total', barrage_peak: 'Peak', barrage_rate: 'count', barrage_per5: 'per 5s',
     'barrage_min30': '30 min', 'barrage_min120': '2 hours', 'barrage_min360': '6 hours',
     m5_acc: 'Publish Accounts', m5_acc_hint: 'auto-picked at publish: label match + priority',
-    m5_acc_qr_btn: '＋ Add Bilibili account (scan QR)', m5_acc_qr_dy_btn: '＋ Add Douyin account (scan QR)', m5_acc_qr_hint: 'Scan with the App — bilibili accounts auto-named from nickname; douyin launches a browser first',
+    m5_acc_qr_btn: '＋ Add Bilibili account (scan QR)', m5_acc_qr_dy_btn: '＋ Add Douyin account (scan QR)', m5_acc_qr_hint: 'Scan with the App to add & login; douyin loads in a headless browser (~20-30s, no window pops up)',
     m5_acc_qr_new: 'new account (auto-named after scan)',
     m5_plat: 'Platform', m5_name: 'Account name', m5_labels: 'Content labels', m5_labels_ph: 'game,hype,tournament (comma-sep, optional)', m5_prio: 'Priority',
     m5_acc_name_ph: 'e.g. esports-main (used as login name)',
@@ -1447,6 +1448,9 @@ async function startLogin(platform, account) {
     $('#login-title').textContent = '扫码登录 ' + platCN;
     $('#login-meta').textContent = account ? (platCN + ' · ' + account) : (platCN + ' · ' + T('m5_acc_qr_new'));
     $('#login-scan-tip').textContent = platform === 'douyin' ? '打开抖音 App → 首页右上角扫一扫' : '打开 B站 App → 首页右上角扫一扫';
+    const bootTip = $('#login-booting-tip');
+    if (platform === 'douyin') { bootTip.style.display = 'block'; bootTip.textContent = '首次出码约 20-30 秒：后台正在启动无头浏览器打开抖音登录页，桌面不会弹窗，请稍候'; }
+    else bootTip.style.display = 'none';
     $('#login-state').textContent = T('lg_running');
     $('#login-img').src = res.qr || ''; // B站同步返回；抖音 booting 后由 poll 送二维码
     $('#login-img').style.visibility = res.qr ? 'visible' : 'hidden';
@@ -1466,6 +1470,7 @@ async function pollLogin() {
     const img = $('#login-img');
     if (img.src !== st.qr) img.src = st.qr;
     img.style.visibility = 'visible';
+    $('#login-booting-tip').style.display = 'none'; // 出码后收掉启动提示
   }
   if (st.state === 'waiting' || st.state === 'booting') { $('#login-state').textContent = st.message || T('lg_running'); return; }
   stopLoginTimer();

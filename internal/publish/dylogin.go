@@ -31,8 +31,10 @@ type DouyinLoginSession struct {
 
 // StartDouyinLogin 启动浏览器并打开创作者中心（后台慢启动，二维码稍后可取）。
 // account 为空 = 新账号（draft 目录，登录成功后再按昵称落名）；非空 = 既有账号重登。
+// 整体 60 秒硬超时：无头 Edge 冷启动 + 页面加载正常 ~20-30s，卡死（实例锁/杀软拦截）
+// 时立即报错，绝不无限挂起。
 func StartDouyinLogin(parent context.Context, cfg *config.Config, pc *PlatformConfig, account string) (*DouyinLoginSession, error) {
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
 	ud := AccountDir(cfg.DataDir, "douyin", account)
 	fixed := ""
 	if account == "" {
