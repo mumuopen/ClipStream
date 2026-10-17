@@ -1373,12 +1373,15 @@ async function openPubModalFor(ctx) {
 }
 async function fillPubAccounts() {
   const sel = $('#pub-account');
-  let html = `<option value="">${T('pub_acc_default')}</option>`;
+  let html = '';
   try {
     const accs = await fetchJSON('/api/accounts');
-    html += accs.filter(a => a.platform === 'bilibili')
-      .map(a => `<option value="${esc(a.name)}">${esc(a.name)}${a.logged_in && a.status !== 'login_expired' ? '' : '（' + T('m5_login') + '）'}</option>`).join('');
+    const mine = accs.filter(a => a.platform === 'bilibili');
+    // 无"默认账号"占位：真账号直接排首位，唯一的自动选中（此前第一项是
+    // "默认账号(default)"占位——用户实测疑惑"我明明加了账号却不发"的元凶之一）
+    html += mine.map((a, i) => `<option value="${esc(a.name)}"${i === 0 ? ' selected' : ''}>${esc(a.name)}${a.logged_in && a.status !== 'login_expired' ? '' : '（' + T('m5_login') + '）'}</option>`).join('');
   } catch (e) {}
+  if (!html) html = `<option value="">（还没有可用的B站账号，先去发布中心扫码添加）</option>`;
   sel.innerHTML = html;
 }
 function closePubModal() { $('#pub-bg').style.display = 'none'; pubCtx = null; }
@@ -1410,12 +1413,31 @@ async function discardJob(jobId) {
 }
 /* ═══════════ 入池（错峰调度）═══════════ */
 let poolCtx = null;
+// autoTags 从切片标题自动生成内容标签（本地规则，不打 LLM）：
+// 标签是路由选号的匹配依据（账号标签 ∩ 条目标签），之前要求用户手填——
+// 违背"账号零输入"的设计方向。规则：标题含游戏术语/赛事词/情绪词 → 对应标签；
+// 兜底"游戏"（本平台切片天然是游戏直播内容）。
+function autoTags(title) {
+  const t = title || '';
+  const tags = new Set();
+  const dict = {
+    '电竞': ['赛区','入围','决赛','半决赛','BO5','BO3','小组赛','淘汰赛','赛季','S16','联赛','冠军','MVP'],
+    '高燃': ['团战','开团','五杀','逆转','翻盘','极限','反杀','神级','炸裂','高能','名场面'],
+    '搞笑': ['失误','翻车','下饭','离谱','迷惑','搞笑','乐子','梗','整活'],
+    '教学': ['套路','攻略','阵容','打法','对线','运营','细节','思路','揭秘','技巧'],
+  };
+  for (const [tag, words] of Object.entries(dict)) {
+    for (const w of words) { if (t.includes(w)) { tags.add(tag); break; } }
+  }
+  if (!tags.size) tags.add('游戏');
+  return [...tags].join(',');
+}
 function openPoolModal(ctx) {
   poolCtx = ctx;
   $('#pool-meta').textContent = ctx.clip.file + (ctx.clip.cover ? ' ｜ 封面 ' + ctx.clip.cover : ' ｜ 无封面');
   $('#pool-title').value = ctx.clip.title || '';
   $('#pool-desc').value = '';
-  $('#pool-tags').value = '';
+  $('#pool-tags').value = autoTags(ctx.clip.title); // 标题自动生成，用户可改
   $('#pool-bg').style.display = 'flex';
 }
 function closePoolModal() { $('#pool-bg').style.display = 'none'; poolCtx = null; }
