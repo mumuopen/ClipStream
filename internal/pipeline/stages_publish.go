@@ -120,13 +120,30 @@ func stagePublishFinalize(_ context.Context, job *core.Job, env *Env) error {
 			postmortem = fmt.Sprintf("\n账号「%s」登录态已失效，已停用其自动发布——请在发布中心重新扫码登录后续用。", strings.Join(stopped, "、"))
 		}
 		// 2) 调度派发的任务失败：回池冷却重试（连续失败 3 次置 failed 终态，
-		// 不再自动派发——防坏条目反复撞墙吃光当日配额；UI"已退池"红色提示人工处置）
+		// 不再自动派发——防坏条目反复撞墙吃光当日配额；UI"已退池"红色提示人工处置）。
+		// 多平台部分成功：先剔除已成功平台再回池——重派只补发失败平台；
+		// 剔除后剩空（每平台至少成功过一次）条目完结为 dispatched 不回池
 		if req.PoolItemID > 0 {
-			if final, err := env.Store.MarkPoolItemRetry(req.PoolItemID, 3); err == nil {
-				if final {
-					postmortem += "\n该切片连续发布失败 3 次，已退池终态（不再自动重试）——请检查后删除或重新入池。"
-				} else {
-					postmortem += "\n该切片已退回待发池，冷却后由发布泵自动重试。"
+			succeeded := platformNames(result, true)
+			poolDone := false
+			if len(succeeded) > 0 {
+				if left, terr := env.Store.TrimPoolItemPlatforms(req.PoolItemID, succeeded); terr == nil && left == "" {
+					_ = env.Store.SetPoolItemStatus(req.PoolItemID, "dispatched")
+					env.log(job, "多平台发布已达成（成功：%s），条目完结", strings.Join(succeeded, ","))
+					postmortem += "\n多平台发布已全部达成（个别平台此前失败现已重试成功），条目完结。"
+					poolDone = true
+				}
+			}
+			if !poolDone {
+				if final, err := env.Store.MarkPoolItemRetry(req.PoolItemID, 3); err == nil {
+					if len(succeeded) > 0 {
+						postmortem += fmt.Sprintf("\n已成功平台（%s）不再重发，仅补发失败平台。", strings.Join(succeeded, ","))
+					}
+					if final {
+						postmortem += "\n该切片连续发布失败 3 次，已退池终态（不再自动重试）——请检查后删除或重新入池。"
+					} else {
+						postmortem += "\n该切片已退回待发池，冷却后由发布泵自动重试。"
+					}
 				}
 			}
 		}
@@ -149,9 +166,19 @@ func stagePublishFinalize(_ context.Context, job *core.Job, env *Env) error {
 	return nil
 }
 
+// platformNames 按结果取平台名列表（ok=true 取成功平台，false 取失败平台）
+func platformNames(result publish.Result, ok bool) []string {
+	var out []string
+	for _, r := range result.Results {
+		if r.OK == ok {
+			out = append(out, r.Platform)
+		}
+	}
+	return out
+}
+
 // firstNonEmptyLine 取多行文本首个非空行
-func firstNonEmptyLine(s string, max int) string {
-	for _, line := range strings.Split(s, "\n") {
+func firstNonEmptyLine(s string, max int) string {	for _, line := range strings.Split(s, "\n") {
 		if l := strings.TrimSpace(line); l != "" {
 			return truncLine(l, max)
 		}

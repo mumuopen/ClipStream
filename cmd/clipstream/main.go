@@ -652,17 +652,33 @@ func dispatchOne(app *app, it *store.PoolItem, platforms string, blocked map[str
 		"pool_item_id": it.ID, // 失败回池依据：发布任务失败时把池条目置回 pending 供泵重试
 	}
 	reqJSON, _ := json.Marshal(req)
-	// 先置 dispatched 再建任务：newJob+Enqueue 是异步消费，极快失败路径
-	// （prepare 素材缺失→回池 pending）可能跑赢本行的 dispatched 覆盖，条目永久卡 dispatched
-	_ = app.store.SetPoolItemStatus(it.ID, "dispatched")
-	job, err := app.newJob(string(reqJSON), "publish")
-	if err != nil {
-		// 建任务失败：条目退回 pending 供下轮重试
-		_ = app.store.SetPoolItemStatus(it.ID, "pending")
-		fmt.Printf("[%s] 创建发布任务失败 %s: %v\n", source, it.Clip, err)
+	// 同账号互斥临界区（S6）：手动发布（web createJob）与泵/调度并发时，
+	// "闸判定 → 建任务 → 置 dispatched"必须原子——否则同秒双查双放行，
+	// 同账号两条任务都在间隔窗内出去。进锁后二次确认闸：等待锁期间
+	// 手动路径可能已占了配额
+	job, ok := func() (*core.Job, bool) {
+		var job *core.Job
+		app.store.WithAccountLock(acc.Name, func() {
+			if why := publishThrottled(app.store, app.cfg.Publish.RateLimit, acc.Name); why != "" {
+				return // 临界区窗口内配额被并发占走：本轮放弃，条目留池
+			}
+			// 先置 dispatched 再建任务：newJob+Enqueue 是异步消费，极快失败路径
+			// （prepare 素材缺失→回池 pending）可能跑赢 dispatched 覆盖
+			_ = app.store.SetPoolItemStatus(it.ID, "dispatched")
+			j, err := app.newJob(string(reqJSON), "publish")
+			if err != nil {
+				_ = app.store.SetPoolItemStatus(it.ID, "pending")
+				fmt.Printf("[%s] 创建发布任务失败 %s: %v\n", source, it.Clip, err)
+				return
+			}
+			app.runner.Enqueue(j.ID)
+			job = j
+		})
+		return job, job != nil
+	}()
+	if !ok {
 		return nil
 	}
-	app.runner.Enqueue(job.ID)
 	fmt.Printf("[%s] 已派发：《%s》→ 账号「%s」(优先级 %d) 任务 %s\n",
 		source, it.Title, acc.Name, acc.Priority, job.ID)
 	return acc
@@ -988,9 +1004,23 @@ func doLogin(cfgPath string, args []string) error {
 		return err
 	}
 
+	// 登录成功后恢复账号可用状态（L4）：login_expired 的账号 CLI 重登后
+	// 路由仍规避它——重登的语义就是修复登录态，需同步置回 ok。控制台扫码
+	// 路径已有该逻辑（settleBiliLogin），这里补齐 CLI 侧
+	restoreStatus := func(platform, name string) {
+		if st, err := store.Open(filepath.Join(cfg.DataDir, "clipstream.db")); err == nil {
+			_ = st.SetAccountStatus(platform, name, "ok")
+			st.Close()
+		}
+	}
+
 	switch *platform {
 	case "bilibili":
-		return publish.BiliupLogin(cfg, *account)
+		if err := publish.BiliupLogin(cfg, *account); err != nil {
+			return err
+		}
+		restoreStatus("bilibili", *account)
+		return nil
 	case "douyin":
 		pc, err := publish.LoadPlatformConfig("douyin", cfg.Publish.PlatformsDir)
 		if err != nil {
@@ -998,7 +1028,11 @@ func doLogin(cfgPath string, args []string) error {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
-		return publish.DouyinLogin(ctx, cfg, pc, *account)
+		if err := publish.DouyinLogin(ctx, cfg, pc, *account); err != nil {
+			return err
+		}
+		restoreStatus("douyin", *account)
+		return nil
 	case "":
 		return fmt.Errorf("缺少 --platform（bilibili 或 douyin）")
 	default:

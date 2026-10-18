@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"chopperbot/internal/core"
@@ -123,6 +124,11 @@ func (s *Store) migrate() error {
 		if !strings.Contains(err.Error(), "duplicate column") {
 			return err
 		}
+	}
+	// 节流三闸/调度恢复按 kind+created_at 扫 jobs：万级任务后泵 tick 查询
+	// 会拖慢，索引兜底（幂等）
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_kind_created ON jobs(kind, created_at)`); err != nil {
+		return err
 	}
 	return nil
 }
@@ -531,6 +537,47 @@ func (s *Store) SetPoolItemStatus(id int64, status string) error {
 	_, err := s.db.Exec(`UPDATE content_pool SET status=? WHERE id=?`, status, id)
 	return err
 }
+
+// TrimPoolItemPlatforms 多平台部分成功后的重发范围收缩：从条目 platforms
+// 剔除已成功平台（防回池重派时同一平台重复投稿）。返回剔除后剩余平台串；
+// 剩空返回 ""（调用方应停止回池——该条目已全部发出）。
+func (s *Store) TrimPoolItemPlatforms(id int64, succeeded []string) (string, error) {	var platforms string
+	if err := s.db.QueryRow(`SELECT platforms FROM content_pool WHERE id=?`, id).Scan(&platforms); err != nil {
+		return "", err
+	}
+	remove := map[string]bool{}
+	for _, p := range succeeded {
+		remove[p] = true
+	}
+	var left []string
+	for _, p := range strings.Split(platforms, ",") {
+		if p = strings.TrimSpace(p); p != "" && !remove[p] {
+			left = append(left, p)
+		}
+	}
+	out := strings.Join(left, ",")
+	if _, err := s.db.Exec(`UPDATE content_pool SET platforms=? WHERE id=?`, out, id); err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+// WithAccountLock 同账号派发互斥：把"查三闸 + 建任务 + 置 dispatched"包成
+// 原子段，堵住手动发布与发布泵/调度同秒并发导致的双投稿竞态窗（serve 进程内
+// 生效——两处调用方同进程；跨进程场景不存在：调度与泵都在 serve）
+func (s *Store) WithAccountLock(name string, fn func()) {
+	if name == "" {
+		fn()
+		return
+	}
+	v, _ := acctMu.LoadOrStore(name, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
+	fn()
+}
+
+var acctMu sync.Map
 
 // MarkPoolItemRetry 发布失败回池（单条 SQL 原子化：多步 UPDATE/SELECT/UPDATE
 // 中途崩溃会出现"计数已加但状态未回"的卡 dispatched 条目）。连续失败 ≥ maxFails

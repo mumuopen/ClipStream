@@ -893,7 +893,9 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	}
 	// 发布任务：Input 必须是合法的发布请求 JSON；非演练走三闸（防手点连发
 	// 复现批量风控——手动路径旧版零限制，是 2026-10-17 事故的手动复现面；
-	// dry-run 不真发不占闸；需要立即强发可在设置页把间隔/每日上限临时调 0）
+	// dry-run 不真发不占闸；强发出口=设置页把间隔/每日上限临时调 0）。
+	// 同账号互斥（S6）：与调度/泵的派发并发时"查闸+建任务"必须原子——
+	// 锁内只做判定与落库，HTTP 响应统一在锁外写
 	if kind == "publish" {
 		preq, err := publish.ParseRequest(req.Input)
 		if err != nil {
@@ -901,10 +903,31 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !preq.DryRun && preq.Account != "" {
-			if why := throttleReason(s.store, s.cfg.Publish.RateLimit, preq.Account); why != "" {
-				httpError(w, 429, why+"（防风控限流：手动发布同样受限；如需救急可在设置页临时调大间隔/上限参数）")
+			var throttleMsg, buildErr string
+			var job *core.Job
+			s.store.WithAccountLock(preq.Account, func() {
+				if why := throttleReason(s.store, s.cfg.Publish.RateLimit, preq.Account); why != "" {
+					throttleMsg = why
+					return
+				}
+				j, berr := s.buildJob(kind, strings.TrimSpace(req.Input))
+				if berr != nil {
+					buildErr = berr.Error()
+					return
+				}
+				s.runner.Enqueue(j.ID)
+				job = j
+			})
+			if throttleMsg != "" {
+				httpError(w, 429, throttleMsg+"（防风控限流：手动发布同样受限；如需救急可在设置页临时调大间隔/上限参数）")
 				return
 			}
+			if buildErr != "" {
+				httpError(w, 500, buildErr)
+				return
+			}
+			writeJSON(w, job)
+			return
 		}
 	}
 	// 字幕任务：Input 必须是合法的字幕请求 JSON
@@ -922,23 +945,33 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	job := &core.Job{
-		ID:     newJobID(),
-		Kind:   kind,
-		Status: core.StatusQueued,
-		Input:  strings.TrimSpace(req.Input),
-	}
-	job.Dir = filepath.Join(s.cfg.DataDir, "jobs", job.ID)
-	if err := os.MkdirAll(job.Dir, 0o755); err != nil {
-		httpError(w, 500, "创建任务目录失败: "+err.Error())
-		return
-	}
-	if err := s.store.CreateJob(job); err != nil {
-		httpError(w, 500, "保存任务失败: "+err.Error())
+	job, err := s.buildJob(kind, strings.TrimSpace(req.Input))
+	if err != nil {
+		httpError(w, 500, err.Error())
 		return
 	}
 	s.runner.Enqueue(job.ID)
 	writeJSON(w, job)
+}
+
+// buildJob 建任务并落库（磁盘目录 + DB 行），不入队不发响应——供 createJob
+// 主路径与账号锁临界区共用（锁内禁止写 HTTP 响应：http.ResponseWriter 并
+// 闭包路径重复写会二次 SetHeader 崩溃）
+func (s *Server) buildJob(kind, input string) (*core.Job, error) {
+	job := &core.Job{
+		ID:     newJobID(),
+		Kind:   kind,
+		Status: core.StatusQueued,
+		Input:  input,
+	}
+	job.Dir = filepath.Join(s.cfg.DataDir, "jobs", job.ID)
+	if err := os.MkdirAll(job.Dir, 0o755); err != nil {
+		return nil, fmt.Errorf("创建任务目录失败: %w", err)
+	}
+	if err := s.store.CreateJob(job); err != nil {
+		return nil, fmt.Errorf("保存任务失败: %w", err)
+	}
+	return job, nil
 }
 
 func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {

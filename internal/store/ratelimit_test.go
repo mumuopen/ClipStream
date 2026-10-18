@@ -85,6 +85,26 @@ func TestCountPublishSince(t *testing.T) {
 	}
 }
 
+// TestTrimPoolItemPlatforms 多平台部分成功：剔除已成功平台；剔空返回空串
+func TestTrimPoolItemPlatforms(t *testing.T) {
+	s := mkStore(t)
+	id, _ := s.AddPoolItem(&PoolItem{SourceJob: "j1", Clip: "clips/b.mp4", Title: "t", Platforms: "bilibili,douyin"})
+	left, err := s.TrimPoolItemPlatforms(id, []string{"bilibili"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left != "douyin" {
+		t.Fatalf("剔除 bilibili 后应剩 douyin，得到 %q", left)
+	}
+	left2, err := s.TrimPoolItemPlatforms(id, []string{"douyin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left2 != "" {
+		t.Fatalf("全部平台已成功应返回空串，得到 %q", left2)
+	}
+}
+
 // TestMarkPoolItemRetry 失败回池：连续失败 <max 次回 pending 冷却重试，
 // 达到 max 次置 failed 终态（泵/调度不再自动派发）
 func TestMarkPoolItemRetry(t *testing.T) {

@@ -131,12 +131,16 @@ func applyAutoReview(job *core.Job, env *Env) (auto, manual, rejected int) {
 	for _, v := range verdicts {
 		switch v.Action {
 		case "auto_pool":
+			// 投稿指纹治理：简介=切片区间转写摘要、标签=词典+标题抽词——
+			// 空简介+固定标签的模板化投稿是平台搬运检测的经典机器特征
+			desc := extractTranscriptSummary(job.Dir, v.Clip.Start, v.Clip.End)
 			item := &store.PoolItem{
 				SourceJob: job.ID,
 				Clip:      v.Clip.File,
 				Cover:     v.Clip.Cover,
 				Title:     v.Clip.Title,
-				Tags:      "", // 自动入池不预填路由标签：调度时平台全选/最高优先级账号
+				Desc:      desc,
+				Tags:      deriveTags(v.Clip.Title, desc),
 				Platforms: "bilibili",
 			}
 			if _, err := env.Store.AddPoolItem(item); err != nil {
@@ -151,7 +155,8 @@ func applyAutoReview(job *core.Job, env *Env) (auto, manual, rejected int) {
 				continue
 			}
 			auto++
-			env.log(job, "[auto] 自动入池《%s》（%s）", v.Clip.Title, v.Reason)
+			env.log(job, "[auto] 自动入池《%s》（%s｜简介 %d 字｜标签 %s）",
+				v.Clip.Title, v.Reason, len([]rune(desc)), item.Tags)
 		case "manual":
 			manual++
 			env.log(job, "[auto] 留人工审核《%s》（%s）", v.Clip.Title, v.Reason)
