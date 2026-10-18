@@ -79,6 +79,28 @@ func TestPoolItemRoomIDRoundtrip(t *testing.T) {
 	_ = id
 }
 
+// TestPoolPendingCount 背压水位数据源：只数 pending（dispatched/failed 不算积压）
+func TestPoolPendingCount(t *testing.T) {
+	s := mkStore(t)
+	if n, err := s.PoolPendingCount(); err != nil || n != 0 {
+		t.Fatalf("空池应为 0，got n=%d err=%v", n, err)
+	}
+	mkPool := func(clip, status string) {
+		t.Helper()
+		if _, err := s.db.Exec(`INSERT INTO content_pool (source_job,clip,title,status,created_at) VALUES (?,?,?,?,?)`,
+			"jbp", clip, "t", status, time.Now().Unix()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mkPool("clips/a.mp4", "pending")
+	mkPool("clips/b.mp4", "pending")
+	mkPool("clips/c.mp4", "dispatched") // 派发中：正常流转不算积压
+	mkPool("clips/d.mp4", "failed")     // 已退池：不算积压
+	if n, err := s.PoolPendingCount(); err != nil || n != 2 {
+		t.Fatalf("2 条 pending 应计 2，got n=%d err=%v", n, err)
+	}
+}
+
 // TestPoolItemActiveCount 成品清理前置闩：pending/dispatched 计为活跃（源任务
 // 目录不能删），failed/无条目可清
 func TestPoolItemActiveCount(t *testing.T) {

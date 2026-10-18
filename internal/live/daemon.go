@@ -37,6 +37,7 @@ type Daemon struct {
 
 	mu       sync.Mutex
 	sessions map[string]*liveSession // roomID → 录制会话
+	bpOn     bool                    // 池背压当前状态（tick 与会话收尾共写，mu 保护）
 
 	ctx    context.Context
 	stopFn context.CancelFunc
@@ -267,6 +268,17 @@ func (d *Daemon) check(w *store.Watch) {
 		return
 	}
 
+	// 池背压：开播但待发池已满 → 不起录制（切片生成已追不上发布速度，
+	// 再录也是白发+磁盘白烧）。状态转 paused（UI 徽章）+滞回水位自动恢复
+	if bp, pending := d.backpressureActive(); bp {
+		if w.Status != "paused" {
+			w.Status = "paused"
+			w.LastError = fmt.Sprintf("待发池积压 %d 条（≥上限 %d），暂停录制——发布追平自动恢复", pending, d.cfg.Live.PoolHigh)
+			_ = d.store.UpdateWatch(w)
+		}
+		return
+	}
+
 	d.startSession(w, info)
 }
 
@@ -279,6 +291,67 @@ func isPreviewTitle(title string, kws []string) bool {
 		}
 	}
 	return false
+}
+
+// BackpressureOn 池背压滞回判定（纯函数，供单测钉死语义）：
+// 待发池 pending ≥ high 触发；触发后须降回 low 以下才解除（防临界抖动：
+// 恰在阈值边沿每分钟一条地摇摆，录制反复起停）。high ≤ 0 = 永不触发；
+// low ≤ 0 或 ≥ high 时取 high/2。
+// 返回新的背压状态（cur 是上一状态）
+func BackpressureOn(cur bool, pending, high, low int) bool {
+	if high <= 0 {
+		return false
+	}
+	if pending >= high {
+		return true
+	}
+	if low <= 0 || low >= high {
+		low = high / 2
+	}
+	if cur {
+		return pending > low
+	}
+	return false
+}
+
+// backpressureActive 查当前背压状态（并发安全：tick 与会话收尾两处调用），
+// 状态翻转时推送通知一次（暂停/恢复都要让手机知道，否则挂机静默停录数日
+// 无人察觉）
+func (d *Daemon) backpressureActive() (bool, int) {
+	high := d.cfg.Live.PoolHigh
+	if high <= 0 {
+		return false, 0
+	}
+	pending, err := d.store.PoolPendingCount()
+	if err != nil {
+		return false, 0 // DB 故障不误杀录制（宁录不丢）
+	}
+	d.mu.Lock()
+	prev := d.bpOn
+	d.mu.Unlock()
+	now := BackpressureOn(prev, pending, high, d.cfg.Live.PoolLow)
+	if now != prev {
+		d.mu.Lock()
+		d.bpOn = now
+		d.mu.Unlock()
+		if now {
+			fmt.Printf("[backpressure] 待发池 %d 条（≥%d），暂停录制与送切\n", pending, high)
+			d.notify.Send("ClipStream 暂停录制",
+				fmt.Sprintf("待发池积压 %d 条（上限 %d）——暂停录制与送切，发布追平（降至水位 %d 以下）自动恢复", pending, high, lowOf(high, d.cfg.Live.PoolLow)))
+		} else {
+			fmt.Printf("[backpressure] 待发池 %d 条，发布追平，恢复录制\n", pending)
+			d.notify.Send("ClipStream 恢复录制", "待发池已消化至安全水位，直播录制与送切恢复")
+		}
+	}
+	return now, pending
+}
+
+// lowOf 解除水位（BackpressureOn 同款回退规则）
+func lowOf(high, low int) int {
+	if low <= 0 || low >= high {
+		return high / 2
+	}
+	return low
 }
 
 // startSession 创建录制会话并立即拉流
@@ -422,6 +495,15 @@ func (d *Daemon) endSession(s *liveSession) {
 	}
 	d.notify.Send("ClipStream 直播录制结束",
 		fmt.Sprintf("《%s》结束（房间 %s）；分段 %d 个", s.title, s.roomID, len(segs)))
+
+	// 池背压：池已满时分段不送切（正在录的这场录完收尾，不中途掐断浪费
+	// 流量；素材留在会话目录，等磁盘治理按保留天数兑底，发布追平后新场次
+	// 恢复正常送切）
+	if bp, _ := d.backpressureActive(); bp {
+		d.notify.Send("ClipStream 分段暂停送切",
+			fmt.Sprintf("待发池已满，《%s》（房间 %s）%d 个分段保留在磁盘未送切——发布追平后自动恢复", s.title, s.roomID, len(segs)))
+		return
+	}
 
 	if d.cfg.Live.AutoClip {
 		// 碎段流判定（按段数 + 段大小，不按时长）：虎牙 CDN 是 5-15 秒短连接，一场直播

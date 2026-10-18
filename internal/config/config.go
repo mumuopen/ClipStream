@@ -95,6 +95,13 @@ type Live struct {
 	// 变为预告态也自动收工。赛事房白天轮播"预告"画面但 API 仍报在播——
 	// 码率与真播无异（实测段均 764KB），只有标题能区分。默认 ["预告","凌晨见"]
 	PreviewKeywords []string `yaml:"preview_keywords" json:"preview_keywords"`
+	// 池背上（backpressure）：pending 待发池 ≥ PoolHigh 时暂停录制（新开播
+	// 不再起会话；下播分段不送切，素材留在会话目录由磁盘治理兑底），降回
+	// PoolLow 以下自动恢复。防“生成速度>发布速度”的慢性积压——赛事切片
+	// 隔周发=白发，且 pending 引用的成品目录清不掉，磁盘与 LLM 成本白烧。
+	// PoolHigh=0 关闭。默认 20/10（约 3 场直播的量，滞回防临界抖动）
+	PoolHigh int `yaml:"pool_high" json:"pool_high"` // 触发水位（默认 20）
+	PoolLow  int `yaml:"pool_low" json:"pool_low"`  // 解除水位（默认 high/2）
 }
 
 // Retention 磁盘清理策略（挂机刚需：数据流入-流出平衡）
@@ -140,7 +147,7 @@ func Default() *Config {
 		Web:     Web{Listen: "127.0.0.1:8899"},
 		Publish: Publish{Headless: false, Screenshots: true, PlatformsDir: "configs/platforms", ActiveHours: "10:00-23:00",
 			RateLimit: RateLimit{MinIntervalMin: 60, DailyMax: 6}},
-		Live:      Live{CheckIntervalSec: 60, SegmentSec: 600, AutoClip: true, MaxStaleSec: 300, PreviewKeywords: []string{"预告", "凌晨见"}},
+		Live:      Live{CheckIntervalSec: 60, SegmentSec: 600, AutoClip: true, MaxStaleSec: 300, PreviewKeywords: []string{"预告", "凌晨见"}, PoolHigh: 20, PoolLow: 10},
 		Retention: Retention{Enabled: true, SegmentsDays: 7, ConsumedSegDays: 1, MinFreePercent: 10, CheckMinutes: 60, MaxUsagePercent: 50, PublishedKeepDays: 3},
 		AutoReview: AutoReview{Enabled: false, MinScore: 60, HardMinDurSec: 15, HardMaxDurSec: 120, BannedWords: []string{}},
 	}

@@ -48,8 +48,11 @@ live:
   check_interval: 60            # 开播检测轮询秒
   segment_time: 600             # 录制分段秒
   auto_clip: true               # 下播后自动送切片管线
-  max_stale_sec: 300            # 素材停滞兑底：超过此时长无新分段即强制收工（0=关，不建议关——下播后 API 仍报在播时会挂死）
+  max_stale_sec: 300            # 素材停滞兜底：超过此时长无新分段即强制收工（0=关，不建议关——下播后 API 仍报在播时会挂死）
   preview_keywords: ["预告", "凌晨见"]  # 标题含任一关键词不视为真开播（赛事房轮播预告画面 API 也在播，只有标题能区分）
+  pool_high: 20                 # 池背压：待发池 pending ≥ 此值暂停录制与送切（防"切片生成>发布"的慢性积压——
+                                # 赛事切片隔周发=白发，且 pending 引用的成品目录清不掉；0=关闭）
+  pool_low: 10                  # 解除水位：待发池降回此值以下恢复录制（滞回区间防临界抖动；须低于 pool_high）
 
 retention:                       # 磁盘清理（挂机刚需，daemon 定时执行）
   enabled: true

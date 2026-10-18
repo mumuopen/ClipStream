@@ -39,9 +39,9 @@ A Go rewrite inspired by [ChopperBot](https://github.com/Geniusay/ChopperBot): s
 | 📖 | **Subtitles** | LLM translation + bilingual/Chinese burn-in |
 | 🎙️ | **AI narration** | edge-tts synthesis · speed-matched alignment |
 | 🤖 | **Unattended loop** | 3-tier auto-review gate → publish pump paced in the active window (interval + daily cap + jitter) → room↔account bind-first routing → PushMe phone reports |
-| 📱 | **Scan & done** | Bilibili + Douyin web QR login — **zero input, zero CLI**; nicknames auto-fetched, tags auto-generated from titles |
+| 📱 | **Scan & done** | Bilibili + Douyin web QR login — **zero input, zero CLI**; account name customizable (blank = auto-nickname) |
 | 🌐 | **Console** | Bilingual Web UI · single URL · dual-platform QR modal |
-| 🛡️ | **Server-grade hardening** | Fully isolated engine subprocesses (survive RDP drops / console closes / logoffs) · task recovery after crashes · 3-tier disk cleanup |
+| 🛡️ | **Server-grade hardening** | Fully isolated engine subprocesses (survive RDP drops / console closes / logoffs) · task recovery after crashes · 4-tier disk governance · pool backpressure (auto-pause recording when the queue is full, auto-resume once it drains) |
 
 > 🔭 Additional platforms are scheduled via [Issues](https://github.com/mumuopen/ClipStream/issues).
 

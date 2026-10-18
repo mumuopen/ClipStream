@@ -540,6 +540,15 @@ func (s *Store) SetPoolItemStatus(id int64, status string) error {
 	return err
 }
 
+// PoolPendingCount 待发池 pending 条目数（背压水位判定的数据源）
+func (s *Store) PoolPendingCount() (int, error) {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM content_pool WHERE status='pending'`).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // TrimPoolItemPlatforms 多平台部分成功后的重发范围收缩：从条目 platforms
 // 剔除已成功平台（防回池重派时同一平台重复投稿）。返回剔除后剩余平台串；
 // 剩空返回 ""（调用方应停止回池——该条目已全部发出）。

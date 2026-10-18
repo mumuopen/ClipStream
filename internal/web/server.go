@@ -154,6 +154,11 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 			httpError(w, 400, "检测间隔 ≥5s，分段时长 ≥60s")
 			return
 		}
+		// 池背压双水位：high=0 关闭；启用时 low 必须 < high（滞回区间才有意义）
+		if lv.PoolHigh < 0 || lv.PoolLow < 0 || (lv.PoolHigh > 0 && lv.PoolLow >= lv.PoolHigh) {
+			httpError(w, 400, "池上限需 0（关闭）或正数，且解除水位须低于触发水位")
+			return
+		}
 		s.cfg.Live = *lv
 	}
 	if req.Retention != nil {
@@ -376,12 +381,13 @@ func (s *Server) deletePool(w http.ResponseWriter, r *http.Request) {
 
 // qrSession 一次扫码登录会话。
 // bilibili：原生 HTTP 轮询（auth_code + poll）；douyin：rod headless 驱动
-// 登录页（dy 非空时）。account 非空 = 既有账号重新登录；空 = 新账号流程
-// （登录成功后自动用平台昵称建账号，用户零输入）。
+// 登录页（dy 非空时）。account 语义：空 = 新账号（登录成功后自动用平台
+// 昵称建账号）；非空 = 指定落账名——弹窗让用户输入的账号名（扫码成功即
+// 以此名建档），或既有账号重新登录（保持原名刷新登录态）。
 type qrSession struct {
 	id       string
 	platform string
-	account  string // 会话指定名（重新登录）；空则落账时自动起名
+	account  string // 会话指定名（用户输入的新账号名/重新登录）；空则落账时自动起名
 	authCode string // bilibili 轮询凭证
 	dy       *publish.DouyinLoginSession // 抖音 rod 会话（bilibili 为 nil）
 	startedAt time.Time
@@ -627,10 +633,11 @@ func (s *Server) settleBiliLogin(sess *qrSession, info *biliapi.TVLoginInfo) (st
 	if err := os.WriteFile(filepath.Join(dir, "cookies.json"), b, 0o644); err != nil {
 		return "", fmt.Errorf("cookie 写盘失败: %w", err)
 	}
-	// 新账号入库存档（同名已存在则只刷登录态，不重复建）
-	if sess.account == "" {
-		s.upsertAccount("bilibili", name)
-	}
+	// 账号入库（幂等：同名平台账号已存在则跳过）。三种路径统一走这：
+	// 新账号（昵称自动命名）、用户指定名的新账号（弹窗输入，扫码即落此名）、
+	// 既有账号重新登录（已存在则只刷登录态）。旧版只在 sess.account=="" 时
+	// 建档——用户指定名的新账号会有 cookies 目录但无 DB 行，发布中心看不到
+	s.upsertAccount("bilibili", name)
 	_ = s.store.SetAccountStatus("bilibili", name, "ok")
 	return name, nil
 }
