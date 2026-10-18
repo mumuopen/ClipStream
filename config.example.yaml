@@ -29,10 +29,11 @@ publish:
   headless: false                # 抖音浏览器发布是否无头（当前平台规划中）
   screenshots: true
   platforms_dir: "configs/platforms"
+  active_hours: "10:00-23:00"     # 发布窗口：窗口外不派发（夜里发没人看，且下播即批量入池立刻发是机器签名）；
+                                 # 空=全天；支持跨夜如 "22:00-06:00"。旧版“每日 HH:MM 定时计划”已移除
   rate_limit:                    # 发布节流（防风控：高频投稿易被平台限流/封号；手动+自动统一受限）
-    batch_max: 1                 # 一次计划到点最多派发条数，其余留池由发布泵按间隔续发（0=不限）
-    min_interval_min: 60         # 同账号两次发布最小间隔分钟（手动发布同样拦截，0=解除）
-    daily_max: 3                 # 每账号每日最大发布数（0=解除）
+    min_interval_min: 60         # 同账号两次发布最小间隔分钟（手动发布同样拦截，叠加 ±5% 随机抖动；0=解除）
+    daily_max: 6                 # 每账号每日最大发布数（0=解除）。6 条×60min ≈ 窗口内 6 小时与速发完当日池
 
 notify:
   pushme:
@@ -54,7 +55,11 @@ retention:                       # 磁盘清理（挂机刚需，daemon 定时�
   enabled: true
   segments_days: 7               # 录制会话保留天数（超期整目录删）
   consumed_seg_days: 1           # 预留：已消费分段更激进清理
-  min_free_percent: 10           # 磁盘剩余低于此百分比：预警+自动删最旧
+  min_free_percent: 10           # 磁盘剩余低于此百分比：预警+自动删最旧（守“盘快满”）
+  max_usage_percent: 50          # 数据目录占用上限（整盘%，0=关）：超限从最旧会话删起（守“这块盘只肯给你一半”）；
+                                 # 正在录制的会话目录绝不动
+  published_keep_days: 3         # 已发布切片成品目录保留天数（data/jobs/，0=不清）：到期且池条目全部终态才删；
+                                 # 任务行保留 DB 可查——成品与截图只进不出是磁盘长尾膨胀主因
   check_minutes: 60              # 清理检查间隔（分钟）
 
 auto_review:                     # 自动审核（挂机无人值守）

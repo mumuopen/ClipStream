@@ -2,6 +2,8 @@ package config
 
 import (
 	"os"
+	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -50,18 +52,22 @@ type Publish struct {
 	Headless     bool   `yaml:"headless"`      // 抖音浏览器发布是否无头（默认有头，风控更稳）
 	Screenshots  bool   `yaml:"screenshots"`   // 发布前/后截图存档
 	PlatformsDir string `yaml:"platforms_dir"` // 平台选择器配置目录
-	RateLimit    RateLimit `yaml:"rate_limit"`  // 发布节流（防风控：高频投稿限流/封号）
+	// 发布窗口（如 "10:00-23:00"）：窗口外不派发（夜里发没人看，产出即刻洪峰
+	// 也是机器签名）。空 = 全天可发。支持跨夜（"22:00-06:00"）
+	ActiveHours string    `yaml:"active_hours"` // 发布窗口
+	RateLimit   RateLimit `yaml:"rate_limit"`   // 发布节流（防风控：高频投稿限流/封号）
 }
 
-// RateLimit 发布节流三闸：单轮上限 / 发布间隔 / 每日上限。
+// RateLimit 发布节流两闸：发布间隔 / 每日上限。
 // 0 = 不限制。节流命中时挡账号不挡发布（被拦账号让位给次优账号，
 // 都被拦则条目留池等下轮）。手动发布不受限，但计入间隔计时。
+// （旧字段 batch_max 已随“定时计划→发布泵”重构废弃：泵模型下每个 tick
+// 至多派 1 条，单轮上限语义不复存在，yaml 里残留的 batch_max 会被忽略）
 type RateLimit struct {
-	// 单轮调度最大派发数：一次计划到点最多发 N 条，其余留池（默认 1）
-	BatchMax int `yaml:"batch_max" json:"batch_max"`
-	// 同账号两次派发最小间隔分钟（默认 60）：手动发布也计入
+	// 同账号两次派发最小间隔分钟（默认 60）：手动发布也计入；叠加 ±5% 抖动
 	MinIntervalMin int `yaml:"min_interval_min" json:"min_interval_min"`
-	// 每账号每日最大发布数（默认 3）：全天总量闹门
+	// 每账号每日最大发布数（默认 6）：全天总量闹门（窗口内与间隔配合，
+	// 6 条 × 60min ≈ 6 小时与速发完当日池）
 	DailyMax int `yaml:"daily_max" json:"daily_max"`
 }
 
@@ -102,6 +108,14 @@ type Retention struct {
 	MinFreePercent int `yaml:"min_free_percent" json:"min_free_percent"` // 默认 10
 	// 清理检查间隔（分钟）
 	CheckMinutes int `yaml:"check_minutes" json:"check_minutes"` // 默认 60
+	// 目录占用上限（整盘百分比，默认 50）：ClipStream 数据目录占用超过
+	// 盘容量的一半即从最旧录制会话删起（水位守的是“盘快满”，占用上限
+	// 守的是“这块盘我只肯给你一半”，两者互补）。0 = 关闭占用上限治理
+	MaxUsagePercent int `yaml:"max_usage_percent" json:"max_usage_percent"`
+	// 已发布切片成品保留天数（data/jobs/，默认 3，0 = 不自动清）：
+	// 成品与发布截图只进不出是磁盘长尾膨胀主因；到期且池条目已全部终态
+	// （无 pending/dispatched 引用）才删磁盘目录，DB 任务行保留可查
+	PublishedKeepDays int `yaml:"published_keep_days" json:"published_keep_days"`
 }
 
 // AutoReview 自动审核（挂机无人值守：切片完成不再等人工，分级闸门自动入池）
@@ -124,10 +138,10 @@ func Default() *Config {
 		Proxy:   "http://127.0.0.1:7897",
 		Engines: Engines{YtDlp: "yt-dlp", FFmpeg: "ffmpeg", Probe: "ffprobe"},
 		Web:     Web{Listen: "127.0.0.1:8899"},
-		Publish: Publish{Headless: false, Screenshots: true, PlatformsDir: "configs/platforms",
-			RateLimit: RateLimit{BatchMax: 1, MinIntervalMin: 60, DailyMax: 3}},
+		Publish: Publish{Headless: false, Screenshots: true, PlatformsDir: "configs/platforms", ActiveHours: "10:00-23:00",
+			RateLimit: RateLimit{MinIntervalMin: 60, DailyMax: 6}},
 		Live:      Live{CheckIntervalSec: 60, SegmentSec: 600, AutoClip: true, MaxStaleSec: 300, PreviewKeywords: []string{"预告", "凌晨见"}},
-		Retention: Retention{Enabled: true, SegmentsDays: 7, ConsumedSegDays: 1, MinFreePercent: 10, CheckMinutes: 60},
+		Retention: Retention{Enabled: true, SegmentsDays: 7, ConsumedSegDays: 1, MinFreePercent: 10, CheckMinutes: 60, MaxUsagePercent: 50, PublishedKeepDays: 3},
 		AutoReview: AutoReview{Enabled: false, MinScore: 60, HardMinDurSec: 15, HardMaxDurSec: 120, BannedWords: []string{}},
 	}
 }
@@ -150,4 +164,62 @@ func Load(path string) (*Config, error) {
 func (c *Config) Save(path string) error {
 	b, _ := yaml.Marshal(c)
 	return os.WriteFile(path, b, 0o644)
+}
+
+// ParseActiveHours 解析发布窗口串 "HH:MM-HH:MM"（如 "10:00-23:00"，支持跨夜
+// "22:00-06:00"）。返回当日窗口起止时刻；空串 = 全天（ok=true，start/end 零值）。
+// 非法格式 ok=false（server 表单校验与调度侧防御共用）
+func ParseActiveHours(s string) (start, end time.Time, ok bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, time.Time{}, true
+	}
+	parts := strings.SplitN(s, "-", 2)
+	if len(parts) != 2 {
+		return time.Time{}, time.Time{}, false
+	}
+	// 容忍 H:M 短格式（"9:5" → "09:05"）：time layout "15:04" 要求零填充
+	hm := func(v string) (time.Time, bool) {
+		ab := strings.SplitN(strings.TrimSpace(v), ":", 2)
+		if len(ab) != 2 {
+			return time.Time{}, false
+		}
+		parsed, err := time.ParseInLocation("15:04", pad2(ab[0])+":"+pad2(ab[1]), time.Local)
+		if err != nil {
+			return time.Time{}, false
+		}
+		return parsed, true
+	}
+	p, ok1 := hm(parts[0])
+	q, ok2 := hm(parts[1])
+	if !ok1 || !ok2 || q.Sub(p) == 0 {
+		return time.Time{}, time.Time{}, false
+	}
+	now := time.Now()
+	start = time.Date(now.Year(), now.Month(), now.Day(), p.Hour(), p.Minute(), 0, 0, time.Local)
+	end = time.Date(now.Year(), now.Month(), now.Day(), q.Hour(), q.Minute(), 0, 0, time.Local)
+	return start, end, true
+}
+
+// pad2 数字串零填充到两位（"9" → "09"；超长原样返回交给 Parse 报错）
+func pad2(s string) string {
+	if len(s) == 1 && s[0] >= '0' && s[0] <= '9' {
+		return "0" + s
+	}
+	return s
+}
+
+// InActiveHours 判断 now 是否在发布窗口内。窗口为空 = 全天；支持跨夜
+// 窗口（start > end 时窗口跨午夜，如 "22:00-06:00"）
+func InActiveHours(s string, now time.Time) bool {
+	start, end, ok := ParseActiveHours(s)
+	if !ok || start.IsZero() {
+		return true // 空/非法窗口：不因配置错误把发布全部锁死，全天可发（防御默认）
+	}
+	nowHm := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute(), 0, 0, time.Local)
+	if !start.After(end) {
+		return !nowHm.Before(start) && nowHm.Before(end)
+	}
+	// 跨夜窗口：22:00-06:00 = [22:00, 24:00) ∪ [00:00, 06:00)
+	return !nowHm.Before(start) || nowHm.Before(end)
 }

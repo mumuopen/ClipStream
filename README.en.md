@@ -4,7 +4,7 @@
 
 ### Stream in, videos out. · 直播流进，成片自动出。
 
-**Live-watch detection → auto-record → danmaku × speech highlight mining → smart clipping → translate & dub → scheduled multi-account publishing → phone battle reports**
+**Live-watch detection → auto-record → danmaku × speech highlight mining → smart clipping → translate & dub → paced multi-account publishing → phone battle reports**
 
 [English] · [中文](README.md)
 
@@ -22,7 +22,7 @@
 
 The 4 a.m. comeback, the moment chat exploded with five thousand barrages — by next morning it's already clipped, subtitled, published, and the report is on your phone.
 
-That's ClipStream: **an unattended live-clipping factory**. Recording starts when the stream starts, cutting starts when the stream ends. AI picks only the segments where chat heat and commentary peak, the review gate blocks the flops, the pool publishes off-peak on schedule — nobody needs to sit at the machine.
+That's ClipStream: **an unattended live-clipping factory**. Recording starts when the stream starts, cutting starts when the stream ends. AI picks only the segments where chat heat and commentary peak, the review gate blocks the flops, and the publish pump releases clips evenly inside the active window — nobody needs to sit at the machine.
 
 A Go rewrite inspired by [ChopperBot](https://github.com/Geniusay/ChopperBot): single pure-Go binary, no cgo, hardened on a production Windows server.
 
@@ -38,7 +38,7 @@ A Go rewrite inspired by [ChopperBot](https://github.com/Geniusay/ChopperBot): s
 | 🔪 | **Frame-accurate cutting** | FLV tag-level concat · timestamp normalization across merged segments · measured cut length matches annotation exactly |
 | 📖 | **Subtitles** | LLM translation + bilingual/Chinese burn-in |
 | 🎙️ | **AI narration** | edge-tts synthesis · speed-matched alignment |
-| 🤖 | **Unattended loop** | 3-tier auto-review gate → pool → label-routed multi-account scheduled publishing → PushMe phone reports |
+| 🤖 | **Unattended loop** | 3-tier auto-review gate → publish pump paced in the active window (interval + daily cap + jitter) → room↔account bind-first routing → PushMe phone reports |
 | 📱 | **Scan & done** | Bilibili + Douyin web QR login — **zero input, zero CLI**; nicknames auto-fetched, tags auto-generated from titles |
 | 🌐 | **Console** | Bilingual Web UI · single URL · dual-platform QR modal |
 | 🛡️ | **Server-grade hardening** | Fully isolated engine subprocesses (survive RDP drops / console closes / logoffs) · task recovery after crashes · 3-tier disk cleanup |
@@ -56,7 +56,7 @@ flowchart LR
     C --> D["LLM highlight<br/>20-60s precision cut"]
     D --> E["Processing<br/>bilingual subs · AI dub"]
     E --> F["Review gate<br/>reject / human / auto-pass"]
-    F --> G["Content pool<br/>off-peak schedule"]
+    F --> G["Publish pump<br/>paced in window"]
     G --> H["Multi-account routing<br/>label match · priority"]
     H --> I["PushMe report<br/>straight to phone"]
 ```
@@ -128,7 +128,7 @@ cp config.example.yaml config.yaml   # fill engine paths & LLM key
 - **Pure Go · single binary**: cgo-free SQLite (modernc.org/sqlite), production-hardened on Windows Server
 - **Process separation**: recorder daemon and web/pipeline run independently, avoiding parent-child FLV streaming IO pitfalls
 - **Pluggable engines · graceful degradation**: no whisper → skip ASR; no LLM → barrage-peak clipping; no biliup → review-only
-- **Unattended loop**: review gate → pool → off-peak scheduling (platform × label account routing) → publish → PushMe reports
+- **Unattended loop**: review gate → publish pump (paced by active-hours window, interval & daily caps) → bind-first account routing → publish → PushMe reports
 
 > Source file `docs/architecture.drawio`, editable at [app.diagrams.net](https://app.diagrams.net).
 

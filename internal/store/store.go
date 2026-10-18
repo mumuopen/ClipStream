@@ -88,20 +88,8 @@ func (s *Store) migrate() error {
 	)`); err != nil {
 		return err
 	}
-	// 发布调度（M5：定时错峰占位）
-	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schedules (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		name TEXT NOT NULL,
-		time TEXT NOT NULL,          -- HH:MM 每日触发
-		platforms TEXT NOT NULL DEFAULT '',  -- 目标平台（逗号分隔，空=全部）
-		account_ids TEXT NOT NULL DEFAULT '', -- 账号筛选（逗号分隔，空=按路由）
-		labels TEXT NOT NULL DEFAULT '',  -- 内容标签筛选（逗号分隔）
-		enabled INTEGER NOT NULL DEFAULT 1,
-		last_run INTEGER NOT NULL DEFAULT 0,
-		created_at INTEGER
-	)`); err != nil {
-		return err
-	}
+	// （schedules 定时计划表已退役，不再建：老库残留行无害，新库无此表；
+	// 发布节奏由 config.publish.active_hours 窗口 + rate_limit 两闸接管）
 	// 内容池（M5：审核通过待发布的切片）
 	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS content_pool (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,6 +105,19 @@ func (s *Store) migrate() error {
 	)`)
 	if err != nil {
 		return err
+	}
+	// 直播↔发布账号绑定（room→account：矩阵号人设垂直，派发时优先于标签路由）。
+	// 幂等升级：老库补列，已存在则忽略
+	if _, err := s.db.Exec(`ALTER TABLE watches ADD COLUMN bind_account TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("升级表 watches（bind_account）: %w", err)
+		}
+	}
+	// 池条目来源直播间（入池时从源任务 video 路径解析；空=非直播来源，走标签路由）
+	if _, err := s.db.Exec(`ALTER TABLE content_pool ADD COLUMN room_id TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("升级表 content_pool（room_id）: %w", err)
+		}
 	}
 	// 发布失败计数（MarkPoolItemRetry：连续失败 ≥3 次置 failed 终态）。
 	// 幂等升级：老库补列，已存在则忽略
@@ -136,19 +137,23 @@ func (s *Store) migrate() error {
 // ── 直播关注（watches）──
 
 // Watch 关注的直播间
+// BindAccount：本房间的切片优先发到该账号（矩阵号人设垂直；空=按标签路由）
 type Watch struct {
-	ID        int64  `json:"id"`
-	Platform  string `json:"platform"`
-	URL       string `json:"url"`
-	RoomID    string `json:"room_id"`
-	Title     string `json:"title"`
-	Status    string `json:"status"` // idle | recording | error
-	LastError string `json:"last_error"`
-	LiveStart int64  `json:"live_start"`
-	SegDir    string `json:"seg_dir"`
-	SegCount  int    `json:"seg_count"`
-	CreatedAt int64  `json:"created_at"`
+	ID          int64  `json:"id"`
+	Platform    string `json:"platform"`
+	URL         string `json:"url"`
+	RoomID      string `json:"room_id"`
+	Title       string `json:"title"`
+	Status      string `json:"status"` // idle | recording | error
+	LastError   string `json:"last_error"`
+	LiveStart   int64  `json:"live_start"`
+	SegDir      string `json:"seg_dir"`
+	SegCount    int    `json:"seg_count"`
+	BindAccount string `json:"bind_account"`
+	CreatedAt   int64  `json:"created_at"`
 }
+
+const watchCols = `id,platform,url,room_id,title,status,last_error,live_start,seg_dir,seg_count,bind_account,created_at`
 
 func (s *Store) AddWatch(w *Watch) (int64, error) {
 	if w.Platform == "" {
@@ -158,9 +163,9 @@ func (s *Store) AddWatch(w *Watch) (int64, error) {
 		w.Status = "idle"
 	}
 	w.CreatedAt = time.Now().Unix()
-	res, err := s.db.Exec(`INSERT INTO watches (platform,url,room_id,title,status,last_error,live_start,seg_dir,seg_count,created_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?)`,
-		w.Platform, w.URL, w.RoomID, w.Title, w.Status, w.LastError, w.LiveStart, w.SegDir, w.SegCount, w.CreatedAt)
+	res, err := s.db.Exec(`INSERT INTO watches (platform,url,room_id,title,status,last_error,live_start,seg_dir,seg_count,bind_account,created_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		w.Platform, w.URL, w.RoomID, w.Title, w.Status, w.LastError, w.LiveStart, w.SegDir, w.SegCount, w.BindAccount, w.CreatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -168,7 +173,7 @@ func (s *Store) AddWatch(w *Watch) (int64, error) {
 }
 
 func (s *Store) ListWatches() ([]*Watch, error) {
-	rows, err := s.db.Query(`SELECT id,platform,url,room_id,title,status,last_error,live_start,seg_dir,seg_count,created_at FROM watches ORDER BY id`)
+	rows, err := s.db.Query(`SELECT id,platform,url,room_id,title,status,last_error,live_start,seg_dir,seg_count,bind_account,created_at FROM watches ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +181,8 @@ func (s *Store) ListWatches() ([]*Watch, error) {
 	var out []*Watch
 	for rows.Next() {
 		var w Watch
-		if err := rows.Scan(&w.ID, &w.Platform, &w.URL, &w.RoomID, &w.Title, &w.Status, &w.LastError, &w.LiveStart, &w.SegDir, &w.SegCount, &w.CreatedAt); err != nil {
+		if err := rows.Scan(&w.ID, &w.Platform, &w.URL, &w.RoomID, &w.Title, &w.Status,
+			&w.LastError, &w.LiveStart, &w.SegDir, &w.SegCount, &w.BindAccount, &w.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, &w)
@@ -185,9 +191,27 @@ func (s *Store) ListWatches() ([]*Watch, error) {
 }
 
 func (s *Store) UpdateWatch(w *Watch) error {
-	_, err := s.db.Exec(`UPDATE watches SET title=?,status=?,last_error=?,live_start=?,seg_dir=?,seg_count=? WHERE id=?`,
-		w.Title, w.Status, w.LastError, w.LiveStart, w.SegDir, w.SegCount, w.ID)
+	_, err := s.db.Exec(`UPDATE watches SET title=?,status=?,last_error=?,live_start=?,seg_dir=?,seg_count=?,bind_account=? WHERE id=?`,
+		w.Title, w.Status, w.LastError, w.LiveStart, w.SegDir, w.SegCount, w.BindAccount, w.ID)
 	return err
+}
+
+// SetWatchBind 改绑直播间的发布账号（空串=解绑，回退化签路由）
+func (s *Store) SetWatchBind(id int64, account string) error {
+	_, err := s.db.Exec(`UPDATE watches SET bind_account=? WHERE id=?`, account, id)
+	return err
+}
+
+// WatchBindAccount 查房间绑定的发布账号名（未绑定/房间不在关注列表返回空串）
+func (s *Store) WatchBindAccount(roomID string) string {
+	if roomID == "" {
+		return ""
+	}
+	var acc string
+	if err := s.db.QueryRow(`SELECT bind_account FROM watches WHERE room_id=?`, roomID).Scan(&acc); err != nil {
+		return ""
+	}
+	return acc
 }
 
 func (s *Store) DeleteWatch(id int64) error {
@@ -232,7 +256,7 @@ func (s *Store) ListBarrage(roomID string, since int64) ([]BarrageBucket, error)
 
 // WatchByRoomID 按房间号查关注（录制守护进程 endSession 回写状态用）
 func (s *Store) WatchByRoomID(roomID string) (*Watch, error) {
-	row := s.db.QueryRow(`SELECT id,platform,url,room_id,title,status,last_error,live_start,seg_dir,seg_count,created_at
+	row := s.db.QueryRow(`SELECT id,platform,url,room_id,title,status,last_error,live_start,seg_dir,seg_count,bind_account,created_at
 		FROM watches WHERE room_id=?`, roomID)
 	return scanWatch(row)
 }
@@ -240,7 +264,7 @@ func (s *Store) WatchByRoomID(roomID string) (*Watch, error) {
 func scanWatch(r scanner) (*Watch, error) {
 	var w Watch
 	err := r.Scan(&w.ID, &w.Platform, &w.URL, &w.RoomID, &w.Title, &w.Status,
-		&w.LastError, &w.LiveStart, &w.SegDir, &w.SegCount, &w.CreatedAt)
+		&w.LastError, &w.LiveStart, &w.SegDir, &w.SegCount, &w.BindAccount, &w.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -402,76 +426,14 @@ func (s *Store) SetAccountStatus(platform, name, status string) error {
 	return err
 }
 
-// ── 发布调度（M5 错峰占位）──
-
-// Schedule 定时发布调度（每日 HH:MM）
-type Schedule struct {
-	ID         int64  `json:"id"`
-	Name       string `json:"name"`
-	Time       string `json:"time"` // HH:MM
-	Platforms  string `json:"platforms"`
-	AccountIDs string `json:"account_ids"`
-	Labels     string `json:"labels"`
-	Enabled    bool   `json:"enabled"`
-	LastRun    int64  `json:"last_run"`
-	CreatedAt  int64  `json:"created_at"`
-}
-
-func (s *Store) ListSchedules() ([]*Schedule, error) {
-	rows, err := s.db.Query(`SELECT id,name,time,platforms,account_ids,labels,enabled,last_run,created_at FROM schedules ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []*Schedule
-	for rows.Next() {
-		var sc Schedule
-		var en int
-		if err := rows.Scan(&sc.ID, &sc.Name, &sc.Time, &sc.Platforms, &sc.AccountIDs, &sc.Labels, &en, &sc.LastRun, &sc.CreatedAt); err != nil {
-			return nil, err
-		}
-		sc.Enabled = en == 1
-		out = append(out, &sc)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) CreateSchedule(sc *Schedule) (int64, error) {
-	en := 1
-	if !sc.Enabled {
-		en = 0
-	}
-	res, err := s.db.Exec(`INSERT INTO schedules (name,time,platforms,account_ids,labels,enabled,created_at) VALUES (?,?,?,?,?,?,?)`,
-		sc.Name, sc.Time, sc.Platforms, sc.AccountIDs, sc.Labels, en, time.Now().Unix())
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
-}
-
-func (s *Store) UpdateScheduleLastRun(id int64) error {
-	_, err := s.db.Exec(`UPDATE schedules SET last_run=? WHERE id=?`, time.Now().Unix(), id)
-	return err
-}
-
-// EnableSchedule 启/停定时发布计划
-func (s *Store) EnableSchedule(id int64, enabled bool) error {
-	en := 0
-	if enabled {
-		en = 1
-	}
-	_, err := s.db.Exec(`UPDATE schedules SET enabled=? WHERE id=?`, en, id)
-	return err
-}
-
-func (s *Store) DeleteSchedule(id int64) error {
-	_, err := s.db.Exec(`DELETE FROM schedules WHERE id=?`, id)
-	return err
-}
-
 // ── 内容池（M5：审核通过待发布）──
+// （旧 schedules 定时计划表已随"发布窗口+发布泵"重构退役：表结构不再建不再
+// 读写，老库残留行无害——发布节奏由 config.publish.active_hours + rate_limit
+// 两闸接管，具体见 cmd/clipstream/main.go scheduleTicker）
 
 // PoolItem 内容池条目（待发布切片）
+// RoomID：来源直播间（入池时从源任务 video 路径解析；用于直播↔账号绑定的
+// 优先路由；非直播来源为空，走标签路由）
 type PoolItem struct {
 	ID        int64  `json:"id"`
 	SourceJob string `json:"source_job"`
@@ -482,6 +444,7 @@ type PoolItem struct {
 	Tags      string `json:"tags"`      // 内容标签（逗号分隔）
 	Platforms string `json:"platforms"` // 目标平台（逗号分隔，空=全部）
 	Status    string `json:"status"`    // pending | dispatched | failed
+	RoomID    string `json:"room_id"`   // 来源直播间（绑定路由用）
 	Fails     int    `json:"fails"`     // 连续发布失败次数（≥3 终态退池；UI 重试角标）
 	CreatedAt int64  `json:"created_at"`
 }
@@ -500,9 +463,9 @@ func (s *Store) AddPoolItem(it *PoolItem) (int64, error) {
 		it.SourceJob, it.Clip).Scan(&existing); err == nil {
 		return existing, ErrAlreadyInPool
 	}
-	res, err := s.db.Exec(`INSERT INTO content_pool (source_job,clip,cover,title,desc,tags,platforms,status,created_at)
-		VALUES (?,?,?,?,?,?,?,?,?)`,
-		it.SourceJob, it.Clip, it.Cover, it.Title, it.Desc, it.Tags, it.Platforms, it.Status, time.Now().Unix())
+	res, err := s.db.Exec(`INSERT INTO content_pool (source_job,clip,cover,title,desc,tags,platforms,status,room_id,created_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		it.SourceJob, it.Clip, it.Cover, it.Title, it.Desc, it.Tags, it.Platforms, it.Status, it.RoomID, time.Now().Unix())
 	if err != nil {
 		return 0, err
 	}
@@ -511,7 +474,7 @@ func (s *Store) AddPoolItem(it *PoolItem) (int64, error) {
 
 // ListPoolItems 列内容池（默认只看待发；含 fails 供 UI 重试角标与排障）
 func (s *Store) ListPoolItems(all bool) ([]*PoolItem, error) {
-	q := `SELECT id,source_job,clip,cover,title,desc,tags,platforms,status,fails,created_at FROM content_pool`
+	q := `SELECT id,source_job,clip,cover,title,desc,tags,platforms,status,room_id,fails,created_at FROM content_pool`
 	if !all {
 		q += ` WHERE status='pending'`
 	}
@@ -524,10 +487,49 @@ func (s *Store) ListPoolItems(all bool) ([]*PoolItem, error) {
 	var out []*PoolItem
 	for rows.Next() {
 		var it PoolItem
-		if err := rows.Scan(&it.ID, &it.SourceJob, &it.Clip, &it.Cover, &it.Title, &it.Desc, &it.Tags, &it.Platforms, &it.Status, &it.Fails, &it.CreatedAt); err != nil {
+		if err := rows.Scan(&it.ID, &it.SourceJob, &it.Clip, &it.Cover, &it.Title, &it.Desc, &it.Tags, &it.Platforms, &it.Status, &it.RoomID, &it.Fails, &it.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, &it)
+	}
+	return out, rows.Err()
+}
+
+// PoolItemActiveCount 源任务在池中还有几条活跃条目（pending/dispatched）。
+// 已发布成品清理的前置闩：发布直接引用源 job 目录的 mp4，有活跃条目时
+// 绝不能删（否则派出去的任务 prepare 就地崩溃）
+func (s *Store) PoolItemActiveCount(sourceJob string) int {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM content_pool WHERE source_job=? AND status IN ('pending','dispatched')`,
+		sourceJob).Scan(&n); err != nil {
+		return 0
+	}
+	return n
+}
+
+// ArtifactJob 待清理成品的任务引用（磁盘目录 data/jobs/<id>）
+type ArtifactJob struct {
+	ID     string
+	Kind   string
+	Status string
+}
+
+// ListArtifactJobsBefore 终态（done/failed）且 updated_at 早于 before 的
+// clips/publish 任务——磁盘成品目录清理候选（发布素材/截图归档等）
+func (s *Store) ListArtifactJobsBefore(before int64) ([]ArtifactJob, error) {
+	rows, err := s.db.Query(`SELECT id,kind,status FROM jobs
+		WHERE kind IN ('clips','publish') AND status IN ('done','failed') AND updated_at < ?`, before)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ArtifactJob
+	for rows.Next() {
+		var j ArtifactJob
+		if err := rows.Scan(&j.ID, &j.Kind, &j.Status); err != nil {
+			return nil, err
+		}
+		out = append(out, j)
 	}
 	return out, rows.Err()
 }

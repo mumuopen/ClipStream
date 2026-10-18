@@ -134,6 +134,8 @@ func applyAutoReview(job *core.Job, env *Env) (auto, manual, rejected int) {
 			// 投稿指纹治理：简介=切片区间转写摘要、标签=词典+标题抽词——
 			// 空简介+固定标签的模板化投稿是平台搬运检测的经典机器特征
 			desc := extractTranscriptSummary(job.Dir, v.Clip.Start, v.Clip.End)
+			// 来源直播间（直播↔账号绑定路由的依据；非直播来源为空走标签路由）
+			roomID := RoomIDFromPath(job.ParamsMap()["video"])
 			item := &store.PoolItem{
 				SourceJob: job.ID,
 				Clip:      v.Clip.File,
@@ -142,6 +144,7 @@ func applyAutoReview(job *core.Job, env *Env) (auto, manual, rejected int) {
 				Desc:      desc,
 				Tags:      deriveTags(v.Clip.Title, desc),
 				Platforms: "bilibili",
+				RoomID:    roomID,
 			}
 			if _, err := env.Store.AddPoolItem(item); err != nil {
 				if errors.Is(err, store.ErrAlreadyInPool) {

@@ -125,6 +125,15 @@ type Hotspot struct {
 // liveSegRe 直播分段路径：data/live/<roomID>_<yyyyMMdd_HHmmss>/seg_<NNN>.flv
 var liveSegRe = regexp.MustCompile(`[/\\]live[/\\](\d+)_(\d{8}_\d{6})[/\\](seg|merged)_(\d+)\.flv$`)
 
+// RoomIDFromPath 从分段/合并产物路径解析来源房间号（入池记录 room_id，供
+// 直播↔账号绑定的优先路由）。非直播分段返回空串
+func RoomIDFromPath(path string) string {
+	if m := liveSegRe.FindStringSubmatch(path); len(m) == 5 {
+		return m[1]
+	}
+	return ""
+}
+
 // barrageHotspots 从视频路径关联直播会话，拉取弹幕密度桶并计算热点区间。
 // 普通视频（非 data/live/ 分段）返回空，行为与原管线一致。
 // seg_*.flv：窗口 = 会话起点 + 段序号 x 分段时长（墙钟轴即内容轴）。

@@ -349,7 +349,7 @@
     <label>标题<input type="text" id="pool-title" maxlength="80"></label>
     <label>描述<textarea id="pool-desc" rows="2"></textarea></label>
     <label>内容标签（用于自动匹配发布账号，如：游戏,高燃）<input type="text" id="pool-tags" placeholder="游戏,高燃"></label>
-    <div class="hint" id="pool-modal-hint">存入后到「发布中心」设定发布时间，到点自动发布并推送到手机。</div>
+    <div class="hint" id="pool-modal-hint">存入后由发布泉在发布窗口内自动匀速发出，结果推送到手机。</div>
     <div class="modal-actions">
       <button class="ghost" onclick="closePoolModal()">取消</button>
       <button class="go" onclick="submitPool()">存入</button>
@@ -427,13 +427,13 @@ const I18N = {
     nav_review: '审核台', nav_review_sub: '挑选切片：发布 / 丢弃',
     nav_livefollow: '直播关注', nav_livefollow_sub: '开播自动录制',
     nav_barrage: '弹幕曲线', nav_barrage_sub: '直播间人气热度',
-    nav_labels: '发布中心', nav_labels_sub: '发布账号 · 定时计划 · 待发',
+    nav_labels: '发布中心', nav_labels_sub: '发布账号 · 待发池 · 节奏',
     nav_settings: '设置', nav_settings_sub: '所有配置都在这',
     page_gone: '页面不存在',
     lang_switch: 'EN',
     feed_ph: '离线视频链接（B站稿件 / YouTube）或本地文件路径，回车开工',
     feed_hint: '直播录制请到「采集 → 直播关注」，这里只处理已完结的视频',
-    btn_create: '创建任务', btn_add: '关注', btn_add_acc: '添加账号', btn_create_sch: '创建计划',
+    btn_create: '创建任务', btn_add: '关注', btn_add_acc: '添加账号',
     btn_refresh: '刷新', btn_del: '删除',
     strip_today: '今日任务', strip_review: '待审核', strip_done: '已完成', strip_failed: '失败',
     strip_rate: '成功率', strip_engines: '引擎就绪',
@@ -447,6 +447,7 @@ const I18N = {
     live_seg: '段', live_elapsed: '已录',
     live_hint: '每 60 秒检测一次开播；自动录制（600秒/段）→ 下播自动切片进审核台 → 手机收通知。',
     live_confirm_del: '取消盯播并停止录制？（已录文件保留）',
+    live_bind: '发到账号', live_bind_none: '按标签自动', live_bind_ok: '已绑定：本房间切片优先发到该账号',
     barrage_ph: '选择直播间（录制时自动统计弹幕）', barrage_nodata: '暂无弹幕数据（直播中才有）',
     barrage_total: '共', 'barrage_peak': '峰值', 'barrage_cover': '覆盖', 'barrage_per5': '条/5秒',
     'barrage_min30': '近 30 分', 'barrage_min120': '近 2 小时', 'barrage_min360': '近 6 小时',
@@ -457,27 +458,26 @@ const I18N = {
     m5_plat: '平台', m5_name: '账号名', m5_labels: '内容标签', m5_labels_ph: '游戏,高燃,赛事（逗号分隔，选填）', m5_prio: '优先级',
     m5_acc_name_ph: '如：电竞主号（将作为登录账号名）',
     m5_acc_empty: '还没有发布账号 — 添加后点「扫码登录」完成授权',
-    m5_sch: '定时发布计划', m5_sch_hint: '每天到点自动发布待发池里的切片',
-    m5_sch_name: '计划名', m5_time: '发布时间', m5_plat_sel: '发布平台', m5_plat_only: '自动发布当前支持 B站',
-    m5_sch_name_ph: '如：晚八点发布',
-    m5_sch_empty: '还没有计划 — 创建后到点自动发布待发内容',
+    m5_sch: '发布节奏', m5_sch_hint: '入池即排队，窗口内自动匀速发完 —— 不再需要定时计划',
+    m5_sch_win: '发布窗口', m5_sch_interval: '同账号间隔', m5_sch_daily: '每日上限', m5_sch_allday: '全天可发',
+    m5_sch_bindhint: '直播↔账号绑定在「直播关注」列表配置；窗口与上限在「设置」调整',
     m5_rule: '自动发布是怎么运作的', m5_step1: '切片送入待发池', m5_step1b: '（审核通过后）',
-    m5_step2: '按标签匹配账号', m5_step2b: '优先级高的先用', m5_step3: '到点自动发布', m5_step3b: '结果推送到手机',
+    m5_step2: '窗口内匀速发', m5_step2b: '间隔+每日上限防风控', m5_step3: '绑定/标签路由账号', m5_step3b: '绑定优先，失效自动回退',
     m5_ok: '正常', m5_login: '待登录', m5_expired: '登录已过期', m5_on: '启用', m5_off: '已停用', m5_last: '上次', m5_never: '未触发',
     m5_pool_pending: '待发', m5_pool_dispatched: '已派发', m5_pool_failed: '已退池',
-    m5_unlabel: '无标签', m5_confirm_acc: '删除该发布账号？（已保存的登录不受影响）', m5_confirm_sch: '删除该定时计划？',
-    m5_acc_need: '账号名必填', m5_sch_need: '计划名必填',
+    m5_unlabel: '无标签', m5_confirm_acc: '删除该发布账号？（已保存的登录不受影响）',
+    m5_acc_need: '账号名必填',
     m5_login_btn: '扫码登录', m5_login_now: '登录中…', m5_toggle_on: '启用', m5_toggle_off: '停用',
-    m5_pool_title: '待发池', m5_pool_empty: '待发池是空的 — 审核台点「存入待发池」后，到点自动发布',
+    m5_pool_title: '待发池', m5_pool_empty: '待发池是空的 — 审核台点「存入待发池」后，发布窗口内自动匀速发出',
     /* ── 扫码登录弹窗 ── */
     lg_title: '扫码登录 B站', lg_hint: '用手机 B站 App 扫屏幕上的二维码',
     lg_running: '等待扫码中…（用 B站 App 的扫一扫）', lg_ok: '登录成功，可以发布了', lg_fail: '登录未完成，可重试',
     lg_close: '关闭', lg_console: '终端输出',
     /* ── 审核台 ── */
     rv_discard: '不采用', rv_discard_confirm: '丢弃这个切片？（从列表移除，源文件保留）',
-    rv_pool_btn: '存入待发池', rv_pool_done: '已存入待发池：设定时间到自动发布',
+    rv_pool_btn: '存入待发池', rv_pool_done: '已存入待发池：进入发布队列，窗口内自动匀速发布',
     pub_acc: '发布账号', pub_acc_default: '默认账号（default）',
-    pool_modal_title: '存入待发池', pool_modal_hint: '存入后到「发布中心」设定时间自动发布：自动匹配账号、手机收结果。',
+    pool_modal_title: '存入待发池', pool_modal_hint: '存入后由发布泉在窗口内自动匀速发布：绑定/标签自动匹配账号、手机收结果。',
     /* ── 设置页 ── */
     set_engines: '引擎状态', set_accounts: '账号', set_notify: '通知', set_cmds: '常用命令',
     set_bsub: 'B站投稿', set_douyin: '抖音', set_bili: 'B站', set_douyin_acc: '需要装浏览器的电脑，暂不支持无人值守',
@@ -495,13 +495,13 @@ const I18N = {
     nav_review: 'Review', nav_review_sub: 'Pick clips: publish / discard',
     nav_livefollow: 'Live Follow', nav_livefollow_sub: 'Auto-record when live',
     nav_barrage: 'Barrage', nav_barrage_sub: 'Room chat heat curve',
-    nav_labels: 'Publish Center', nav_labels_sub: 'Accounts · schedule · queue',
+    nav_labels: 'Publish Center', nav_labels_sub: 'Accounts · queue · pacing',
     nav_settings: 'Settings', nav_settings_sub: 'Everything configurable here',
     page_gone: 'Page not found',
     lang_switch: '中',
     feed_ph: 'Completed-video URL (Bilibili video / YouTube) or local file path, press Enter',
     feed_hint: 'For live streams use Collect → Live Follow; this feed only handles finished videos',
-    btn_create: 'Create', btn_add: 'Follow', btn_add_acc: 'Add account', btn_create_sch: 'Create plan',
+    btn_create: 'Create', btn_add: 'Follow', btn_add_acc: 'Add account',
     btn_refresh: 'Refresh', btn_del: 'Delete',
     strip_today: 'Today', strip_review: 'Review', strip_done: 'Done', strip_failed: 'Failed',
     strip_rate: 'Success', strip_engines: 'Engines',
@@ -512,6 +512,7 @@ const I18N = {
     live_ph: 'Live-room link (Bilibili live.bilibili.com / Huya www.huya.com), press Enter',
     live_idle: 'Offline', live_recording: 'Recording', live_error: 'Error',
     live_empty: 'No followed rooms yet', live_empty2: 'Auto-record on live, auto-clip afterwards',
+    live_bind: 'publish to', live_bind_none: 'auto by label', live_bind_ok: 'bound: clips from this room go to this account first',
     live_seg: 'seg', live_elapsed: 'for',
     live_hint: 'Checked every 60s; auto-record (600s/seg) → auto-clip to review → phone notify.',
     live_confirm_del: 'Unfollow and stop recording this room? (recordings kept)',
@@ -525,25 +526,24 @@ const I18N = {
     m5_plat: 'Platform', m5_name: 'Account name', m5_labels: 'Content labels', m5_labels_ph: 'game,hype,tournament (comma-sep, optional)', m5_prio: 'Priority',
     m5_acc_name_ph: 'e.g. esports-main (used as login name)',
     m5_acc_empty: 'No accounts yet — add one, then QR-login to authorize it',
-    m5_sch: 'Publish Plans', m5_sch_hint: 'daily auto-publish of queued clips at this time',
-    m5_sch_name: 'Plan name', m5_time: 'Publish time', m5_plat_sel: 'Platforms', m5_plat_only: 'Bilibili only for now',
-    m5_sch_name_ph: 'e.g. 8pm publish',
-    m5_sch_empty: 'No plans yet — create one to auto-publish queued content',
+    m5_sch: 'Publish Pacing', m5_sch_hint: 'queued clips auto-publish evenly inside the window — no more plans',
+    m5_sch_win: 'Window', m5_sch_interval: 'Interval', m5_sch_daily: 'Daily cap', m5_sch_allday: 'all day',
+    m5_sch_bindhint: 'Bind room → account in Live Follow; window & caps in Settings',
     m5_rule: 'How auto-publish works', m5_step1: 'Clip enters queue', m5_step1b: '(after review)',
-    m5_step2: 'Match account by label', m5_step2b: 'highest priority first', m5_step3: 'Publish on time', m5_step3b: 'result pushed to phone',
+    m5_step2: 'Paced publish in window', m5_step2b: 'interval + daily cap', m5_step3: 'Bind / label routing', m5_step3b: 'bind first, fallback on failure',
     m5_ok: 'OK', m5_login: 'login', m5_expired: 'login expired', m5_on: 'ON', m5_off: 'OFF', m5_last: 'last', m5_never: 'never',
     m5_pool_pending: 'pending', m5_pool_dispatched: 'dispatched', m5_pool_failed: 'returned',
-    m5_unlabel: 'no labels', m5_confirm_acc: 'Delete this account? (saved login untouched)', m5_confirm_sch: 'Delete this plan?',
-    m5_acc_need: 'Account name required', m5_sch_need: 'Plan name required',
+    m5_unlabel: 'no labels', m5_confirm_acc: 'Delete this account? (saved login untouched)',
+    m5_acc_need: 'Account name required',
     m5_login_btn: 'QR Login', m5_login_now: 'Logging in…', m5_toggle_on: 'Enable', m5_toggle_off: 'Disable',
-    m5_pool_title: 'Queue', m5_pool_empty: 'Queue is empty — press "Queue for publish" in Review; plans publish it automatically',
+    m5_pool_title: 'Queue', m5_pool_empty: 'Queue is empty — press "Queue for publish" in Review; it auto-publishes evenly inside the window',
     lg_title: 'QR Login · Bilibili', lg_hint: 'Scan the QR with the Bilibili mobile app',
     lg_running: 'Waiting for scan… (use the Bilibili app scanner)', lg_ok: 'Logged in — ready to publish', lg_fail: 'Login not completed, you can retry',
     lg_close: 'Close', lg_console: 'Terminal output',
     rv_discard: 'Discard', rv_discard_confirm: 'Discard this clip? (removed from list, file kept)',
-    rv_pool_btn: 'Queue for publish', rv_pool_done: 'Queued: will publish automatically at plan time',
+    rv_pool_btn: 'Queue for publish',     rv_pool_done: 'Queued: auto-publish evenly inside the window',
     pub_acc: 'Account', pub_acc_default: 'Default account',
-    pool_modal_title: 'Queue for publish', pool_modal_hint: 'Queued items auto-publish at plan time in Publish Center: account matched automatically, result to your phone.',
+    pool_modal_title: 'Queue for publish',     pool_modal_hint: 'Queued items auto-publish evenly inside the window: account matched by binding/labels, result to your phone.',
     set_engines: 'Engines', set_accounts: 'Accounts', set_notify: 'Notify', set_cmds: 'Commands',
     set_bsub: 'Bilibili upload', set_douyin: 'Douyin', set_bili: 'Bilibili', set_douyin_acc: 'requires a desktop browser; not for unattended servers',
     set_acc_add: 'add via publish center QR scan', set_none: 'not added', set_ok: 'logged in', set_scan2: 'to scan', set_enabled: 'enabled', set_disabled: 'disabled',
@@ -602,7 +602,7 @@ const NAV = [
   { key: 'review',    name: '审核台',   sub: '挑选切片：发布 / 丢弃' },
   { key: 'tasks',     name: '任务中心', sub: '所有任务与进度' },
   { group: 'publish' },
-  { key: 'labels',    name: '发布中心', sub: '发布账号 · 定时计划 · 待发' },
+  { key: 'labels',    name: '发布中心', sub: '发布账号 · 待发池 · 节奏' },
   { group: 'sys' },
   { key: 'settings',  name: '设置',     sub: '所有配置都在这' },
 ];
@@ -748,6 +748,8 @@ function renderLiveFollow(el) {
     <div class="hint" style="margin-top:10px">${T('live_hint')}</div>`;
   $('#live-url').addEventListener('keydown', e => { if (e.key === 'Enter') addWatch(); });
   renderWatchList();
+  // 绑定下拉需要账号列表：发布中心之外也要能用（不发发布中心时 accounts 为空）
+  if (!accounts.length) { fetchJSON('/api/accounts').then(a => { accounts = a || []; renderWatchList(); }).catch(() => {}); }
 }
 function renderWatchList() {
   $('#watch-list').innerHTML = !watches.length ? `<div class="empty"><span class="arrow">📡</span>
@@ -762,9 +764,19 @@ function renderWatchList() {
           <span class="badge ${w.status === 'recording' ? 'running' : w.status === 'error' ? 'failed' : 'queued'}">${statusCN('live_' + w.status)}</span>
           ${w.status === 'recording' ? `<span class="jtime">${T('live_seg')} ${w.seg_count}</span>` : ''}
           ${w.status === 'recording' ? `<span class="jtime">${T('live_elapsed')} ${fmtDur((Date.now() / 1000) - w.live_start)}</span>` : ''}
+          <select title="${T('live_bind_ok')}" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:3px 6px;font-size:12px" onchange="bindWatch(${w.id}, this.value)">
+            <option value="">${T('live_bind')}：${T('live_bind_none')}</option>
+            ${accounts.map(a => `<option value="${esc(a.name)}" ${a.name === w.bind_account ? 'selected' : ''}>${T('live_bind')}：${esc(a.name)}</option>`).join('')}
+          </select>
           <button class="del" title="${T('btn_del')}" onclick="delWatch(${w.id})">✕</button>
         </div>
       </div>`).join('');
+}
+async function bindWatch(id, account) {
+  try {
+    await fetchJSON('/api/live/watches/' + id + '/bind', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account }) });
+    refreshWatches();
+  } catch (e) { alert(e.message); refreshWatches(); }
 }
 function fmtDur(sec) {
   sec = Math.max(0, Math.floor(sec));
@@ -814,10 +826,12 @@ function renderSettings(el) {
           <label>保留天数 <input id="cfg-rt-days" type="number" min="1" style="width:60px"></label>
           <label>已消费分段(天) <input id="cfg-rt-consumed" type="number" min="0" style="width:60px"></label>
           <label>水位% <input id="cfg-rt-free" type="number" min="1" max="95" style="width:60px"></label>
+          <label>占用上限% <input id="cfg-rt-usage" type="number" min="0" max="95" style="width:60px" title="ClipStream 数据目录最多占用整盘百分比（默认 50 = 只用一半；0=不启用）"></label>
+          <label>成品保留(天) <input id="cfg-rt-keep" type="number" min="0" max="90" style="width:60px" title="已发布切片成品目录保留天数，到期自动清理（0=不清）"></label>
           <label>清理间隔(min) <input id="cfg-rt-min" type="number" min="5" style="width:60px"></label>
-          <label>发布间隔(min) <input id="cfg-pub-interval" type="number" min="0" max="1440" style="width:65px" title="同一账号两次发布的最小间隔（0=不限）"></label>
-          <label>每日上限/账号 <input id="cfg-pub-daily" type="number" min="0" max="100" style="width:55px" title="每账号每天最多发布条数（0=不限）"></label>
-          <label>单轮上限 <input id="cfg-pub-batch" type="number" min="0" max="50" style="width:55px" title="一次计划到点最多派发条数，其余留池（0=不限）"></label>
+          <label>发布窗口 <input id="cfg-pub-hours" style="width:100px" placeholder="10:00-23:00" title="窗口外不派发（夜里发没人看）；空=全天；支持跨夜如 22:00-06:00"></label>
+          <label>发布间隔(min) <input id="cfg-pub-interval" type="number" min="0" max="1440" style="width:65px" title="同一账号两次发布的最小间隔（0=不限）；叠加 ±5% 随机抖动"></label>
+          <label>每日上限/账号 <input id="cfg-pub-daily" type="number" min="0" max="100" style="width:55px" title="每账号每天最多发布条数（0=不限）；结合间隔节奏 6 条约 6 小时匀速发完"></label>
           <label>pushme <input id="cfg-nt-on" type="checkbox" style="width:auto"></label>
           <label>地址 <input id="cfg-nt-url" style="width:170px" placeholder="http://server:36591"></label>
           <label>push_key <input id="cfg-nt-key" style="width:140px"></label>
@@ -914,14 +928,15 @@ async function loadConfig() {
     setF('cfg-live-check', c.live?.check_interval); setF('cfg-live-seg', c.live?.segment_time); setF('cfg-live-clip', c.live?.auto_clip);
     setF('cfg-rt-on', c.retention?.enabled); setF('cfg-rt-days', c.retention?.segments_days);
     setF('cfg-rt-consumed', c.retention?.consumed_seg_days); setF('cfg-rt-free', c.retention?.min_free_percent); setF('cfg-rt-min', c.retention?.check_minutes);
+    setF('cfg-rt-usage', c.retention?.max_usage_percent ?? 50); setF('cfg-rt-keep', c.retention?.published_keep_days ?? 3);
     setF('cfg-nt-on', c.notify?.pushme?.enable); setF('cfg-nt-url', c.notify?.pushme?.url); setF('cfg-nt-key', c.notify?.pushme?.push_key);
     setF('cfg-llm-base', c.llm?.base_url); setF('cfg-llm-key', c.llm?.api_key); setF('cfg-llm-model', c.llm?.model);
     setF('cfg-llm-think', c.llm?.thinking || 'disabled');
     setF('cfg-eng-ytdlp', c.engines?.ytdlp); setF('cfg-eng-ffmpeg', c.engines?.ffmpeg); setF('cfg-eng-ffprobe', c.engines?.ffprobe);
     setF('cfg-eng-biliup', c.engines?.biliup); setF('cfg-eng-asr-bin', c.engines?.asr?.binary); setF('cfg-eng-asr-model', c.engines?.asr?.model);
+    setF('cfg-pub-hours', c.publish?.active_hours || '');
     setF('cfg-pub-interval', c.publish?.rate_limit?.min_interval_min ?? 60);
-    setF('cfg-pub-daily', c.publish?.rate_limit?.daily_max ?? 3);
-    setF('cfg-pub-batch', c.publish?.rate_limit?.batch_max ?? 1);
+    setF('cfg-pub-daily', c.publish?.rate_limit?.daily_max ?? 6);
   } catch (e) {}
 }
 async function saveConfig() {
@@ -932,13 +947,13 @@ async function saveConfig() {
     auto_review: { enabled: chk('cfg-ar-on'), min_score: num('cfg-ar-score'), hard_min_dur_sec: num('cfg-ar-min'), hard_max_dur_sec: num('cfg-ar-max'),
       banned_words: g('cfg-ar-words').value.split(/[,，]/).map(s => s.trim()).filter(Boolean) },
     live: { check_interval: num('cfg-live-check'), segment_time: num('cfg-live-seg'), auto_clip: chk('cfg-live-clip') },
-    retention: { enabled: chk('cfg-rt-on'), segments_days: num('cfg-rt-days'), consumed_seg_days: num('cfg-rt-consumed'), min_free_percent: num('cfg-rt-free'), check_minutes: num('cfg-rt-min') },
+    retention: { enabled: chk('cfg-rt-on'), segments_days: num('cfg-rt-days'), consumed_seg_days: num('cfg-rt-consumed'), min_free_percent: num('cfg-rt-free'), check_minutes: num('cfg-rt-min'), max_usage_percent: num('cfg-rt-usage'), published_keep_days: num('cfg-rt-keep') },
     notify: { pushme: { enable: chk('cfg-nt-on'), url: g('cfg-nt-url').value.trim(), push_key: g('cfg-nt-key').value.trim() } },
     llm: { base_url: g('cfg-llm-base').value.trim(), api_key: g('cfg-llm-key').value.trim(), model: g('cfg-llm-model').value.trim(),
       thinking: g('cfg-llm-think').value, proxy: '' },
     engines: { ytdlp: g('cfg-eng-ytdlp').value.trim(), ffmpeg: g('cfg-eng-ffmpeg').value.trim(), ffprobe: g('cfg-eng-ffprobe').value.trim(),
       biliup: g('cfg-eng-biliup').value.trim(), asr: { binary: g('cfg-eng-asr-bin').value.trim(), model: g('cfg-eng-asr-model').value.trim() } },
-    publish: { rate_limit: { min_interval_min: num('cfg-pub-interval'), daily_max: num('cfg-pub-daily'), batch_max: num('cfg-pub-batch') } },
+    publish: { active_hours: g('cfg-pub-hours').value.trim(), rate_limit: { min_interval_min: num('cfg-pub-interval'), daily_max: num('cfg-pub-daily') } },
   };
   // engines 段里 asr 可能全空：后端把空 binary/model 视为保持原值，这里不传 asr 键更简单——直接不包含空字符串路径
   for (const k of ['ytdlp','ffmpeg','ffprobe','biliup']) { if (!payload.engines[k]) delete payload.engines[k]; }
@@ -1044,24 +1059,26 @@ function drawBarrage(canvas, buckets) {
   ctx.fillText('弹幕/5s', 4, 12);
 }
 
-/* ═══════════ 发布中心（发布账号 + 定时计划 + 待发池）═══════════ */
+/* ═══════════ 发布中心（发布账号 + 发布节奏 + 待发池）═══════════ */
 // 平台元数据：B站是自动发布全支持的唯一平台；抖音需桌面浏览器（仅显示）
 const PLAT_META = {
   bilibili: { cn: 'B站', color: '#23ade5' },
   douyin:   { cn: '抖音', color: '#8f8f96' },
 };
 let accounts = [];
-let schedules = [];
 let poolItems = [];
-let schedPlats = ['bilibili']; // 定时计划表单：目标平台多选
+let pubCfg = null; // {hours, interval, daily} 节奏面板数据（refreshMatrix 顺带拉取）
 let loginCtx = null; // {id, account} 扫码登录会话
 let loginTimer = null;
 async function refreshMatrix() {
   try { accounts = await fetchJSON('/api/accounts'); } catch (e) { accounts = []; }
-  try { schedules = await fetchJSON('/api/schedules'); } catch (e) { schedules = []; }
   try { poolItems = await fetchJSON('/api/pool?all=1'); } catch (e) { poolItems = []; }
+  try {
+    const c = await fetchJSON('/api/config');
+    pubCfg = { hours: c.publish?.active_hours || '', interval: c.publish?.rate_limit?.min_interval_min ?? 0, daily: c.publish?.rate_limit?.daily_max ?? 0 };
+  } catch (e) { pubCfg = null; }
   if (page !== 'labels') return;
-  // 表单与列表分离：轮询只刷列表，永不重建表单（填一半的账号/调度不再被清空）
+  // 表单与列表分离：轮询只刷列表，永不重建表单（填一半的账号不再被清空）
   if ($('#acc-list')) renderMatrixLists(); else renderLabels($('#page'));
 }
 function platChipsFor(plats) {
@@ -1094,13 +1111,8 @@ function renderLabels(el) {
 
       <div class="set-panel">
         <h4>${T('m5_sch')} <span class="hint">${T('m5_sch_hint')}</span></h4>
-        <div class="m5-form">
-          <label>${T('m5_sch_name')} <input id="sch-name" placeholder="${T('m5_sch_name_ph')}"></label>
-          <label>${T('m5_time')} <input id="sch-time" type="time" value="21:00"></label>
-          <label>${T('m5_plat_sel')} <span class="m5-plats" id="sch-plats"></span><span class="hint">${T('m5_plat_only')}</span></label>
-          <button onclick="addSchedule()">${T('btn_create_sch')}</button>
-        </div>
-        <div class="acc-list" id="sch-list"></div>
+        <div id="rhythm-info"><div class="hint">…</div></div>
+        <div class="acc-list" id="pool-mini"></div>
       </div>
 
       <div class="set-panel m5-rule">
@@ -1117,16 +1129,12 @@ function renderLabels(el) {
           <div class="arrow">→</div>
           <div class="step"><span>3</span>${T('m5_step3')}<span>${T('m5_step3b')}</span></div>
         </div>
+        <div class="hint" style="margin-top:10px">${T('m5_sch_bindhint')}</div>
       </div>
     </div>`;
-  // 回车提交（账号表单已下线，仅计划名）
-  ['sch-name'].forEach(id => {
-    const e = document.getElementById(id);
-    if (e) e.addEventListener('keydown', ev => { if (ev.key === 'Enter') addSchedule(); });
-  });
   renderMatrixLists();
 }
-// renderMatrixLists 只更新动态区（三个列表 + 平台 chips），表单 DOM 保持不动
+// renderMatrixLists 只更新动态区（账号/节奏/池列表），表单 DOM 保持不动
 function renderMatrixLists() {
   // 账号卡：登录态三态（正常/待登录/登录过期）+ 待授权时给扫码入口
   $('#acc-list').innerHTML = accounts.map(a => {
@@ -1146,16 +1154,28 @@ function renderMatrixLists() {
     </div>`;
   }).join('') || `<div class="hint">${T('m5_acc_empty')}</div>`;
 
-  // 计划卡：启/停开关 + 删除
-  $('#sch-list').innerHTML = schedules.map(sc => `
-    <div class="acc-card">
-      <div class="acc-top"><span class="time-badge">${esc(sc.time)}</span><span style="font-size:13px;color:var(--text)">${esc(sc.name)}</span>
-        <span class="badge ${sc.enabled ? 'running' : 'queued'}">${sc.enabled ? '● ' + T('m5_on') : '○ ' + T('m5_off')}</span>
-        <button class="chip" onclick="toggleSchedule(${sc.id}, ${!sc.enabled})">${sc.enabled ? T('m5_toggle_off') : T('m5_toggle_on')}</button>
-        <button class="del" onclick="delSchedule(${sc.id})">✕</button></div>
-      <div class="acc-tags">${(sc.platforms || '').split(',').filter(Boolean).map(p => PLAT_META[p] ? platBadge(p) : `<span class="tag">${esc(p)}</span>`).join('')}
-        <span class="jtime" style="margin-left:auto">${T('m5_last')} ${sc.last_run ? fmtClock(sc.last_run) : T('m5_never')}</span></div>
-    </div>`).join('') || `<div class="hint">${T('m5_sch_empty')}</div>`;
+  // 节奏面板：窗口/间隔/每日上限实时值（发布节奏不再有计划卡，配置在设置页改）
+  const ri = $('#rhythm-info');
+  if (ri) {
+    if (pubCfg) {
+      const win = pubCfg.hours || T('m5_sch_allday');
+      const interval = pubCfg.interval > 0 ? pubCfg.interval + ' min（±5% 抖动）' : '不限';
+      const daily = pubCfg.daily > 0 ? pubCfg.daily + ' 条' : '不限';
+      ri.innerHTML = `
+        <div class="kv"><span class="k">${T('m5_sch_win')}</span><span class="v">${esc(win)}</span></div>
+        <div class="kv"><span class="k">${T('m5_sch_interval')}</span><span class="v">${esc(interval)}</span></div>
+        <div class="kv"><span class="k">${T('m5_sch_daily')}</span><span class="v">${esc(daily)}</span></div>`;
+    } else {
+      ri.innerHTML = `<div class="hint">…</div>`;
+    }
+  }
+  const pm = $('#pool-mini');
+  if (pm) {
+    const pend = (poolItems || []).filter(it => it.status === 'pending').length;
+    pm.innerHTML = pend > 0
+      ? `<div class="hint" style="margin-top:10px">待发池 ${pend} 条 — 窗口内自动匀速发出</div>`
+      : '';
+  }
 
   // 内容池全量展示（待发/已派发/已退池三态）：发布泵按间隔匀速消化待发条目，
   // 每条的去向一目了然；fails 失败次数角标（重试 n/3，接近终态预警）
@@ -1174,38 +1194,10 @@ function renderMatrixLists() {
       <div class="acc-tags"><span class="jtime">${esc(it.source_job)} / ${esc(it.clip)}</span></div>
     </div>`;
   }).join('') || `<div class="hint">${T('m5_pool_empty')}</div>`;
-
-  $('#sch-plats').innerHTML = Object.entries(PLAT_META).map(([k, v]) =>
-    `<span class="plat ${schedPlats.includes(k) ? 'sel' : ''}" data-p="${k}" onclick="toggleSchedPlat('${k}')">${v.cn}</span>`).join('');
-}
-function toggleSchedPlat(p) {
-  const i = schedPlats.indexOf(p);
-  i >= 0 ? schedPlats.splice(i, 1) : schedPlats.push(p);
-  renderMatrixLists(); // 只刷 chips，不重建表单（否则账号表单填一半会被清空）
-}
-async function toggleSchedule(id, en) {
-  try { await fetchJSON('/api/schedules/' + id + '/enabled', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: en }) }); refreshMatrix(); } catch (e) { alert(e.message); }
 }
 async function delAccount(id) {
   if (!confirm(T('m5_confirm_acc'))) return;
   try { await fetchJSON('/api/accounts/' + id, { method: 'DELETE' }); refreshMatrix(); } catch (e) { alert(e.message); }
-}
-async function addSchedule() {
-  const payload = {
-    name: $('#sch-name').value.trim(),
-    time: $('#sch-time').value || '21:00',
-    platforms: schedPlats.join(','),
-  };
-  if (!payload.name) { alert(T('m5_sch_need')); return; }
-  try {
-    await fetchJSON('/api/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    $('#sch-name').value = ''; // 表单不再被重建，成功后显式清空
-    refreshMatrix();
-  } catch (e) { alert(e.message); }
-}
-async function delSchedule(id) {
-  if (!confirm(T('m5_confirm_sch'))) return;
-  try { await fetchJSON('/api/schedules/' + id, { method: 'DELETE' }); refreshMatrix(); } catch (e) { alert(e.message); }
 }
 /* ═══════════ 任务列表渲染（总览/任务中心共用）═══════════ */
 function trackHTML(job) {

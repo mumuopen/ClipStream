@@ -117,8 +117,8 @@ func (d *Daemon) Start() {
 		}
 		// 启动即清一次（顺带得到水位基线）
 		if d.cfg.Retention.Enabled {
-			if st, err := RunCleanup(d.cfg, d.notify); err == nil {
-				fmt.Printf("[cleanup] 启动清理：%d 个超期会话，剩余 %.0f%%\n", st.DeletedSessions, st.FreePercent)
+			if st, err := RunCleanup(d.cfg, d.store, d.notify); err == nil {
+				fmt.Printf("[cleanup] 启动清理：%d 个超期会话，%d 个成品目录，剩余 %.0f%%\n", st.DeletedSessions, st.DeletedJobs, st.FreePercent)
 			}
 		}
 		t := time.NewTicker(time.Duration(mins) * time.Minute)
@@ -131,9 +131,9 @@ func (d *Daemon) Start() {
 				if !d.cfg.Retention.Enabled {
 					continue
 				}
-				if st, err := RunCleanup(d.cfg, d.notify); err == nil && (st.DeletedSessions > 0 || st.LowDisk) {
-					fmt.Printf("[cleanup] 清理完成：删除 %d 会话，释放 %.2f GB，磁盘剩余 %.0f%%\n",
-						st.DeletedSessions, float64(st.FreedBytes)/1e9, st.FreePercent)
+				if st, err := RunCleanup(d.cfg, d.store, d.notify); err == nil && (st.DeletedSessions > 0 || st.LowDisk || st.DeletedJobs > 0) {
+					fmt.Printf("[cleanup] 清理完成：删除 %d 会话 + %d 成品目录，释放 %.2f GB，磁盘剩余 %.0f%%\n",
+						st.DeletedSessions, st.DeletedJobs, float64(st.FreedBytes)/1e9, st.FreePercent)
 				}
 			}
 		}

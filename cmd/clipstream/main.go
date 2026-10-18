@@ -380,8 +380,9 @@ func doServe(cfgPath string) error {
 		fmt.Printf("[live] 分段已送入切片管线：%s → 任务 %s（《%s》）\n", segPath, job.ID, roomTitle)
 	})
 
-	// M5 发布调度（占位骨架）：每分钟检查，到点登记 last_run 并打日志。
-	// 完整错峰发布需接入审核通过的内容池 + 账号路由，后续迭代。
+	// 发布调度：30s tick，发布泵持续消化待发池（发布窗口内）。旧版“每日 HH:MM
+	// 定时计划”已退役：入池即排队，窗口+间隔闸+每日上限控制节奏，不再需要
+	// 人工设定“几点开始发”
 	go scheduleTicker(app)
 
 	// M5 每日摘要：早上 09:00 pushme 昨天发生了什么（挂机视角）
@@ -418,11 +419,10 @@ func doServe(cfgPath string) error {
 	return httpSrv.Serve(listener)
 }
 
-// scheduleTicker M5 发布调度：30s 检查两件事——
-// ①每日 HH:MM 计划到点且当天未执行 → dispatchSchedule（发当轮首条，batch_max 截断）
-// ②发布泵 pumpTick：当日已有计划触发过 → 待发池续发（间隔闸限速，见 pumpTick）
-// check 包 recover：任一 panic 不能杀死调度 goroutine（否则挂机形态下静默停发，
-// 数日无人察觉）
+// scheduleTicker 发布调度：30s tick，单一职责——发布窗口内持续泵发待发池。
+// 窗口外（active_hours，如 10:00-23:00）挂起不动池：夜里发没人看且“下播
+// 即刻批量入池→立刻开始发”的时间指纹明显。check 包 recover：任一 panic
+// 不能杀死调度 goroutine（否则挂机形态下静默停发，数日无人察觉）
 func scheduleTicker(app *app) {
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
@@ -432,30 +432,8 @@ func scheduleTicker(app *app) {
 				fmt.Printf("[schedule] panic 已拦截（继续调度）: %v\n%s\n", r, debug.Stack())
 			}
 		}()
-		now := time.Now()
-		scs, err := app.store.ListSchedules()
-		if err != nil {
-			return
-		}
-		today := now.Format("2006-01-02")
-		for _, sc := range scs {
-			if !sc.Enabled {
-				continue
-			}
-			// 当天已执行过则跳过
-			ranToday := sc.LastRun > 0 && time.Unix(sc.LastRun, 0).Format("2006-01-02") == today
-			// 错过窗口补偿：不要求精确命中 HH:MM（进程卡顿/休眠丢 tick 会静默跳过
-			// 当天整份计划），改为"已过计划时刻且今日未执行"即触发
-			plan, err := time.ParseInLocation("15:04", sc.Time, now.Location())
-			if err != nil {
-				continue // 非法时间格式：建计划时已校验，防御双重保险
-			}
-			plannedAt := time.Date(now.Year(), now.Month(), now.Day(), plan.Hour(), plan.Minute(), 0, 0, now.Location())
-			if ranToday || now.Before(plannedAt) {
-				continue
-			}
-			_ = app.store.UpdateScheduleLastRun(sc.ID)
-			dispatchSchedule(app, sc)
+		if !config.InActiveHours(app.cfg.Publish.ActiveHours, time.Now()) {
+			return // 窗口外：池子挂起（入池/审核不受影响，只是不派发）
 		}
 		pumpTick(app)
 	}
@@ -465,44 +443,34 @@ func scheduleTicker(app *app) {
 	}
 }
 
-// pumpTick 发布泵：当日有计划已触发即持续匀速消化待发池。
-// 背景：旧版留池条目只能等下一次计划时点（每日一个 HH:MM）——batch_max 留下的
-// N 条要锁到明天同一时刻，待发池形同虚设。泵语义：计划时点发首条后，后续条目
-// 每次tick尝试续发 1 条，间隔/每日闸天然限速（如 60min 间隔 → 每小时一条），
-// 配额用尽或池空即静默空转。失败回池的条目同样走泵重试（失败尝试计入间隔计时，
-// 自然冷却，不会拿头撞风控）。
+// pumpTick 发布泵：待发池有条目就按间隔与速发（窗口内每 30s tick 尝试 1 条，
+// 间隔/每日闸天然限速——如 60min 间隔即每小时一条，6 条/日约 6 小时清空
+// 当日池）。配额用尽或池空即静默空转。失败回池的条目同样走泵重试（失败尝试
+// 计入间隔计时，自然冷却，不会拿头撞风控）。
+// 账号路由：直播绑定优先（watches.bind_account，矩阵号人设垂直）→
+// 标签路由回退（绑定账号失效/无绑定时）
 func pumpTick(app *app) {
-	scs, err := app.store.ListSchedules()
-	if err != nil || len(scs) == 0 {
-		return
-	}
-	today := time.Now().Format("2006-01-02")
-	armed := false
-	for _, sc := range scs {
-		if sc.Enabled && sc.LastRun > 0 && time.Unix(sc.LastRun, 0).Format("2006-01-02") == today {
-			armed = true
-			break
-		}
-	}
-	if !armed {
-		return // 今天没有任何计划触发过：不动池（尊重定时意图，没点发就不发）
-	}
 	items, err := app.store.ListPoolItems(false)
 	if err != nil || len(items) == 0 {
 		return
 	}
-	// 遍历池（FIFO 尽力而为）：旧版只取 items[0]，头部条目无匹配账号时
-	// 整池永久冻结且零感知（队头阻塞）。全池无可派（账号全被节流/无匹配/
-	// 配额尽）则本轮空转；无匹配账号属于需要人工介入的状态（不再是节流
-	// 自愈场景），首次发现时告警一次（进程级去重，防每 30s 刷屏）。
+	// 遍历池（FIFO 尽力而为）：头部条目无匹配账号时不能冻结整池并零感知（队头
+	// 阻塞）。全池无可派（账号全被节流/无匹配/配额尽）则本轮空转；无匹配账号
+	// 属于需要人工介入的状态（不再是节流自愈场景），首次发现时告警一次
+	//（进程级去重，防每 30s 刷屏）。
 	noMatchNotified := false
 	for _, it := range items {
 		platforms := it.Platforms
 		if platforms == "" {
 			platforms = "bilibili"
 		}
+		bind := app.store.WatchBindAccount(it.RoomID)
 		acc := dispatchOne(app, it, platforms, map[string]string{}, "pump", false)
 		if acc != nil {
+			if bind != "" && acc.Name != bind {
+				app.notifier.Notify("ClipStream 绑定账号回退",
+					fmt.Sprintf("《%s》绑定账号「%s」当前不可用，已回退标签路由至「%s」", it.Title, bind, acc.Name))
+			}
 			fmt.Printf("[pump] 续发：《%s》→ 账号「%s」\n", it.Title, acc.Name)
 			app.notifier.Notify("ClipStream 发布泵续发",
 				fmt.Sprintf("《%s》→ 账号「%s」（按间隔自动匀速续发，配额尽自动停）", it.Title, acc.Name))
@@ -510,7 +478,7 @@ func pumpTick(app *app) {
 		}
 		// 区分失败原因：dispatchOne 内部节流让位会被 blocked 吞掉，无匹配
 		// 账号（含全部过期）才是真卡死信号——通过探测一次路由确认
-		if acc2 := probeRoute(app, platforms, it.Tags); acc2 == nil {
+		if acc2 := probeRoute(app, platforms, it.Tags, bind); acc2 == nil {
 			noMatchNotified = true
 		} else {
 			return // 有可用账号但被节流：正常等待，本轮到此为止
@@ -541,81 +509,20 @@ func maybeNotifyNoMatch(app *app) bool {
 }
 
 // probeRoute 只探测不派发：该条目现在有没有能通过路由的账号（状态 ok+
-// 平台+标签匹配），供泵区分"被节流（自愈）"与"无匹配（需人工）"
-func probeRoute(app *app, platforms, tags string) *store.Account {
+// 平台+绑定/标签匹配），供泵区分“被节流（自愈）”与“无匹配（需人工）”
+func probeRoute(app *app, platforms, tags, bind string) *store.Account {
 	all, _ := app.store.ListAccounts()
-	return routeAccount(all, commaSet(platforms), tags)
+	return routeAccountWithBind(all, commaSet(platforms), tags, bind)
 }
 
-// dispatchSchedule 调度触发：取内容池 → 账号路由 → 逐条创建发布任务。
-// 平台筛选优先级：调度.Platforms > 条目.Platforms > 全部配置平台（当前 bilibili）
-// 发布节流（防风控）：单轮上限/发布间隔/每日上限三闸；命中挡账号不挡发布——
-// 被拦账号让位给次优账号，全部被拦则条目留池等下轮。手动发布不受限但计入计时。
-func dispatchSchedule(app *app, sc *store.Schedule) {
-	items, err := app.store.ListPoolItems(false)
-	if err != nil {
-		fmt.Printf("[schedule] 《%s》读取内容池失败: %v\n", sc.Name, err)
-		return
-	}
-	if len(items) == 0 {
-		fmt.Printf("[schedule] 《%s》触发（每日 %s）——内容池为空，无待发布内容\n", sc.Name, sc.Time)
-		return
-	}
-
-	rl := app.cfg.Publish.RateLimit
-	allAccounts, _ := app.store.ListAccounts()
-	blocked := map[string]string{} // 账号名 → 被节流原因（本轮让位，跨条目共享）
-	dispatched, skipped, batchCut := 0, 0, 0
-
-	for i, it := range items {
-		if rl.BatchMax > 0 && dispatched >= rl.BatchMax {
-			batchCut = len(items) - i // 本轮配额用尽：其余全部留池（含本条）
-			break
-		}
-		// 平台取交集：调度限定 > 条目携带；都空则默认 bilibili
-		platforms := sc.Platforms
-		if platforms == "" {
-			platforms = it.Platforms
-		}
-		if platforms == "" {
-			platforms = "bilibili"
-		}
-		before := len(blocked)
-		acc := dispatchOne(app, it, platforms, blocked, "schedule", true)
-		if acc != nil {
-			dispatched++
-			continue
-		}
-		// 未派发：账号全被节流（blocked 增长）或真无匹配（blocked 未动）
-		if len(blocked) > before || len(blocked) >= len(allAccounts) {
-			// 让位已计（blocked 长度即被节流账号数）；条目留给发布泵按间隔自动续发
-		} else {
-			skipped++
-		}
-		fmt.Printf("[schedule] 《%s》条目 %s《%s》无可用账号（标签 %s），暂留池中\n", sc.Name, it.Clip, it.Title, it.Tags)
-	}
-
-	if dispatched+skipped+batchCut > 0 {
-		msg := fmt.Sprintf("《%s》（每日 %s）：派发 %d 条", sc.Name, sc.Time, dispatched)
-		if throttled := len(blocked); throttled > 0 {
-			msg += fmt.Sprintf("，%d 个账号被节流（等间隔释放）", throttled)
-		}
-		if skipped > 0 {
-			msg += fmt.Sprintf("，%d 条无匹配账号", skipped)
-		}
-		if rest := skipped + batchCut; rest > 0 {
-			msg += fmt.Sprintf("；留池 %d 条，将由发布泵按间隔自动续发（今日配额内）", rest)
-		}
-		app.notifier.Notify("ClipStream 调度派发", msg)
-	}
-}
-
-// dispatchOne 派发单条池条目（计划触发与发布泵共用）：
-// 账号路由 + 节流让位重试——挡账号不挡发布（被拦账号拉黑让位次优，全被拦
-// 则返回 nil 条目留池）。blocked 跨条目共享（计划轮次内已让位账号不重复探测）。
-// source 用于日志前缀与降噪：pump 每 30s 一轮会被间隔闸拦住，仅 schedule
-// 轮次（verbose=true）打印让位明细，泵静默空转不打日志。
+// dispatchOne 派发单条池条目（发布泵调用）：
+// 账号路由（直播绑定优先→标签路由回退）+ 节流让位重试——挡账号不挡发布
+//（被拦账号拉黑让位次优，全被拦则返回 nil 条目留池）。blocked 跨轮共享
+//（已让位账号不重复探测）。
+// source 用于日志前缀与降噪：pump 每 30s 一轮会被间隔闸拦住，不打印
+// 让位明细，泵静默空转不打日志。
 func dispatchOne(app *app, it *store.PoolItem, platforms string, blocked map[string]string, source string, verbose bool) *store.Account {
+	bind := app.store.WatchBindAccount(it.RoomID) // 直播绑定账号（无绑定/非直播源为空）
 	var acc *store.Account
 	for {
 		allAccounts, _ := app.store.ListAccounts()
@@ -625,13 +532,13 @@ func dispatchOne(app *app, it *store.PoolItem, platforms string, blocked map[str
 				candidates = append(candidates, a)
 			}
 		}
-		acc = routeAccount(candidates, commaSet(platforms), it.Tags)
+		acc = routeAccountWithBind(candidates, commaSet(platforms), it.Tags, bind)
 		if acc == nil {
 			return nil
 		}
 		why := publishThrottled(app.store, app.cfg.Publish.RateLimit, acc.Name)
 		if why == "" {
-			break // 通过三闸，放行
+			break // 通过两闸，放行
 		}
 		if _, exists := blocked[acc.Name]; !exists && verbose {
 			fmt.Printf("[%s] 账号「%s」%s——让位\n", source, acc.Name, why)
@@ -710,6 +617,21 @@ func publishThrottled(st *store.Store, rl config.RateLimit, accName string) stri
 			}
 	}
 	return ""
+}
+
+// routeAccountWithBind 账号路由：直播绑定优先（bind 非空且匹配平台/状态 ok
+// 时直接命中——矩阵号人设垂直，绑定即意图明确），未命中回退标签路由
+//（platform 匹配 + 标签命中任一 + 状态 ok，优先级降序）。绑定账号被节流让位
+//（blocked）/停号/平台不匹配时自然回退次优，不会卡死条目
+func routeAccountWithBind(accounts []*store.Account, platforms map[string]bool, itemTags, bind string) *store.Account {
+	if bind != "" {
+		for _, a := range accounts {
+			if a.Status == "ok" && a.Platform != "" && platforms[a.Platform] && a.Name == bind {
+				return a
+			}
+		}
+	}
+	return routeAccount(accounts, platforms, itemTags)
 }
 
 // routeAccount 账号路由：平台匹配 + 标签命中（任一）+ 状态 ok，按优先级降序取第一个

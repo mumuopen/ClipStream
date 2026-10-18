@@ -61,16 +61,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/live/watches", s.listWatches)
 	mux.HandleFunc("POST /api/live/watches", s.addWatch)
 	mux.HandleFunc("DELETE /api/live/watches/{id}", s.deleteWatch)
+	mux.HandleFunc("PUT /api/live/watches/{id}/bind", s.bindWatchAccount)
 	mux.HandleFunc("GET /api/live/daemon", s.liveDaemon)
 	mux.HandleFunc("GET /api/live/barrage", s.liveBarrage)
-	// 发布中心：账号 + 定时计划 + 待发池
+	// 发布中心：账号 + 待发池（发布节奏由 config 窗口+两闸接管）
 	mux.HandleFunc("GET /api/accounts", s.listAccounts)
 	mux.HandleFunc("POST /api/accounts", s.createAccount)
 	mux.HandleFunc("DELETE /api/accounts/{id}", s.deleteAccount)
-	mux.HandleFunc("GET /api/schedules", s.listSchedules)
-	mux.HandleFunc("POST /api/schedules", s.createSchedule)
-	mux.HandleFunc("PUT /api/schedules/{id}/enabled", s.enableSchedule)
-	mux.HandleFunc("DELETE /api/schedules/{id}", s.deleteSchedule)
 	mux.HandleFunc("GET /api/pool", s.listPool)
 	mux.HandleFunc("POST /api/pool", s.addPool)
 	mux.HandleFunc("DELETE /api/pool/{id}", s.deletePool)
@@ -102,8 +99,8 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"asr":    map[string]string{"binary": s.cfg.Engines.ASR.Binary, "model": s.cfg.Engines.ASR.Model},
 		},
 		"publish": map[string]any{"headless": s.cfg.Publish.Headless, "screenshots": s.cfg.Publish.Screenshots,
+			"active_hours": s.cfg.Publish.ActiveHours,
 			"rate_limit": map[string]any{
-				"batch_max":        s.cfg.Publish.RateLimit.BatchMax,
 				"min_interval_min": s.cfg.Publish.RateLimit.MinIntervalMin,
 				"daily_max":        s.cfg.Publish.RateLimit.DailyMax,
 			}},
@@ -123,9 +120,10 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		LLM     *config.LLM     `json:"llm"`
 		Engines *config.Engines `json:"engines"`
 		Publish *struct {
-			Headless    *bool `json:"headless"`
-			Screenshots *bool `json:"screenshots"`
-			RateLimit   *config.RateLimit `json:"rate_limit"`
+			Headless     *bool  `json:"headless"`
+			Screenshots  *bool  `json:"screenshots"`
+			ActiveHours  *string `json:"active_hours"`
+			RateLimit    *config.RateLimit `json:"rate_limit"`
 		} `json:"publish"`
 		Chrome *struct {
 			Path string `json:"path"`
@@ -166,6 +164,10 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if rt.ConsumedSegDays < 0 {
 			rt.ConsumedSegDays = s.cfg.Retention.ConsumedSegDays
+		}
+		if rt.MaxUsagePercent < 0 || rt.MaxUsagePercent > 95 || rt.PublishedKeepDays < 0 || rt.PublishedKeepDays > 90 {
+			httpError(w, 400, "占用上限 0-95%（0=关），成品保留 0-90 天（0=不清）")
+			return
 		}
 		s.cfg.Retention = *rt
 	}
@@ -218,13 +220,21 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Publish.RateLimit != nil {
 			rl := req.Publish.RateLimit
-			// 三闸均为 0 = 不限制；负数或离谱值拒绝（防误填把自己锁死）
-			if rl.BatchMax < 0 || rl.MinIntervalMin < 0 || rl.DailyMax < 0 ||
-				rl.BatchMax > 50 || rl.MinIntervalMin > 1440 || rl.DailyMax > 100 {
-				httpError(w, 400, "节流参数需在 0-50（单轮）/ 0-1440（间隔分钟）/ 0-100（每日）内，0=不限制")
+			// 两闸均为 0 = 不限制；负数或离谱值拒绝（防误填把自己锁死）
+			if rl.MinIntervalMin < 0 || rl.DailyMax < 0 ||
+				rl.MinIntervalMin > 1440 || rl.DailyMax > 100 {
+				httpError(w, 400, "节流参数需在 0-1440（间隔分钟）/ 0-100（每日）内，0=不限制")
 				return
 			}
 			s.cfg.Publish.RateLimit = *rl
+		}
+		// 发布窗口：格式校验交 ParseActiveHours（支持跨夜如 22:00-06:00；空=全天）
+		if req.Publish.ActiveHours != nil {
+			if _, _, ok := config.ParseActiveHours(*req.Publish.ActiveHours); !ok {
+				httpError(w, 400, "发布窗口格式应为 HH:MM-HH:MM（如 10:00-23:00，支持跨夜），留空=全天可发")
+				return
+			}
+			s.cfg.Publish.ActiveHours = *req.Publish.ActiveHours
 		}
 	}
 	if req.Chrome != nil {
@@ -304,72 +314,8 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"ok": "true"})
 }
 
-func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
-	scs, err := s.store.ListSchedules()
-	if err != nil {
-		httpError(w, 500, err.Error())
-		return
-	}
-	if scs == nil {
-		scs = []*store.Schedule{}
-	}
-	writeJSON(w, scs)
-}
-
-func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
-	// enabled 用指针：前端没传时默认启用（否则 Go 零值 false 会让计划从未不触发）
-	var req struct {
-		Name      string `json:"name"`
-		Time      string `json:"time"`
-		Platforms string `json:"platforms"`
-		Enabled   *bool  `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpError(w, 400, "参数错误: "+err.Error())
-		return
-	}
-	if req.Name == "" || req.Time == "" {
-		httpError(w, 400, "name 与 time(HH:MM) 必填")
-		return
-	}
-	sc := &store.Schedule{Name: req.Name, Time: req.Time, Platforms: req.Platforms, Enabled: true}
-	if req.Enabled != nil {
-		sc.Enabled = *req.Enabled
-	}
-	id, err := s.store.CreateSchedule(sc)
-	if err != nil {
-		httpError(w, 500, err.Error())
-		return
-	}
-	sc.ID = id
-	writeJSON(w, sc)
-}
-
-// enableSchedule 启/停定时发布
-func (s *Server) enableSchedule(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	var req struct{ Enabled bool `json:"enabled"` }
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpError(w, 400, "参数错误: "+err.Error())
-		return
-	}
-	if err := s.store.EnableSchedule(id, req.Enabled); err != nil {
-		httpError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "enabled": req.Enabled})
-}
-
-func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err := s.store.DeleteSchedule(id); err != nil {
-		httpError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, map[string]string{"ok": "true"})
-}
-
-// ── 内容池 API（M5：审核通过入池，调度到点派发）──
+// ── 内容池 API（M5：审核通过入池，发布泵窗口内派发；定时计划已随
+// “发布窗口+泵”重构退役，schedules 数据表与 API 一并移除）──
 
 func (s *Server) listPool(w http.ResponseWriter, r *http.Request) {
 	all := r.URL.Query().Get("all") == "1"
@@ -393,6 +339,11 @@ func (s *Server) addPool(w http.ResponseWriter, r *http.Request) {
 	if it.SourceJob == "" || it.Clip == "" {
 		httpError(w, 400, "source_job 与 clip 必填")
 		return
+	}
+	// 来源直播间：从源任务 video 路径解析（直播↔账号绑定路由；非直播源为空）。
+	// 前端不感知，服务端补齐——自动入池（autoreview）与手工入池口径一致
+	if src, err := s.store.GetJob(it.SourceJob); err == nil && it.RoomID == "" {
+		it.RoomID = pipeline.RoomIDFromPath(src.ParamsMap()["video"])
 	}
 	id, err := s.store.AddPoolItem(&it)
 	if err != nil {
@@ -713,10 +664,15 @@ func (s *Server) listWatches(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) addWatch(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		URL string `json:"url"`
+		URL         string `json:"url"`
+		BindAccount string `json:"bind_account"` // 可选：本房间切片优先发到的账号
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpError(w, 400, "参数错误: "+err.Error())
+		return
+	}
+	if req.BindAccount != "" && !s.accountExists(req.BindAccount) {
+		httpError(w, 400, "绑定账号不存在："+req.BindAccount)
 		return
 	}
 	platform, roomID, title, err := detectWatchRoom(r.Context(), req.URL)
@@ -729,6 +685,7 @@ func (s *Server) addWatch(w http.ResponseWriter, r *http.Request) {
 		URL:      req.URL,
 		RoomID:   roomID,
 		Title:    title,
+		BindAccount: req.BindAccount,
 	}
 	id, err := s.store.AddWatch(wt)
 	if err != nil {
@@ -738,6 +695,46 @@ func (s *Server) addWatch(w http.ResponseWriter, r *http.Request) {
 	wt.ID = id
 	// 录制检测由独立 daemon 轮询负责（默认周期内即可感知，无需踢一脚）
 	writeJSON(w, wt)
+}
+
+// accountExists 账号名存在性检查（直播绑定校验用；跨平台任一命中即真）
+func (s *Server) accountExists(name string) bool {
+	as, err := s.store.ListAccounts()
+	if err != nil {
+		return false
+	}
+	for _, a := range as {
+		if a.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// bindWatchAccount 改绑直播间的发布账号（直播↔账号绑定：矩阵号人设垂直，
+// 本房间切片优先发到该账号；空串=解绑，回退化签路由）
+func (s *Server) bindWatchAccount(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		httpError(w, 400, "无效 id")
+		return
+	}
+	var req struct {
+		Account string `json:"account"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpError(w, 400, "参数错误: "+err.Error())
+		return
+	}
+	if req.Account != "" && !s.accountExists(req.Account) {
+		httpError(w, 400, "绑定账号不存在："+req.Account)
+		return
+	}
+	if err := s.store.SetWatchBind(id, req.Account); err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "bind_account": req.Account})
 }
 
 // detectWatchRoom 识别直播平台并取回房间信息（bilibili / huya）
