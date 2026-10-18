@@ -10,6 +10,8 @@ package detach
 
 import (
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,4 +61,42 @@ var newDetachedCmd = func(exe string, logF *os.File) *exec.Cmd {
 	cmd.Stdout = logF
 	cmd.Stderr = logF
 	return applyDetached(cmd)
+}
+
+// Tee 前台模式的日志镜像：进程带控制台运行（--foreground，窗口可见可最小化），
+// 标准输出同时写屏幕与 log\<redirectFile>——屏幕实时滚、文件完整留档，与
+// 后台模式的日志路径一致（挂机切前台排查问题时两个时期的日志同一个文件连续）。
+// 打不开文件时退化为纯屏幕（提示一句，不致命）
+func Tee(redirectFile string) {
+	logPath := filepath.Join("log", redirectFile)
+	if err := os.MkdirAll("log", 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "[foreground] 日志目录不可建（仅屏幕输出）: %v\n", err)
+		return
+	}
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[foreground] 日志 %s 打不开（仅屏幕输出）: %v\n", logPath, err)
+		return
+	}
+	// 前台模式标记（日志里可辨形态；区别于 detach 的 CLIPSTREAM_DETACHED=1）
+	os.Setenv("CLIPSTREAM_FOREGROUND", "1")
+	teeStream(&os.Stdout, f)
+	teeStream(&os.Stderr, f)
+	log.SetOutput(os.Stderr) // log 默认 logger 在 init 时绑定旧句柄，指向替换后的流
+}
+
+// teeStream 把 *std 重定向为"原句柄 + 文件"双写。os.Stdout 是 *os.File 类型
+// 装不下 MultiWriter——标准解法：造管道，*std 指向管道写端（类型匹配，所有
+// fmt.Print* 按写入时点读全局变量即流经管道），后台 goroutine 从读端泵到
+// MultiWriter(原句柄, 文件)。管道建不起时保持原样（纯屏幕）
+func teeStream(std **os.File, f *os.File) {
+	orig := *std
+	r, w, err := os.Pipe()
+	if err != nil {
+		return
+	}
+	*std = w
+	go func() {
+		_, _ = io.Copy(io.MultiWriter(orig, f), r)
+	}()
 }

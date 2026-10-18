@@ -55,8 +55,18 @@ func main() {
 	case "init":
 		doInit(cfgPath)
 	case "serve":
-		// 无人值守自脱离：RDP 断开/注销/误关黑窗不再杀服务（0xC000013A 实战教训）
-		if detach.Self("serve.log") {
+		// 默认无人值守自脱离（RDP 断开/注销/误关黑窗不再杀服务，0xC000013A
+		// 实战教训）；--foreground 前台模式：带控制台窗口运行（可最小化），
+		// 日志屏幕+文件双写——看得见实况，代价是关窗/注销会杀进程
+		fg := false
+		for _, a := range args {
+			if a == "-foreground" || a == "--foreground" {
+				fg = true
+			}
+		}
+		if fg {
+			detach.Tee("serve.log")
+		} else if detach.Self("serve.log") {
 			return
 		}
 		if err := doServe(cfgPath); err != nil {
@@ -85,7 +95,8 @@ func usage(cfgPath string) {
 用法：
   clipstream init                              初始化配置（%s）并检查引擎
   clipstream serve                             启动 Web 控制台（默认 127.0.0.1:8899）
-  clipstream-daemon                            直播录制守护进程（独立运行，勿从 serve 拉起）
+  clipstream serve --foreground                前台模式：带控制台窗口运行，日志屏幕+文件双写
+  clipstream-daemon / clipstream-daemon -foreground   直播录制守护进程（独立运行，勿从 serve 拉起）
   clipstream run -i <URL或本地文件>             创建任务并前台执行，实时打印日志
   clipstream run -i <URL> -kind publish ...    发布任务（一般从审核台发起）
   clipstream login --platform douyin|bilibili  首次登录平台（扫码，登录态长期复用）

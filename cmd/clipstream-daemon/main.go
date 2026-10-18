@@ -5,7 +5,8 @@
 // 自行轮询 watches 表 → 开播进程内拉流 → 状态/心跳落盘 → 下播分段入切片队列。
 //
 // 用法:
-//   clipstream-daemon [-config config.yaml]     # 常驻运行
+//   clipstream-daemon [-config config.yaml]            # 常驻运行（默认无窗口后台挂机模式）
+//   clipstream-daemon -foreground [-config config.yaml] # 前台模式：带控制台窗口，日志屏幕+文件双写
 //
 // 与 serve 的关系：两者共享 SQLite（WAL 多进程安全）；serve 只读 watches 展示，
 // 并消费 data/live/queue/ 队列文件把直播分段送入切片管线。daemon 需与 serve 一并
@@ -35,11 +36,16 @@ func main() {
 	log.SetFlags(log.LstdFlags)
 
 	var cfgPath string
+	var foreground bool
 	flag.StringVar(&cfgPath, "config", "config.yaml", "配置文件路径")
+	flag.BoolVar(&foreground, "foreground", false, "前台运行：带控制台窗口（可最小化），日志屏幕+文件双写；默认无窗口后台挂机模式")
 	flag.Parse()
 
-	// 无人值守自脱离：RDP 断开/注销/误关黑窗不再杀录制守护（0xC000013A 实战教训）
-	if detach.Self("daemon.log") {
+	// 默认无人值守自脱离（RDP 断开/注销/误关黑窗不再杀录制守护，0xC000013A
+	// 实战教训）；-foreground 切前台（看得到实况，代价是关窗/注销杀进程）
+	if foreground {
+		detach.Tee("daemon.log")
+	} else if detach.Self("daemon.log") {
 		return
 	}
 
