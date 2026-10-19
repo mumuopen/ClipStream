@@ -40,6 +40,7 @@ A Go rewrite inspired by [ChopperBot](https://github.com/Geniusay/ChopperBot): s
 | 🎙️ | **AI narration** | edge-tts synthesis · speed-matched alignment |
 | 🤖 | **Unattended loop** | 3-tier auto-review gate → publish pump paced in the active window (interval + daily cap + jitter) → room↔account bind-first routing → PushMe phone reports |
 | 📱 | **Scan & done** | Bilibili + Douyin web QR login — **zero input, zero CLI**; account name customizable (blank = auto-nickname) |
+| ⚙️ | **Auto engine install** | `clipstream engines install` detects missing engines → downloads from official sources (yt-dlp / ffmpeg / whisper+model / biliup), proxy-aware; core package stays ~40MB |
 | 🌐 | **Console** | Bilingual Web UI · single URL · dual-platform QR modal |
 | 🛡️ | **Server-grade hardening** | Fully isolated engine subprocesses (survive RDP drops / console closes / logoffs) · task recovery after crashes · 4-tier disk governance · pool backpressure (auto-pause recording when the queue is full, auto-resume once it drains) |
 

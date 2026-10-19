@@ -28,6 +28,7 @@ import (
 	"chopperbot/internal/core"
 	"chopperbot/internal/detach"
 	"chopperbot/internal/engine"
+	"chopperbot/internal/engines"
 	"chopperbot/internal/live"
 	"chopperbot/internal/notify"
 	"chopperbot/internal/pipeline"
@@ -78,6 +79,10 @@ func main() {
 		}
 	case "status":
 		doStatus(cfgPath)
+	case "engines":
+		if err := doEngines(cfgPath, args); err != nil {
+			log.Fatalf("engines 退出: %v", err)
+		}
 	case "login":
 		if err := doLogin(cfgPath, args); err != nil {
 			log.Fatalf("login 退出: %v", err)
@@ -101,6 +106,8 @@ func usage(cfgPath string) {
   clipstream run -i <URL> -kind publish ...    发布任务（一般从审核台发起）
   clipstream login --platform douyin|bilibili  首次登录平台（扫码，登录态长期复用）
   clipstream status                            查看任务列表
+  clipstream engines                           引擎体检（缺什么一目了然）
+  clipstream engines install                   自动下载缺失引擎（官方源；--model 换 whisper 模型档位）
   clipstream version                           版本
 
 管线（M1 剪切）：download(yt-dlp) → transcribe(whisper.cpp) → highlight(LLM/等分回退) → cut(ffmpeg) → review(审核台)
@@ -157,6 +164,130 @@ func doInit(cfgPath string) {
 	fmt.Println("下一步：clipstream serve 打开控制台，或 clipstream run -i <视频地址> 直接跑")
 }
 
+// doEngines 引擎按需安装：
+//   clipstream engines                   体检（同 init 的引擎段）+ 缺失清单
+//   clipstream engines install           下载全部缺失项到 engines\ 并写回配置
+//   clipstream engines install yt-dlp ffmpeg whisper-cli   指定项
+//   clipstream engines install --model tiny                换模型档位（默认 small）
+// 固定官方源 + 代理尊重（config.proxy）；失败给手动地址，不静默。
+func doEngines(cfgPath string, args []string) error {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return fmt.Errorf("读取配置失败: %v", err)
+	}
+	// 引擎目录与 config.yaml 同根（部署包布局 <root>\engines\）
+	dir := "engines"
+	if d := filepath.Dir(cfgPath); d != "." && d != "" {
+		dir = filepath.Join(d, "engines")
+	}
+
+	install := false
+	dryRun := false
+	model := ""
+	var names []string
+	for _, a := range args {
+		switch {
+		case a == "install":
+			install = true
+		case a == "--dry-run":
+			dryRun = true
+		case strings.HasPrefix(a, "--model="):
+			model = strings.TrimPrefix(a, "--model=")
+		case strings.HasPrefix(a, "-"):
+			return fmt.Errorf("未知参数 %q（用法：engines / engines install [yt-dlp ffmpeg biliup whisper-cli whisper-model] [--model tiny|base|small|medium]）", a)
+		default:
+			names = append(names, a)
+		}
+	}
+
+	if !install {
+		// 体检模式：引擎检查 + 缺失清单与安装建议
+		engineCheck(cfg)
+		missing := engines.Missing(cfg, dir)
+		if len(missing) > 0 {
+			fmt.Printf("\n缺失 %d 项：%s\n", len(missing), strings.Join(missing, ", "))
+			fmt.Println("自动补齐：clipstream engines install（从官方源下载，尊重 config.proxy；--dry-run 可先看计划）")
+			if containsStr(missing, "whisper-model") {
+				fmt.Println("模型档位：--model tiny|base|small|medium（默认 small，约 466MB）")
+			}
+		} else {
+			fmt.Println("\n引擎全部就位 ✔")
+		}
+		return nil
+	}
+
+	// 安装模式
+	if dryRun {
+		missing := engines.Missing(cfg, dir)
+		if len(names) > 0 {
+			missing = names
+		}
+		fmt.Println("── 安装计划（--dry-run，未下载）──")
+		for _, n := range missing {
+			size := ""
+			if n == "whisper-model" {
+				size = "（" + engines.ModelSizes[modelOr(model)] + "）"
+			}
+			fmt.Printf("  %s%s\n", n, size)
+		}
+		return nil
+	}
+
+	fmt.Printf("── 引擎安装（落位 %s，官方源）──\n", dir)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	results, err := engines.Install(ctx, cfg, engines.InstallPlan{WantModel: model, Names: names, TargetDir: dir})
+	if err != nil {
+		return err
+	}
+	// 写回配置（相对路径可移植：<config同目录>/engines/...）
+	for _, r := range results {
+		if r.Status != "installed" {
+			continue
+		}
+		rel, _ := filepath.Rel(filepath.Dir(cfgPath), r.Path)
+		switch r.Name {
+		case "yt-dlp":
+			cfg.Engines.YtDlp = rel
+		case "ffmpeg":
+			cfg.Engines.FFmpeg = rel
+			cfg.Engines.Probe = filepath.Join(filepath.Dir(rel), "ffprobe.exe")
+		case "biliup":
+			cfg.Engines.Biliup = rel
+		case "whisper-cli":
+			cfg.Engines.ASR.Binary = rel
+		case "whisper-model":
+			cfg.Engines.ASR.Model = rel
+		}
+	}
+	if err := cfg.Save(cfgPath); err != nil {
+		return fmt.Errorf("配置写回失败: %v", err)
+	}
+	fmt.Println("── 复检 ──")
+	engineCheck(cfg)
+	// 汇总失败项
+	var failed []string
+	for _, r := range results {
+		if r.Status == "failed" {
+			failed = append(failed, r.Name+": "+r.Detail)
+		}
+	}
+	if len(failed) > 0 {
+		fmt.Printf("\n%d 项未完成：\n%s\n", len(failed), strings.Join(failed, "\n"))
+	} else {
+		fmt.Println("\n全部就位 ✔ 可启动 clipstream serve")
+	}
+	return nil
+}
+
+// modelOr 空档位回退 small（与 engines.Install 默认一致，供提示用）
+func modelOr(m string) string {
+	if m == "" {
+		return "small"
+	}
+	return m
+}
+
 // engineCheck 引擎体检：存在性 + 冒烟执行。init 与 serve 启动都会跑——
 // 挂机部署最怕"文件在、一跑就崩"（pip 包装器内嵌本机路径 / 缺 DLL），
 // 坏引擎必须当场报警，而不是等任务失败才发现。
@@ -186,7 +317,7 @@ func engineCheck(cfg *config.Config) {
 // 退出码非 0 = 引擎残废（内嵌路径失效的包装器 / 缺运行库），比"文件存在"可信得多。
 func checkBin(name, bin string, smokeArgs ...string) {
 	if _, err := exec.LookPath(bin); err != nil {
-		fmt.Printf("  ✗ %-6s: 未找到 %q —— 请安装或在 config.yaml 配置绝对路径\n", name, bin)
+		fmt.Printf("  ✗ %-6s: 未找到 %q —— 可运行 clipstream engines install 自动补齐，或在 config.yaml 配置绝对路径\n", name, bin)
 		return
 	}
 	if len(smokeArgs) == 0 {
@@ -663,6 +794,16 @@ func routeAccount(accounts []*store.Account, platforms map[string]bool, itemTags
 		}
 	}
 	return best
+}
+
+// containsStr 切片包含判断
+func containsStr(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 func commaSet(s string) map[string]bool {

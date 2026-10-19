@@ -19,6 +19,7 @@ ClipStream 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) �
 - **磁盘四层治理**：①录制会话超期清理（既有）②**已发布切片成品退役**（`published_keep_days=3`，堵住 data/jobs 只进不出的长尾膨胀；池条目全部完结才删，绝不删在途素材）③磁盘水位兜底（既有）④**占用上限**（`max_usage_percent=50`——数据目录最多占整盘一半）；**正在录制的目录三道清理绝不碰**。
 - **前台模式**：`clipstream serve --foreground` / `clipstream-daemon -foreground` 带控制台窗口运行（可最小化），日志屏幕+文件双写（与挂机模式同一份日志文件连续追加）；新增「启动-前台.cmd」与「启动-挂机.cmd」并存（幂等守卫一致，混用不双开）。挂机模式仍为长期形态（无窗、断 RDP 不死）。
 - **扫码账号名可自定义**：扫码弹窗可选输入账号名（填=以此名建档；不填=平台昵称自动命名）；修正指定名只落 cookies 不落账号行的建档缺失。
+- **引擎按需自动安装**：`clipstream engines` 一键体检，`clipstream engines install` 从固定官方源自动下载缺失引擎（yt-dlp / ffmpeg+ffprobe / whisper-cli+模型 / biliup）到 `engines\` 并写回 config.yaml，尊重 `proxy`、失败给手动地址；whisper 模型默认 small（~466MB），`--model tiny|base|medium` 换档，`--dry-run` 只看计划。核心包瘦身轻量分发，全新部署不再到处找引擎。
 - **投稿指纹治理**：自动入池条目带**转写摘要简介**（切片区间 transcript 清洗截断）+ **词典命中标签**（标题中文短语抽词），消除「空简介+固定标签」的模板化投稿机器特征。
 - **发布失败计数与终态保护**：池条目连续失败 ≥3 次转红色「已退池」终态等人工处置，不再空耗配额；UI 重试角标（n/3）。
 

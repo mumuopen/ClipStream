@@ -1,18 +1,18 @@
 # ClipStream 配置示例（复制为 config.yaml 后按需修改）
 # 注意：config.yaml 已加入 .gitignore，不会提交到 GitHub——请勿在本文件中填写真实密钥
-# 引擎默认取 PATH 中的命令；未配置的引擎对应功能自动降级（详见 README）
+# 引擎缺失不用手动找：clipstream engines 体检，clipstream engines install 自动下载（官方源，尊重 proxy）
 
 data_dir: ./data
 proxy: "http://127.0.0.1:7897"   # 仅海外源走代理；B站/虎牙等国内平台自动直连
 
 engines:
-  ytdlp: "yt-dlp"                # 视频下载
-  ffmpeg: "ffmpeg"
-  ffprobe: "ffprobe"
-  biliup: ""                     # B站投稿引擎：从 github.com/biliup/biliup release 下载后填绝对路径
+  ytdlp: ""                     # 视频下载：留空走 PATH；都没有就 engines install 自动装
+  ffmpeg: ""                    # 转码/切片/烧字幕（自动装）
+  ffprobe: ""                   # 与 ffmpeg 同包自动落位
+  biliup: ""                    # B站投稿引擎（自动装）
   asr:
-    binary: ""                   # whisper.cpp 可执行文件（whisper-cli）
-    model: ""                    # ggml 模型路径（如 ggml-medium.bin）
+    binary: ""                  # whisper.cpp 可执行文件 whisper-cli（自动装）
+    model: ""                   # ggml 模型：自动装默认 small(~466MB)；install --model tiny|base|medium 换档
 
 llm:
   base_url: "https://api.deepseek.com/v1"  # OpenAI 兼容端点
