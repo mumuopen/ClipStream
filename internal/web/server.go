@@ -103,6 +103,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"rate_limit": map[string]any{
 				"min_interval_min": s.cfg.Publish.RateLimit.MinIntervalMin,
 				"daily_max":        s.cfg.Publish.RateLimit.DailyMax,
+				"max_inflight":     s.cfg.Publish.RateLimit.MaxInflight,
 			}},
 		"chrome":  map[string]string{"path": s.cfg.Chrome.Path},
 	})
@@ -225,10 +226,10 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Publish.RateLimit != nil {
 			rl := req.Publish.RateLimit
-			// 两闸均为 0 = 不限制；负数或离谱值拒绝（防误填把自己锁死）
-			if rl.MinIntervalMin < 0 || rl.DailyMax < 0 ||
-				rl.MinIntervalMin > 1440 || rl.DailyMax > 100 {
-				httpError(w, 400, "节流参数需在 0-1440（间隔分钟）/ 0-100（每日）内，0=不限制")
+			// 三闸均为 0 = 不限制；负数或离谱值拒绝（防误填把自己锁死）
+			if rl.MinIntervalMin < 0 || rl.DailyMax < 0 || rl.MaxInflight < 0 ||
+				rl.MinIntervalMin > 1440 || rl.DailyMax > 200 || rl.MaxInflight > 50 {
+				httpError(w, 400, "节流参数需在 0-1440（间隔分钟）/ 0-200（每日）/ 0-50（同时在途）内，0=不限制")
 				return
 			}
 			s.cfg.Publish.RateLimit = *rl
@@ -1019,6 +1020,11 @@ func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
 // 在 cmd 包，这里复用同套 SQL 语义）
 func throttleReason(st *store.Store, rl config.RateLimit, accName string) string {
 	now := time.Now()
+	if rl.MaxInflight > 0 {
+		if n, err := st.CountRunningPublish(accName); err == nil && n >= rl.MaxInflight {
+			return fmt.Sprintf("该账号同时在途任务已达上限（%d/%d 条），等上传完成后再发", n, rl.MaxInflight)
+		}
+	}
 	if rl.MinIntervalMin > 0 {
 		if last, err := st.LastPublishAt(accName); err == nil && last > 0 {
 			if wait := time.Duration(rl.MinIntervalMin)*time.Minute - now.Sub(time.Unix(last, 0)); wait > 0 {

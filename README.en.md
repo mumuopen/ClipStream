@@ -38,7 +38,7 @@ A Go rewrite inspired by [ChopperBot](https://github.com/Geniusay/ChopperBot): s
 | 🔪 | **Frame-accurate cutting** | FLV tag-level concat · timestamp normalization across merged segments · measured cut length matches annotation exactly |
 | 📖 | **Subtitles** | LLM translation + bilingual/Chinese burn-in |
 | 🎙️ | **AI narration** | edge-tts synthesis · speed-matched alignment |
-| 🤖 | **Unattended loop** | 3-tier auto-review gate → publish pump paced in the active window (interval + daily cap + jitter) → room↔account bind-first routing → PushMe phone reports |
+| 🤖 | **Unattended loop** | 3-tier auto-review gate → publish pump paced in the active window (interval / daily / in-flight caps + jitter, each 0 = unlimited) → room↔account bind-first routing → PushMe phone reports |
 | 📱 | **Scan & done** | Bilibili + Douyin web QR login — **zero input, zero CLI**; account name customizable (blank = auto-nickname) |
 | ⚙️ | **Auto engine install** | `clipstream engines install` detects missing engines → downloads from official sources (yt-dlp / ffmpeg / whisper+model / biliup), proxy-aware; core package stays ~40MB |
 | 🌐 | **Console** | Bilingual Web UI · single URL · dual-platform QR modal |

@@ -463,7 +463,7 @@ const I18N = {
     m5_acc_name_ph: '如：电竞主号（将作为登录账号名）',
     m5_acc_empty: '还没有发布账号 — 添加后点「扫码登录」完成授权',
     m5_sch: '发布节奏', m5_sch_hint: '入池即排队，窗口内自动匀速发完 —— 不再需要定时计划',
-    m5_sch_win: '发布窗口', m5_sch_interval: '同账号间隔', m5_sch_daily: '每日上限', m5_sch_allday: '全天可发',
+    m5_sch_win: '发布窗口', m5_sch_interval: '同账号间隔', m5_sch_daily: '每日上限', m5_sch_inflight: '同时在途', m5_sch_allday: '全天可发', m5_sch_unlimited: '不限',
     m5_bp_level: '待发池水位', m5_bp_hold: '已满：录制与送切暂停，发布追平自动恢复',
     m5_sch_bindhint: '直播↔账号绑定在「直播关注」列表配置；窗口与上限在「设置」调整',
     m5_rule: '自动发布是怎么运作的', m5_step1: '切片送入待发池', m5_step1b: '（审核通过后）',
@@ -533,7 +533,7 @@ const I18N = {
     m5_acc_name_ph: 'e.g. esports-main (used as login name)',
     m5_acc_empty: 'No accounts yet — add one, then QR-login to authorize it',
     m5_sch: 'Publish Pacing', m5_sch_hint: 'queued clips auto-publish evenly inside the window — no more plans',
-    m5_sch_win: 'Window', m5_sch_interval: 'Interval', m5_sch_daily: 'Daily cap', m5_sch_allday: 'all day',
+    m5_sch_win: 'Window', m5_sch_interval: 'Interval', m5_sch_daily: 'Daily cap', m5_sch_inflight: 'In-flight cap', m5_sch_allday: 'all day', m5_sch_unlimited: 'unlimited',
     m5_bp_level: 'Pool level', m5_bp_hold: 'full: recording & clipping paused until pool drains',
     m5_sch_bindhint: 'Bind room → account in Live Follow; window & caps in Settings',
     m5_rule: 'How auto-publish works', m5_step1: 'Clip enters queue', m5_step1b: '(after review)',
@@ -841,7 +841,8 @@ function renderSettings(el) {
           <label>清理间隔(min) <input id="cfg-rt-min" type="number" min="5" style="width:60px"></label>
           <label>发布窗口 <input id="cfg-pub-hours" style="width:100px" placeholder="10:00-23:00" title="窗口外不派发（夜里发没人看）；空=全天；支持跨夜如 22:00-06:00"></label>
           <label>发布间隔(min) <input id="cfg-pub-interval" type="number" min="0" max="1440" style="width:65px" title="同一账号两次发布的最小间隔（0=不限）；叠加 ±5% 随机抖动"></label>
-          <label>每日上限/账号 <input id="cfg-pub-daily" type="number" min="0" max="100" style="width:55px" title="每账号每天最多发布条数（0=不限）；结合间隔节奏 6 条约 6 小时匀速发完"></label>
+          <label>每日上限/账号 <input id="cfg-pub-daily" type="number" min="0" max="200" style="width:55px" title="每账号每天最多发布条数（0=不限）；9 条×10min ≈ 90 分钟发完当日配额"></label>
+          <label>同时在途上限 <input id="cfg-pub-inflight" type="number" min="0" max="50" style="width:55px" title="同一账号同时执行中的发布任务上限（0=不限）——上传慢时防多条并发"></label>
           <label>pushme <input id="cfg-nt-on" type="checkbox" style="width:auto"></label>
           <label>地址 <input id="cfg-nt-url" style="width:170px" placeholder="http://server:36591"></label>
           <label>push_key <input id="cfg-nt-key" style="width:140px"></label>
@@ -946,8 +947,9 @@ async function loadConfig() {
     setF('cfg-eng-ytdlp', c.engines?.ytdlp); setF('cfg-eng-ffmpeg', c.engines?.ffmpeg); setF('cfg-eng-ffprobe', c.engines?.ffprobe);
     setF('cfg-eng-biliup', c.engines?.biliup); setF('cfg-eng-asr-bin', c.engines?.asr?.binary); setF('cfg-eng-asr-model', c.engines?.asr?.model);
     setF('cfg-pub-hours', c.publish?.active_hours || '');
-    setF('cfg-pub-interval', c.publish?.rate_limit?.min_interval_min ?? 60);
-    setF('cfg-pub-daily', c.publish?.rate_limit?.daily_max ?? 6);
+    setF('cfg-pub-interval', c.publish?.rate_limit?.min_interval_min ?? 10);
+    setF('cfg-pub-daily', c.publish?.rate_limit?.daily_max ?? 9);
+    setF('cfg-pub-inflight', c.publish?.rate_limit?.max_inflight ?? 9);
   } catch (e) {}
 }
 async function saveConfig() {
@@ -964,7 +966,7 @@ async function saveConfig() {
       thinking: g('cfg-llm-think').value, proxy: '' },
     engines: { ytdlp: g('cfg-eng-ytdlp').value.trim(), ffmpeg: g('cfg-eng-ffmpeg').value.trim(), ffprobe: g('cfg-eng-ffprobe').value.trim(),
       biliup: g('cfg-eng-biliup').value.trim(), asr: { binary: g('cfg-eng-asr-bin').value.trim(), model: g('cfg-eng-asr-model').value.trim() } },
-    publish: { active_hours: g('cfg-pub-hours').value.trim(), rate_limit: { min_interval_min: num('cfg-pub-interval'), daily_max: num('cfg-pub-daily') } },
+    publish: { active_hours: g('cfg-pub-hours').value.trim(), rate_limit: { min_interval_min: num('cfg-pub-interval'), daily_max: num('cfg-pub-daily'), max_inflight: num('cfg-pub-inflight') } },
   };
   // engines 段里 asr 可能全空：后端把空 binary/model 视为保持原值，这里不传 asr 键更简单——直接不包含空字符串路径
   for (const k of ['ytdlp','ffmpeg','ffprobe','biliup']) { if (!payload.engines[k]) delete payload.engines[k]; }
@@ -1086,7 +1088,7 @@ async function refreshMatrix() {
   try { poolItems = await fetchJSON('/api/pool?all=1'); } catch (e) { poolItems = []; }
   try {
     const c = await fetchJSON('/api/config');
-    pubCfg = { hours: c.publish?.active_hours || '', interval: c.publish?.rate_limit?.min_interval_min ?? 0, daily: c.publish?.rate_limit?.daily_max ?? 0, high: c.live?.pool_high ?? 0 };
+    pubCfg = { hours: c.publish?.active_hours || '', interval: c.publish?.rate_limit?.min_interval_min ?? 0, daily: c.publish?.rate_limit?.daily_max ?? 0, inflight: c.publish?.rate_limit?.max_inflight ?? 0, high: c.live?.pool_high ?? 0 };
   } catch (e) { pubCfg = null; }
   if (page !== 'labels') return;
   // 表单与列表分离：轮询只刷列表，永不重建表单（填一半的账号不再被清空）
@@ -1169,14 +1171,16 @@ function renderMatrixLists() {
   if (ri) {
     if (pubCfg) {
       const win = pubCfg.hours || T('m5_sch_allday');
-      const interval = pubCfg.interval > 0 ? pubCfg.interval + ' min（±5% 抖动）' : '不限';
-      const daily = pubCfg.daily > 0 ? pubCfg.daily + ' 条' : '不限';
+      const interval = pubCfg.interval > 0 ? pubCfg.interval + ' min（±5% 抖动）' : T('m5_sch_unlimited');
+      const daily = pubCfg.daily > 0 ? pubCfg.daily + ' 条' : T('m5_sch_unlimited');
+      const inflight = pubCfg.inflight > 0 ? pubCfg.inflight + ' 条' : T('m5_sch_unlimited');
       const pend = (poolItems || []).filter(it => it.status === 'pending').length;
       const lvl = pubCfg.high > 0 ? (pend + ' / ' + pubCfg.high + (pend >= pubCfg.high ? '（' + T('m5_bp_hold') + '）' : '')) : String(pend);
       ri.innerHTML = `
         <div class="kv"><span class="k">${T('m5_sch_win')}</span><span class="v">${esc(win)}</span></div>
         <div class="kv"><span class="k">${T('m5_sch_interval')}</span><span class="v">${esc(interval)}</span></div>
         <div class="kv"><span class="k">${T('m5_sch_daily')}</span><span class="v">${esc(daily)}</span></div>
+        <div class="kv"><span class="k">${T('m5_sch_inflight')}</span><span class="v">${esc(inflight)}</span></div>
         <div class="kv"><span class="k">${T('m5_bp_level')}</span><span class="v">${esc(lvl)}</span></div>`;
     } else {
       ri.innerHTML = `<div class="hint">…</div>`;

@@ -549,6 +549,22 @@ func (s *Store) PoolPendingCount() (int, error) {
 	return n, nil
 }
 
+// CountRunningPublish 某账号在途（running 状态）发布任务数——"不要同时推送
+// 超过 N 条"保险丝的数据源。account 为空查全局；dry-run 演练不计（同 LastPublishAt 口径）
+func (s *Store) CountRunningPublish(account string) (int, error) {
+	q := `SELECT COUNT(*) FROM jobs WHERE kind='publish' AND status='running'` + dryRunFilter
+	var args []any
+	if account != "" {
+		q += ` AND input LIKE ? ESCAPE '\'`
+		args = append(args, acctInputPattern(account))
+	}
+	var n int
+	if err := s.db.QueryRow(q, args...).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // TrimPoolItemPlatforms 多平台部分成功后的重发范围收缩：从条目 platforms
 // 剔除已成功平台（防回池重派时同一平台重复投稿）。返回剔除后剩余平台串；
 // 剩空返回 ""（调用方应停止回池——该条目已全部发出）。

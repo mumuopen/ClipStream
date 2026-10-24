@@ -733,13 +733,20 @@ func dispatchOne(app *app, it *store.PoolItem, platforms string, blocked map[str
 	return acc
 }
 
-// publishThrottled 发布三闸判定：通过返回空串；被拦返回原因（日志与通知用）。
-// 间隔闸按 jobs 表派发时刻（含手动发布与失败尝试但不含 dry-run 演练——见 store 计数过滤）。
-// 间隔闸叠加 ±5% 随机抖动：精确的整分钟间隔（每天同一时刻起跳、严格执行 60min
-// 整点节拍器）本身是机器行为签名；随机化放行时刻（通过即立即派发，不会“放行又
-// 收回”），对可用性无实际影响（daily_max 兑底总量）。
+// publishThrottled 发布节流三闸判定：通过返回空串；被拦返回原因（日志与通知用）。
+// ①间隔闸按 jobs 表派发时刻（含手动发布与失败尝试但不含 dry-run 演练——见 store 计数过滤）。
+// 间隔闸叠加 ±5% 随机抖动：精确的整分钟间隔（每天同一时刻起跳、严格执行固定
+// 节拍器）本身是机器行为签名；随机化放行时刻（通过即立即派发，不会"放行又
+// 收回"），对可用性无实际影响（daily_max 兜底总量）。
+// ②每日上限闸 ③同时在途闸（running 任务数，"不要同时推送超过 N 条"的保险丝：
+// 10min 间隔下上传耗时超过间隔时会多条并发，超量即挡）
 func publishThrottled(st *store.Store, rl config.RateLimit, accName string) string {
 	now := time.Now()
+	if rl.MaxInflight > 0 {
+		if n, err := st.CountRunningPublish(accName); err == nil && n >= rl.MaxInflight {
+			return fmt.Sprintf("同时在途已达上限（%d/%d 条，等上传完成释放）", n, rl.MaxInflight)
+		}
+	}
 	if rl.MinIntervalMin > 0 {
 		if last, err := st.LastPublishAt(accName); err == nil && last > 0 {
 			base := time.Duration(rl.MinIntervalMin) * time.Minute

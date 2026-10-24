@@ -58,17 +58,21 @@ type Publish struct {
 	RateLimit   RateLimit `yaml:"rate_limit"`   // 发布节流（防风控：高频投稿限流/封号）
 }
 
-// RateLimit 发布节流两闸：发布间隔 / 每日上限。
-// 0 = 不限制。节流命中时挡账号不挡发布（被拦账号让位给次优账号，
-// 都被拦则条目留池等下轮）。手动发布不受限，但计入间隔计时。
-// （旧字段 batch_max 已随“定时计划→发布泵”重构废弃：泵模型下每个 tick
-// 至多派 1 条，单轮上限语义不复存在，yaml 里残留的 batch_max 会被忽略）
+// RateLimit 发布节流三闸：发布间隔 / 每日上限 / 同时在途上限。
+// 每道闸 0 = 不限制（用户按需开关：求快放开 daily_max、怕风控收紧 interval）。
+// 节流命中时挡账号不挡发布（被拦账号让位给次优账号，都被拦则条目留池等下轮）。
+// 手动发布同受节流（间隔/在途），计数含失败尝试但不含 dry-run 演练。
+// （旧字段 batch_max 已随"定时计划→发布泵"重构废弃：泵模型下每个 tick
+// 至多派 1 条，yaml 里残留的 batch_max 会被忽略）
 type RateLimit struct {
-	// 同账号两次派发最小间隔分钟（默认 60）：手动发布也计入；叠加 ±5% 抖动
+	// 同账号两次派发最小间隔分钟（默认 10）：手动发布也计入；叠加 ±5% 抖动
 	MinIntervalMin int `yaml:"min_interval_min" json:"min_interval_min"`
-	// 每账号每日最大发布数（默认 6）：全天总量闹门（窗口内与间隔配合，
-	// 6 条 × 60min ≈ 6 小时与速发完当日池）
+	// 每账号每日最大发布数（默认 9，0=不限）：全天总量闸——9 条 × 10min
+	// ≈ 窗口开头 90 分钟发完当日配额
 	DailyMax int `yaml:"daily_max" json:"daily_max"`
+	// 同账号同时在途（running）发布任务上限（默认 9，0=不限）：10min 间隔下
+	// 上传耗时 >10min 时会多条并发，这道闸是"不要同时推送超过 N 条"的保险丝
+	MaxInflight int `yaml:"max_inflight" json:"max_inflight"`
 }
 
 type Notify struct {
@@ -146,7 +150,7 @@ func Default() *Config {
 		Engines: Engines{YtDlp: "yt-dlp", FFmpeg: "ffmpeg", Probe: "ffprobe"},
 		Web:     Web{Listen: "127.0.0.1:8899"},
 		Publish: Publish{Headless: false, Screenshots: true, PlatformsDir: "configs/platforms", ActiveHours: "10:00-23:00",
-			RateLimit: RateLimit{MinIntervalMin: 60, DailyMax: 6}},
+			RateLimit: RateLimit{MinIntervalMin: 10, DailyMax: 9, MaxInflight: 9}},
 		Live:      Live{CheckIntervalSec: 60, SegmentSec: 600, AutoClip: true, MaxStaleSec: 300, PreviewKeywords: []string{"预告", "凌晨见"}, PoolHigh: 20, PoolLow: 10},
 		Retention: Retention{Enabled: true, SegmentsDays: 7, ConsumedSegDays: 1, MinFreePercent: 10, CheckMinutes: 60, MaxUsagePercent: 50, PublishedKeepDays: 3},
 		AutoReview: AutoReview{Enabled: false, MinScore: 60, HardMinDurSec: 15, HardMaxDurSec: 120, BannedWords: []string{}},
