@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -766,6 +767,15 @@ func (s *Store) CountFinishedPoolItems() (int, error) {
 	return n, nil
 }
 
+// CountPendingPoolItems 待发池 pending 条目数（一键清理的"清空待发池"选项预览）
+func (s *Store) CountPendingPoolItems() (int, error) {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM content_pool WHERE status='pending'`).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // DeleteFinishedPoolItems 删除已完结池条目（一键清理第一步：发布完成与已退池
 // 终态的条目使命已尽；pending 待发条目与其素材绝不动）
 func (s *Store) DeleteFinishedPoolItems() (int64, error) {
@@ -776,13 +786,37 @@ func (s *Store) DeleteFinishedPoolItems() (int64, error) {
 	return res.RowsAffected()
 }
 
-// PurgeableJobs 可清历史任务清单（预览与执行共用，口径一致）：kind∈{clips,publish}
-// 且终态（done/failed），且池中无 pending 条目引用其产物——待发切片直接引用源
-// 任务目录里的 mp4，误删素材会让派发就地"切片文件不存在"（2026-10-25 前车之鉴）。
-// 注意口径：已完结池条目即将被 DeleteFinishedPoolItems 清掉，故只把 pending 当活跃引用。
-// 单条 NOT EXISTS 完成（禁止 rows 迭代中嵌套查询：SetMaxOpenConns(1) 下唯一连接
-// 被外层占着，内层永远等不到连接——TestPurgeableJobs 实测挂死 30s 的教训）
+// DeleteAllPoolItems 清空待发池（include_pending 选项）：连 pending 一起全删——
+// 积压的老切片重发价值低且占着背压水位（pending ≥ pool_high 会一直暂停录制，
+// 风控冷却期池子发不出去时背压死锁），用户拍板可一键清空重来。
+// 素材目录保护交由 PurgeableJobs 的"非终态引用"闸兜底
+func (s *Store) DeleteAllPoolItems() (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM content_pool`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// PurgeableJobs 可清历史任务清单（预览与执行共用，口径一致）。三个条件缺一不可：
+//  1. 终态（done/failed）
+//  2. 池中无 pending 条目引用（待发切片直接引用源任务目录里的 mp4，删了派发
+//     就地"切片文件不存在"——2026-10-25 前车之鉴）
+//  3. 无非终态任务引用其目录——字幕/配音成品写进源 clips 任务目录（审核台 review
+//     状态的字幕任务引用的素材在源目录），在途 publish 也引用源 mp4；0.6.1 的
+//     一键清理漏了这道闸，把用户审核台里待审字幕的素材连目录删了（2026-10-25
+//     服务器事故：用户点清理后"待审核的全没了"）
+//
+// 实现注意：单连接池（SetMaxOpenConns=1）下禁止 rows 迭代中嵌套查询——唯一连接
+// 被外层占着，内层永远等不到连接（TestPurgeableJobs 实测挂死 30s 的教训）。
+// 故①②用单条 NOT EXISTS，③单独一条查询收集后 Go 层过滤
 func (s *Store) PurgeableJobs() ([]PurgeJob, error) {
+	// 非终态任务引用的源任务 id 集合（input JSON 的 source_job 字段：
+	// subtitle/dub/publish 三类任务的素材/上传对象都在源目录里）
+	protected, err := s.referencedSourceJobs()
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Query(`SELECT id,kind,dir FROM jobs
 		WHERE kind IN ('clips','publish') AND status IN ('done','failed')
 		  AND NOT EXISTS (SELECT 1 FROM content_pool WHERE source_job=jobs.id AND status='pending')
@@ -797,9 +831,40 @@ func (s *Store) PurgeableJobs() ([]PurgeJob, error) {
 		if err := rows.Scan(&j.ID, &j.Kind, &j.Dir); err != nil {
 			return nil, err
 		}
+		if protected[j.ID] {
+			continue // 审核台字幕/配音成品或在途发布还引用着本任务的素材
+		}
 		out = append(out, j)
 	}
 	return out, rows.Err()
+}
+
+// referencedSourceJobs 非终态任务（queued/running/review）input.source_job 的集合。
+// input 兼容解析：三类任务的请求结构都有 json:"source_job" 字段，非法 JSON 跳过。
+// COALESCE 兜底历史 NULL 行（老库手工数据/异常行防 Scan 炸）
+func (s *Store) referencedSourceJobs() (map[string]bool, error) {
+	rows, err := s.db.Query(`SELECT COALESCE(input,'') FROM jobs WHERE status IN ('queued','running','review')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	protected := map[string]bool{}
+	for rows.Next() {
+		var input string
+		if err := rows.Scan(&input); err != nil {
+			return nil, err
+		}
+		if input == "" {
+			continue
+		}
+		var req struct {
+			SourceJob string `json:"source_job"`
+		}
+		if json.Unmarshal([]byte(input), &req) == nil && req.SourceJob != "" {
+			protected[req.SourceJob] = true
+		}
+	}
+	return protected, rows.Err()
 }
 
 // DeleteJobRecord 删除任务记录（保留 DeleteJob 的存在性校验语义供 UI 单删；

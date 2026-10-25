@@ -356,13 +356,19 @@ func (s *Server) resumePublish(w http.ResponseWriter, r *http.Request) {
 // purgeStats 清理统计（预览与执行共用结构）
 type purgeStats struct {
 	PoolItems int      `json:"pool_items"` // 清掉的已完结池条目（dispatched+failed）
-	Jobs      int      `json:"jobs"`      // 清掉的历史任务数
-	Bytes     int64    `json:"bytes"`     // 释放磁盘字节数
+	Pending   int      `json:"pending"`    // 待发池现存条目（include_pending=true 时一并清空）
+	Jobs      int      `json:"jobs"`       // 清掉的历史任务数
+	Bytes     int64    `json:"bytes"`      // 释放磁盘字节数
 	Errors    []string `json:"errors,omitempty"`
 }
 
 func (s *Server) purgePreview(w http.ResponseWriter, r *http.Request) {
 	pool, err := s.store.CountFinishedPoolItems()
+	if err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	pending, err := s.store.CountPendingPoolItems()
 	if err != nil {
 		httpError(w, 500, err.Error())
 		return
@@ -378,16 +384,31 @@ func (s *Server) purgePreview(w http.ResponseWriter, r *http.Request) {
 			bytes += dirSize(dir)
 		}
 	}
-	writeJSON(w, purgeStats{PoolItems: pool, Jobs: len(jobs), Bytes: bytes})
+	writeJSON(w, purgeStats{PoolItems: pool, Pending: pending, Jobs: len(jobs), Bytes: bytes})
 }
 
-// purgeExecute 执行清理：①删已完结池条目 ②删无 pending 引用的终态任务（记录
-// + 产物目录）。待发条目与其素材绝不动（误删素材会让派发就地“切片文件不存在”）
+// purgeExecute 执行清理：①删池条目 ②删无活跃引用的终态任务（记录+产物目录）。
+// include_pending=true 时连待发池一起清空——风控冷却期池子发不出去、pending 占着
+// 背压水位（≥pool_high 一直暂停录制）形成死锁，老积压重发价值低，用户拍板可清空重来。
+// 待发素材的目录保护由 PurgeableJobs 的两道闸兜底（池引用 + 非终态任务引用），
+// 清空池后仍有在途任务引用的源目录不会被删
 func (s *Server) purgeExecute(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IncludePending bool `json:"include_pending"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req) // 空/坏 body=只清已完结（UI 未勾选时不发 body）
+	}
 	st := purgeStats{}
-	pool, err := s.store.DeleteFinishedPoolItems()
+	var pool int64
+	var err error
+	if req.IncludePending {
+		pool, err = s.store.DeleteAllPoolItems()
+	} else {
+		pool, err = s.store.DeleteFinishedPoolItems()
+	}
 	if err != nil {
-		httpError(w, 500, "清理已完结池条目失败: "+err.Error())
+		httpError(w, 500, "清理池条目失败: "+err.Error())
 		return
 	}
 	st.PoolItems = int(pool)

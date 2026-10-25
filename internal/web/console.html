@@ -1113,16 +1113,35 @@ async function resumePublish(id) {
     alert(r.note || '已恢复'); refreshMatrix();
   } catch (e) { alert(e.message); }
 }
-// 一键清理历史：预览确认再执行（待发条目与其素材永不动）
+// 一键清理历史：预览确认再执行。待发池有积压时先问是否连待发一起清空
+// （风控冷却期 pending 发不出去、占着背压水位会一直暂停录制——老积压清空后池子
+// 水位回落，录制自动恢复）；素材保护由后端两道闸兜底（池引用+非终态任务引用）
 async function purgeHistory() {
   let p;
   try { p = await fetchJSON('/api/maintenance/purge_preview'); } catch (e) { alert(e.message); return; }
-  if (!p.pool_items && !p.jobs) { alert('没有可清理的历史（已完结池条目 0 条、终态历史任务 0 个）'); return; }
+  if (!p.pool_items && !p.jobs && !p.pending) { alert('没有可清理的内容（待发池 0 条、已完结条目 0、终态历史任务 0）'); return; }
+  let includePending = false;
+  if (p.pending > 0) {
+    includePending = confirm(`待发池里还有 ${p.pending} 条待发内容。
+
+点【确定】：连同待发池一起清空 ——
+  适合"老积压不要了、重新开始"的场景：池子水位立即回落，
+  "池满·暂停录制"自动解除，新直播正常录制切片；这些老切片
+  的素材目录会被删除（不可恢复；仍被审核台字幕/在途任务引用
+  的素材会自动保留）。
+
+点【取消】：保留待发池，只清理已完结条目与历史任务
+  （待发内容继续按发布节奏自动发出）。`);
+  }
   const gb = (p.bytes / 1e9).toFixed(2);
-  if (!confirm(`一键清理历史？将清理：\n\n· 已完结池条目 ${p.pool_items} 条（已发布+已退池终态）\n· 终态历史任务 ${p.jobs} 个（含切片产物目录与失败发布记录）\n· 预计释放 ${gb} GB 磁盘\n\n待发条目与其素材不会被清理（发布不受影响）。`)) return;
+  const scope = includePending
+    ? `· 待发池 ${p.pending} 条（清空，解除池满背压）\n· 已完结池条目 ${p.pool_items} 条（已发布+已退池）\n· 终态历史任务 ${p.jobs} 个（含产物目录）\n· 预计释放 ${gb} GB`
+    : `· 已完结池条目 ${p.pool_items} 条（已发布+已退池终态）\n· 终态历史任务 ${p.jobs} 个（含切片产物目录与失败发布记录）\n· 预计释放 ${gb} GB`;
+  if (!confirm(`确认执行清理？将清理：\n\n${scope}\n\n待发池${includePending ? '将被清空' : '保持不动（' + p.pending + ' 条待发内容不受影响）'}。`)) return;
   try {
-    const r = await fetchJSON('/api/maintenance/purge', { method: 'POST' });
-    let msg = `清理完成：池条目 ${r.pool_items} 条、历史任务 ${r.jobs} 个、释放 ${(r.bytes / 1e9).toFixed(2)} GB`;
+    const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ include_pending: includePending }) };
+    const r = await fetchJSON('/api/maintenance/purge', opts);
+    let msg = `清理完成：池条目 ${r.pool_items} 条${includePending ? '（含待发池清空）' : ''}、历史任务 ${r.jobs} 个、释放 ${(r.bytes / 1e9).toFixed(2)} GB`;
     if (r.errors && r.errors.length) msg += '\n\n部分条目跳过：\n' + r.errors.join('\n');
     alert(msg);
     refreshMatrix();
