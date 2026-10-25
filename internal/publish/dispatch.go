@@ -77,3 +77,17 @@ func IsAuthError(detail string) bool {
 	}
 	return false
 }
+
+// IsRateLimited 平台限流判定（风控熔断依据）：B 站"投稿过于频繁"（错误码
+// 137022，2026-10-24 服务器实测：10min 间隔连投 5 条即触发，22h 不解封——
+// 每次失败重试都在刷新限流窗口，越撞越久）与抖音"操作太频繁"等文案。
+// 命中即账号级冷却（publishThrottled 拦截派发），不让泵每 10 分钟继续撞墙。
+func IsRateLimited(detail string) bool {
+	d := strings.ToLower(detail)
+	for _, kw := range []string{"过于频繁", "太频繁", "操作频繁", "频率过高", "频次过高", "rate limit", "frequen", "137022"} {
+		if strings.Contains(d, strings.ToLower(kw)) {
+			return true
+		}
+	}
+	return false
+}

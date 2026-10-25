@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"chopperbot/internal/core"
 	"chopperbot/internal/publish"
@@ -102,11 +103,12 @@ func stagePublishFinalize(_ context.Context, job *core.Job, env *Env) error {
 	// 失败善后（无人值守核心：不能让内容静默损失）
 	req, _ := publish.ParseRequest(job.Input)
 	postmortem := ""
+	rateLimited := false
 	if !result.AllOK && req != nil {
 		// 1) 登录态/认证类失败：对应平台账号标 login_expired（routeAccount 自动
 		// 避开，UI 提示重新扫码）。按失败平台逐一停号（旧版写死 bilibili，
 		// 抖音账号永不停号）；文案匹配走 publish.IsAuthError（覆盖两平台措辞
-		// 与 biliup -101/csrf/401 退出特征，旧版只认"登录态缺失"四字形同虚设）
+		// 与 biliup -101/csrf/401 退出特征，旧版只认“登录态缺失”四字形同虚设）
 		stopped := []string{}
 		for _, r := range result.Results {
 			if r.OK || !publish.IsAuthError(r.Detail) {
@@ -118,6 +120,38 @@ func stagePublishFinalize(_ context.Context, job *core.Job, env *Env) error {
 		}
 		if len(stopped) > 0 {
 			postmortem = fmt.Sprintf("\n账号「%s」登录态已失效，已停用其自动发布——请在发布中心重新扫码登录后续用。", strings.Join(stopped, "、"))
+		}
+		// 1.5) 平台限流熔断（2026-10-24 服务器实测教训：10min 间隔连投 5 条
+		// 触发 B站 137022"投稿过于频繁"；此后 22h 每次 10min 的重试都在刷新
+		// 限流窗口，120 次徒劳请求无一成功且越撞越久）：识别限流文案立即账号级
+		// 冷却——publishThrottled 拦后续派发，冷却到点自动恢复；连续触发指数
+		// 退避（base→×2→×4…上限 7 天），手动恢复保留计数（梯度继续）
+		if req.Account != "" {
+			for _, r := range result.Results {
+				if r.OK || !publish.IsRateLimited(r.Detail) {
+					continue
+				}
+				rateLimited = true
+				base := env.Cfg.Publish.RateLimit.RiskCooldownHours
+				if base <= 0 {
+					base = 24
+				}
+				_, count := env.Store.AccountRiskPaused(req.Account)
+				n := count + 1
+				cd := time.Duration(base) * time.Hour
+				for i := 1; i < n && cd < 7*24*time.Hour; i++ {
+					cd *= 2
+				}
+				if cd > 7*24*time.Hour {
+					cd = 7 * 24 * time.Hour
+				}
+				until := time.Now().Add(cd).Unix()
+				if err := env.Store.MarkAccountRiskPaused(req.Account, until, n); err == nil {
+					env.log(job, "风控熔断：账号「%s」限流冷却 %s（至 %s，第 %d 次触发）", req.Account, cd.Round(time.Hour), time.Unix(until, 0).Format("01-02 15:04"), n)
+					postmortem += fmt.Sprintf("\n检测到平台限流（投稿过于频繁）：账号「%s」已自动暂停发布，冷却约 %s（至 %s）后自动恢复，期间发布泵静默等待不再投稿。", req.Account, cd.Round(time.Hour), time.Unix(until, 0).Format("01-02 15:04"))
+				}
+				break // 按账号熔断一次足矣（多平台同账号共用冷却）
+			}
 		}
 		// 2) 调度派发的任务失败：回池冷却重试（连续失败 3 次置 failed 终态，
 		// 不再自动派发——防坏条目反复撞墙吃光当日配额；UI"已退池"红色提示人工处置）。
@@ -134,8 +168,16 @@ func stagePublishFinalize(_ context.Context, job *core.Job, env *Env) error {
 					poolDone = true
 				}
 			}
-			if !poolDone {
-				if final, err := env.Store.MarkPoolItemRetry(req.PoolItemID, 3); err == nil {
+		if !poolDone {
+			if rateLimited {
+				// 限流不是内容的错：不计失败次数（防 3 次退池误伤好条目——
+				// 冷却期间每次重试都在撞限流墙，若计数会让整池条目被白白退池）。
+				// 直接回 pending，冷却结束后发布泵自动重发；此前已成功的平台
+				// 在 trim 阶段已剔除，不会重发
+				_ = env.Store.SetPoolItemStatus(req.PoolItemID, "pending")
+				env.log(job, "平台限流：条目回池不计失败次数，账号冷却后自动重发")
+				postmortem += "\n本次失败为平台限流，不计入失败次数；条目已退回待发池，冷却结束后自动重发。"
+			} else if final, err := env.Store.MarkPoolItemRetry(req.PoolItemID, 3); err == nil {
 					if len(succeeded) > 0 {
 						postmortem += fmt.Sprintf("\n已成功平台（%s）不再重发，仅补发失败平台。", strings.Join(succeeded, ","))
 					}

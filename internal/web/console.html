@@ -470,6 +470,7 @@ const I18N = {
     m5_step2: '窗口内匀速发', m5_step2b: '间隔+每日上限防风控', m5_step3: '绑定/标签路由账号', m5_step3b: '绑定优先，失效自动回退',
     m5_ok: '正常', m5_login: '待登录', m5_expired: '登录已过期', m5_on: '启用', m5_off: '已停用', m5_last: '上次', m5_never: '未触发',
     m5_pool_pending: '待发', m5_pool_dispatched: '已派发', m5_pool_failed: '已退池',
+    m5_risk_badge: '风控冷却', m5_risk_resume: '恢复发布', m5_purge_btn: '一键清理历史',
     m5_unlabel: '无标签', m5_confirm_acc: '删除该发布账号？（已保存的登录不受影响）',
     m5_acc_need: '账号名必填',
     m5_login_btn: '扫码登录', m5_login_now: '登录中…', m5_toggle_on: '启用', m5_toggle_off: '停用',
@@ -540,6 +541,7 @@ const I18N = {
     m5_step2: 'Paced publish in window', m5_step2b: 'interval + daily cap', m5_step3: 'Bind / label routing', m5_step3b: 'bind first, fallback on failure',
     m5_ok: 'OK', m5_login: 'login', m5_expired: 'login expired', m5_on: 'ON', m5_off: 'OFF', m5_last: 'last', m5_never: 'never',
     m5_pool_pending: 'pending', m5_pool_dispatched: 'dispatched', m5_pool_failed: 'returned',
+    m5_risk_badge: 'rate-limit cooldown', m5_risk_resume: 'Resume', m5_purge_btn: 'Purge history',
     m5_unlabel: 'no labels', m5_confirm_acc: 'Delete this account? (saved login untouched)',
     m5_acc_need: 'Account name required',
     m5_login_btn: 'QR Login', m5_login_now: 'Logging in…', m5_toggle_on: 'Enable', m5_toggle_off: 'Disable',
@@ -843,6 +845,7 @@ function renderSettings(el) {
           <label>发布间隔(min) <input id="cfg-pub-interval" type="number" min="0" max="1440" style="width:65px" title="同一账号两次发布的最小间隔（0=不限）；叠加 ±5% 随机抖动"></label>
           <label>每日上限/账号 <input id="cfg-pub-daily" type="number" min="0" max="200" style="width:55px" title="每账号每天最多发布条数（0=不限）；9 条×10min ≈ 90 分钟发完当日配额"></label>
           <label>同时在途上限 <input id="cfg-pub-inflight" type="number" min="0" max="50" style="width:55px" title="同一账号同时执行中的发布任务上限（0=不限）——上传慢时防多条并发"></label>
+          <label>风控冷却(h) <input id="cfg-pub-riskcd" type="number" min="0" max="168" style="width:55px" title="平台限流（投稿过于频繁）触发熔断的基础冷却时长；连续触发翻倍，上限 7 天；0=默认 24"></label>
           <label>pushme <input id="cfg-nt-on" type="checkbox" style="width:auto"></label>
           <label>地址 <input id="cfg-nt-url" style="width:170px" placeholder="http://server:36591"></label>
           <label>push_key <input id="cfg-nt-key" style="width:140px"></label>
@@ -950,6 +953,7 @@ async function loadConfig() {
     setF('cfg-pub-interval', c.publish?.rate_limit?.min_interval_min ?? 10);
     setF('cfg-pub-daily', c.publish?.rate_limit?.daily_max ?? 9);
     setF('cfg-pub-inflight', c.publish?.rate_limit?.max_inflight ?? 9);
+    setF('cfg-pub-riskcd', c.publish?.rate_limit?.risk_cooldown_hours ?? 24);
   } catch (e) {}
 }
 async function saveConfig() {
@@ -966,7 +970,7 @@ async function saveConfig() {
       thinking: g('cfg-llm-think').value, proxy: '' },
     engines: { ytdlp: g('cfg-eng-ytdlp').value.trim(), ffmpeg: g('cfg-eng-ffmpeg').value.trim(), ffprobe: g('cfg-eng-ffprobe').value.trim(),
       biliup: g('cfg-eng-biliup').value.trim(), asr: { binary: g('cfg-eng-asr-bin').value.trim(), model: g('cfg-eng-asr-model').value.trim() } },
-    publish: { active_hours: g('cfg-pub-hours').value.trim(), rate_limit: { min_interval_min: num('cfg-pub-interval'), daily_max: num('cfg-pub-daily'), max_inflight: num('cfg-pub-inflight') } },
+    publish: { active_hours: g('cfg-pub-hours').value.trim(), rate_limit: { min_interval_min: num('cfg-pub-interval'), daily_max: num('cfg-pub-daily'), max_inflight: num('cfg-pub-inflight'), risk_cooldown_hours: num('cfg-pub-riskcd') } },
   };
   // engines 段里 asr 可能全空：后端把空 binary/model 视为保持原值，这里不传 asr 键更简单——直接不包含空字符串路径
   for (const k of ['ytdlp','ffmpeg','ffprobe','biliup']) { if (!payload.engines[k]) delete payload.engines[k]; }
@@ -1101,6 +1105,29 @@ async function delPoolItem(id) {
   if (!confirm('移出内容池？（不影响源切片）')) return;
   try { await fetchJSON('/api/pool/' + id, { method: 'DELETE' }); refreshMatrix(); } catch (e) { alert(e.message); }
 }
+// 手动恢复风控冷却（触发计数保留：再触发冷却继续翻倍）
+async function resumePublish(id) {
+  if (!confirm('提前恢复该账号的发布？\n\n平台限流未必已解除，恢复后若再撞限流会触发更长冷却（连续触发翻倍，上限 7 天）。\n建议确认平台投稿功能已恢复正常后再恢复。')) return;
+  try {
+    const r = await fetchJSON('/api/accounts/' + id + '/resume_publish', { method: 'POST' });
+    alert(r.note || '已恢复'); refreshMatrix();
+  } catch (e) { alert(e.message); }
+}
+// 一键清理历史：预览确认再执行（待发条目与其素材永不动）
+async function purgeHistory() {
+  let p;
+  try { p = await fetchJSON('/api/maintenance/purge_preview'); } catch (e) { alert(e.message); return; }
+  if (!p.pool_items && !p.jobs) { alert('没有可清理的历史（已完结池条目 0 条、终态历史任务 0 个）'); return; }
+  const gb = (p.bytes / 1e9).toFixed(2);
+  if (!confirm(`一键清理历史？将清理：\n\n· 已完结池条目 ${p.pool_items} 条（已发布+已退池终态）\n· 终态历史任务 ${p.jobs} 个（含切片产物目录与失败发布记录）\n· 预计释放 ${gb} GB 磁盘\n\n待发条目与其素材不会被清理（发布不受影响）。`)) return;
+  try {
+    const r = await fetchJSON('/api/maintenance/purge', { method: 'POST' });
+    let msg = `清理完成：池条目 ${r.pool_items} 条、历史任务 ${r.jobs} 个、释放 ${(r.bytes / 1e9).toFixed(2)} GB`;
+    if (r.errors && r.errors.length) msg += '\n\n部分条目跳过：\n' + r.errors.join('\n');
+    alert(msg);
+    refreshMatrix();
+  } catch (e) { alert('清理失败：' + e.message); }
+}
 function platBadge(p) {
   const m = PLAT_META[p] || { cn: p, color: '#888' };
   return `<span class="plat" style="background:${m.color}22;color:${m.color};border:1px solid ${m.color}55">${m.cn}</span>`;
@@ -1129,7 +1156,8 @@ function renderLabels(el) {
       </div>
 
       <div class="set-panel m5-rule">
-        <h4>${T('m5_pool_title')}<span class="hint">${T('m5_sch_hint')}</span></h4>
+        <h4>${T('m5_pool_title')}<span class="hint">${T('m5_sch_hint')}</span>
+          <button class="b-login" style="float:right;margin-top:-4px" title="清理已发布/已退池条目与终态历史任务（含切片产物目录）" onclick="purgeHistory()">${T('m5_purge_btn')}</button></h4>
         <div class="acc-list" id="pool-list"></div>
       </div>
 
@@ -1155,11 +1183,14 @@ function renderMatrixLists() {
     const state = a.logged_in && !expired ? 'running' : expired ? 'failed' : 'queued';
     const label = a.logged_in && !expired ? T('m5_ok') : expired ? T('m5_expired') : T('m5_login');
     const needLogin = !a.logged_in || expired;
+    const riskLeft = (a.risk_paused_until || 0) - Math.floor(Date.now() / 1000);
     return `
     <div class="acc-card">
       <div class="acc-top">${platBadge(a.platform)}<b>${esc(a.name)}</b>
         <span class="acc-star" title="${T('m5_prio')}">${'★'.repeat(Math.max(1, Math.min(5, Math.ceil((a.priority || 0) / 2))))}</span>
         <span class="badge ${state}">${label}</span>
+        ${riskLeft > 0 ? `<span class="badge failed" title="平台限流熔断：冷却期间不派发，到点自动恢复">⏸ ${T('m5_risk_badge')} ${fmtDur(riskLeft)}</span>
+          <button class="b-login" onclick="resumePublish(${a.id})">${T('m5_risk_resume')}</button>` : ''}
         ${a.platform === 'bilibili' && needLogin ? `<button class="b-login" onclick="startLogin('${esc(a.platform)}','${esc(a.name)}')">${T('m5_login_btn')}</button>` : ''}
         ${a.platform === 'douyin' && needLogin ? `<button class="b-login" onclick="startLogin('douyin','${esc(a.name)}')">${T('m5_login_btn')}</button>` : ''}
         <button class="del" title="${T('btn_del')}" onclick="delAccount(${a.id})">✕</button></div>

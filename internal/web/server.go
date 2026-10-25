@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"math/rand"
 	"net/http"
@@ -68,9 +69,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/accounts", s.listAccounts)
 	mux.HandleFunc("POST /api/accounts", s.createAccount)
 	mux.HandleFunc("DELETE /api/accounts/{id}", s.deleteAccount)
+	mux.HandleFunc("POST /api/accounts/{id}/resume_publish", s.resumePublish)
 	mux.HandleFunc("GET /api/pool", s.listPool)
 	mux.HandleFunc("POST /api/pool", s.addPool)
 	mux.HandleFunc("DELETE /api/pool/{id}", s.deletePool)
+	// 维护：一键清理历史任务（预览与执行分开，UI 确认弹窗用预览数字）
+	mux.HandleFunc("GET /api/maintenance/purge_preview", s.purgePreview)
+	mux.HandleFunc("POST /api/maintenance/purge", s.purgeExecute)
 	// 全部配置后台化：运营参数 + LLM/引擎/发布段免改文件
 	mux.HandleFunc("GET /api/config", s.getConfig)
 	mux.HandleFunc("PUT /api/config", s.updateConfig)
@@ -232,6 +237,10 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 				httpError(w, 400, "节流参数需在 0-1440（间隔分钟）/ 0-200（每日）/ 0-50（同时在途）内，0=不限制")
 				return
 			}
+			if rl.RiskCooldownHours < 0 || rl.RiskCooldownHours > 168 {
+				httpError(w, 400, "风控冷却时长需在 0-168 小时（0=用默认 24，连续触发翻倍封顶 7 天）")
+				return
+			}
 			s.cfg.Publish.RateLimit = *rl
 		}
 		// 发布窗口：格式校验交 ParseActiveHours（支持跨夜如 22:00-06:00；空=全天）
@@ -318,6 +327,130 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"ok": "true"})
+}
+
+// resumePublish 手动恢复风控冷却：清冷却终点，保留触发计数（再触发冷却
+// 时长继续翻倍——手动恢复也是风险操作，不重置惩罚梯度）
+func (s *Server) resumePublish(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	acc, err := s.store.AccountByID(id)
+	if err != nil {
+		httpError(w, 404, err.Error())
+		return
+	}
+	if acc.RiskPausedUntil <= time.Now().Unix() {
+		httpError(w, 400, "该账号不在风控冷却中")
+		return
+	}
+	if err := s.store.ClearAccountRiskPause(acc.Name); err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true,
+		"note": fmt.Sprintf("账号「%s」已提前恢复发布（触发计数保留，再触发冷却继续翻倍）", acc.Name)})
+}
+
+// ── 维护：一键清理历史（2026-10-25：风控事故复盘产物——服务器上积了 125 条失败
+// 发布任务与 40 条已退池条目，手动一条条删不现实）──
+
+// purgeStats 清理统计（预览与执行共用结构）
+type purgeStats struct {
+	PoolItems int      `json:"pool_items"` // 清掉的已完结池条目（dispatched+failed）
+	Jobs      int      `json:"jobs"`      // 清掉的历史任务数
+	Bytes     int64    `json:"bytes"`     // 释放磁盘字节数
+	Errors    []string `json:"errors,omitempty"`
+}
+
+func (s *Server) purgePreview(w http.ResponseWriter, r *http.Request) {
+	pool, err := s.store.CountFinishedPoolItems()
+	if err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	jobs, err := s.store.PurgeableJobs()
+	if err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	var bytes int64
+	for _, j := range jobs {
+		if dir, ok := s.safeJobDir(j.Dir); ok {
+			bytes += dirSize(dir)
+		}
+	}
+	writeJSON(w, purgeStats{PoolItems: pool, Jobs: len(jobs), Bytes: bytes})
+}
+
+// purgeExecute 执行清理：①删已完结池条目 ②删无 pending 引用的终态任务（记录
+// + 产物目录）。待发条目与其素材绝不动（误删素材会让派发就地“切片文件不存在”）
+func (s *Server) purgeExecute(w http.ResponseWriter, r *http.Request) {
+	st := purgeStats{}
+	pool, err := s.store.DeleteFinishedPoolItems()
+	if err != nil {
+		httpError(w, 500, "清理已完结池条目失败: "+err.Error())
+		return
+	}
+	st.PoolItems = int(pool)
+	targets, err := s.store.PurgeableJobs()
+	if err != nil {
+		httpError(w, 500, "列出可清任务失败: "+err.Error())
+		return
+	}
+	for _, j := range targets {
+		dir, ok := s.safeJobDir(j.Dir)
+		if !ok {
+			st.Errors = append(st.Errors, fmt.Sprintf("跳过 %s：任务目录不在数据目录内（%q），疑似异常数据", j.ID, j.Dir))
+			continue
+		}
+		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+			freed := dirSize(dir)
+			if err := os.RemoveAll(dir); err != nil {
+				st.Errors = append(st.Errors, fmt.Sprintf("%s 目录删除失败: %v", j.ID, err))
+				continue
+			}
+			st.Bytes += freed
+		}
+		if err := s.store.DeleteJobRecord(j.ID); err != nil {
+			st.Errors = append(st.Errors, fmt.Sprintf("%s 记录删除失败: %v", j.ID, err))
+			continue
+		}
+		st.Jobs++
+	}
+	writeJSON(w, st)
+}
+
+// safeJobDir 任务目录安全校验：解析为绝对路径后必须在 <DataDir>/jobs 之下
+// （jobs 表 dir 列理论上是 newJob 写入的规范路径，但删除操作必须有这层防线）
+func (s *Server) safeJobDir(dir string) (string, bool) {
+	if dir == "" {
+		return "", false
+	}
+	root, err := filepath.Abs(filepath.Join(s.cfg.DataDir, "jobs"))
+	if err != nil {
+		return "", false
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", false
+	}
+	if abs == root || !strings.HasPrefix(abs, root+string(os.PathSeparator)) {
+		return "", false
+	}
+	return abs, true
+}
+
+// dirSize 目录总字节数（不存在返回 0）
+func dirSize(dir string) int64 {
+	var total int64
+	_ = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if fi, err := d.Info(); err == nil {
+				total += fi.Size()
+			}
+		}
+		return nil
+	})
+	return total
 }
 
 // ── 内容池 API（M5：审核通过入池，发布泵窗口内派发；定时计划已随

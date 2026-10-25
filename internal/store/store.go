@@ -131,6 +131,19 @@ func (s *Store) migrate() error {
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_kind_created ON jobs(kind, created_at)`); err != nil {
 		return err
 	}
+	// 账号风控冷却（平台限流熔断：B站 137022 投稿过于频繁等）：
+	// risk_paused_until=冷却终点 unix 秒（0/过期=未冷却），risk_pause_count=连续
+	// 触发次数（指数退避 24→48→96h；手动恢复保留计数，再触发继续翻倍）
+	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN risk_paused_until INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("升级表 accounts（risk_paused_until）: %w", err)
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN risk_pause_count INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("升级表 accounts（risk_pause_count）: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -359,29 +372,43 @@ func (s *Store) DeleteJob(id string) error {
 // Account 平台发布账号
 // LoggedIn 由 server 层根据磁盘 cookie 实时计算（磁盘即真相），不落库
 // Status 仅在发布失败时回写 login_expired（routeAccount 过滤），扫码登录成功后恢复 ok
+// RiskPausedUntil 风控冷却终点（unix 秒，0/过期=未冷却）；RiskPauseCount 连续触发次数
+// （UI 徽标与 publishThrottled 熔断闸的数据源，详见 MarkAccountRiskPaused）
 type Account struct {
-	ID       int64  `json:"id"`
-	Platform string `json:"platform"` // bilibili | douyin
-	Name     string `json:"name"`     // 发布账号名 = 登录别名（data/accounts/<platform>-<name>）
-	Labels   string `json:"labels"`  // 内容标签（逗号分隔，定时发布时匹配选题）
-	Status   string `json:"status"`  // ok | login_expired
-	Priority int    `json:"priority"` // 优先级：同标签多账号时大的先用
-	LoggedIn bool   `json:"logged_in"` // 机上体：登录态文件是否存在
+	ID             int64  `json:"id"`
+	Platform       string `json:"platform"` // bilibili | douyin
+	Name           string `json:"name"`     // 发布账号名 = 登录别名（data/accounts/<platform>-<name>）
+	Labels         string `json:"labels"`   // 内容标签（逗号分隔，定时发布时匹配选题）
+	Status         string `json:"status"`    // ok | login_expired
+	Priority       int    `json:"priority"`  // 优先级：同标签多账号时大的先用
+	LoggedIn       bool   `json:"logged_in"` // 机上体：登录态文件是否存在
+	RiskPausedUntil int64 `json:"risk_paused_until"`
+	RiskPauseCount int    `json:"risk_pause_count"`
+}
+
+const accountCols = `id,platform,name,labels,status,priority,risk_paused_until,risk_pause_count`
+
+func scanAccount(r scanner) (*Account, error) {
+	var a Account
+	if err := r.Scan(&a.ID, &a.Platform, &a.Name, &a.Labels, &a.Status, &a.Priority, &a.RiskPausedUntil, &a.RiskPauseCount); err != nil {
+		return nil, err
+	}
+	return &a, nil
 }
 
 func (s *Store) ListAccounts() ([]*Account, error) {
-	rows, err := s.db.Query(`SELECT id,platform,name,labels,status,priority FROM accounts ORDER BY priority DESC, id`)
+	rows, err := s.db.Query(`SELECT `+accountCols+` FROM accounts ORDER BY priority DESC, id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []*Account
 	for rows.Next() {
-		var a Account
-		if err := rows.Scan(&a.ID, &a.Platform, &a.Name, &a.Labels, &a.Status, &a.Priority); err != nil {
+		a, err := scanAccount(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, &a)
+		out = append(out, a)
 	}
 	return out, rows.Err()
 }
@@ -405,21 +432,16 @@ func (s *Store) DeleteAccount(id int64) error {
 
 // AccountByName 按平台+账号名查账号（无则 nil）
 func (s *Store) AccountByName(platform, name string) (*Account, error) {
-	rows, err := s.db.Query(`SELECT id,platform,name,labels,status,priority FROM accounts WHERE platform=? AND name=?`, platform, name)
+	rows, err := s.db.Query(`SELECT `+accountCols+` FROM accounts WHERE platform=? AND name=?`, platform, name)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	if rows.Next() {
-		var a Account
-		if err := rows.Scan(&a.ID, &a.Platform, &a.Name, &a.Labels, &a.Status, &a.Priority); err != nil {
-			return nil, err
-		}
-		return &a, nil
+		return scanAccount(rows)
 	}
 	return nil, rows.Err()
 }
-
 // SetAccountStatus 回写账号状态：发布失败（登录态缺失）标 login_expired，扫码登录成功恢复 ok
 func (s *Store) SetAccountStatus(platform, name, status string) error {
 	_, err := s.db.Exec(`UPDATE accounts SET status=? WHERE platform=? AND name=?`, status, platform, name)
@@ -682,4 +704,107 @@ func (s *Store) CountPublishSince(account string, since int64) (int, error) {
 		return 0, err
 	}
 	return n, nil
+}
+
+// ── 账号风控冷却（平台限流熔断）──
+// 背景（2026-10-24 服务器实测）：10min 间隔连投 5 条触发 B 站 137022"投稿过于
+// 频繁"，之后 22h 每次 10min 的重试都在刷新限流窗口，120 次徒劳请求无一成功。
+// 熔断：识别限流文案即账号级冷却——publishThrottled 拦截派发，泵静默等冷却，
+// 到点自动恢复；连续触发指数退避（24→48→96h，上限 7 天），手动恢复保留计数。
+
+// AccountRiskPaused 查账号风控冷却终点与连续触发次数（账号不存在返回零值）
+func (s *Store) AccountRiskPaused(name string) (until int64, count int) {
+	var u, c int64
+	if err := s.db.QueryRow(`SELECT risk_paused_until, risk_pause_count FROM accounts WHERE name=?`, name).Scan(&u, &c); err != nil {
+		return 0, 0
+	}
+	return u, int(c)
+}
+
+// MarkAccountRiskPaused 置账号风控冷却（until=冷却终点 unix 秒，count=连续触发次数）
+func (s *Store) MarkAccountRiskPaused(name string, until int64, count int) error {
+	_, err := s.db.Exec(`UPDATE accounts SET risk_paused_until=?, risk_pause_count=? WHERE name=?`, until, count, name)
+	return err
+}
+
+// ClearAccountRiskPause 手动恢复：清冷却终点，保留触发计数（再触发继续翻倍——
+// 手动恢复本身也是风险操作，不重置惩罚梯度）
+func (s *Store) ClearAccountRiskPause(name string) error {
+	_, err := s.db.Exec(`UPDATE accounts SET risk_paused_until=0 WHERE name=?`, name)
+	return err
+}
+
+// AccountByID 按主键查账号（手动恢复入口用）
+func (s *Store) AccountByID(id int64) (*Account, error) {
+	rows, err := s.db.Query(`SELECT `+accountCols+` FROM accounts WHERE id=?`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		return scanAccount(rows)
+	}
+	return nil, fmt.Errorf("账号不存在: %d", id)
+}
+
+// ── 一键清理（历史任务与已完结池条目）──
+
+// PurgeJob 清理目标：终态任务及其产物目录（dir 相对 data 目录或绝对路径，
+// 删除前由调用方校验在 DataDir/jobs 之下）
+type PurgeJob struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+	Dir  string `json:"dir"`
+}
+
+// CountFinishedPoolItems 已完结池条目数（dispatched=已发布 / failed=已退池终态）
+func (s *Store) CountFinishedPoolItems() (int, error) {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM content_pool WHERE status IN ('dispatched','failed')`).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// DeleteFinishedPoolItems 删除已完结池条目（一键清理第一步：发布完成与已退池
+// 终态的条目使命已尽；pending 待发条目与其素材绝不动）
+func (s *Store) DeleteFinishedPoolItems() (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM content_pool WHERE status IN ('dispatched','failed')`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// PurgeableJobs 可清历史任务清单（预览与执行共用，口径一致）：kind∈{clips,publish}
+// 且终态（done/failed），且池中无 pending 条目引用其产物——待发切片直接引用源
+// 任务目录里的 mp4，误删素材会让派发就地"切片文件不存在"（2026-10-25 前车之鉴）。
+// 注意口径：已完结池条目即将被 DeleteFinishedPoolItems 清掉，故只把 pending 当活跃引用。
+// 单条 NOT EXISTS 完成（禁止 rows 迭代中嵌套查询：SetMaxOpenConns(1) 下唯一连接
+// 被外层占着，内层永远等不到连接——TestPurgeableJobs 实测挂死 30s 的教训）
+func (s *Store) PurgeableJobs() ([]PurgeJob, error) {
+	rows, err := s.db.Query(`SELECT id,kind,dir FROM jobs
+		WHERE kind IN ('clips','publish') AND status IN ('done','failed')
+		  AND NOT EXISTS (SELECT 1 FROM content_pool WHERE source_job=jobs.id AND status='pending')
+		ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PurgeJob
+	for rows.Next() {
+		var j PurgeJob
+		if err := rows.Scan(&j.ID, &j.Kind, &j.Dir); err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// DeleteJobRecord 删除任务记录（保留 DeleteJob 的存在性校验语义供 UI 单删；
+// 清理场景任务可能已被并发删除，行数为 0 静默放行）
+func (s *Store) DeleteJobRecord(id string) error {
+	_, err := s.db.Exec(`DELETE FROM jobs WHERE id=?`, id)
+	return err
 }

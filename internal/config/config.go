@@ -73,6 +73,10 @@ type RateLimit struct {
 	// 同账号同时在途（running）发布任务上限（默认 9，0=不限）：10min 间隔下
 	// 上传耗时 >10min 时会多条并发，这道闸是"不要同时推送超过 N 条"的保险丝
 	MaxInflight int `yaml:"max_inflight" json:"max_inflight"`
+	// 风控冷却基础时长（小时，默认 24，0=用默认）：平台限流（B站 137022"投稿
+	// 过于频繁"）触发账号级熔断的冷却基准，第 N 次触发翻倍（24→48→96h，上限 7 天）；
+	// 冷却到点自动恢复，也可在发布中心手动恢复
+	RiskCooldownHours int `yaml:"risk_cooldown_hours" json:"risk_cooldown_hours"`
 }
 
 type Notify struct {
@@ -150,7 +154,7 @@ func Default() *Config {
 		Engines: Engines{YtDlp: "yt-dlp", FFmpeg: "ffmpeg", Probe: "ffprobe"},
 		Web:     Web{Listen: "127.0.0.1:8899"},
 		Publish: Publish{Headless: false, Screenshots: true, PlatformsDir: "configs/platforms", ActiveHours: "10:00-23:00",
-			RateLimit: RateLimit{MinIntervalMin: 10, DailyMax: 9, MaxInflight: 9}},
+			RateLimit: RateLimit{MinIntervalMin: 10, DailyMax: 9, MaxInflight: 9, RiskCooldownHours: 24}},
 		Live:      Live{CheckIntervalSec: 60, SegmentSec: 600, AutoClip: true, MaxStaleSec: 300, PreviewKeywords: []string{"预告", "凌晨见"}, PoolHigh: 20, PoolLow: 10},
 		Retention: Retention{Enabled: true, SegmentsDays: 7, ConsumedSegDays: 1, MinFreePercent: 10, CheckMinutes: 60, MaxUsagePercent: 50, PublishedKeepDays: 3},
 		AutoReview: AutoReview{Enabled: false, MinScore: 60, HardMinDurSec: 15, HardMaxDurSec: 120, BannedWords: []string{}},

@@ -37,7 +37,7 @@ import (
 	"chopperbot/internal/web"
 )
 
-const version = "0.6.0"
+const version = "0.6.1"
 
 func main() {
 	log.SetFlags(log.LstdFlags)
@@ -623,7 +623,13 @@ func pumpTick(app *app) {
 		if acc2 := probeRoute(app, platforms, it.Tags, bind); acc2 == nil {
 			noMatchNotified = true
 		} else {
-			return // 有可用账号但被节流：正常等待，本轮到此为止
+			// 有可用账号但被节流：正常等待，本轮到此为止。
+			// 风控冷却中被闸时补充一次可见性告警（去重）：触发那测 finalize 已
+			// 发过通知，这里是 serve 重启后/长冷却期的状态提醒
+			if until, count := app.store.AccountRiskPaused(acc2.Name); until > time.Now().Unix() {
+				maybeNotifyRiskPause(app, acc2.Name, until, count)
+			}
+			return
 		}
 	}
 	if noMatchNotified && maybeNotifyNoMatch(app) {
@@ -636,6 +642,21 @@ var pumpNoMatchState = struct {
 	mu   sync.Mutex
 	last string // yyyymmdd
 }{}
+
+// riskPauseNotified 风控冷却告警去重（name→until）：同一冷却期只提醒一次；
+// 手动恢复后再次触发 until 变化 → 重新告警
+var riskPauseNotified sync.Map
+
+func maybeNotifyRiskPause(app *app, name string, until int64, count int) {
+	if v, ok := riskPauseNotified.Load(name); ok && v.(int64) == until {
+		return
+	}
+	riskPauseNotified.Store(name, until)
+	left := time.Until(time.Unix(until, 0)).Round(time.Minute)
+	fmt.Printf("[pump] 账号「%s」风控冷却中：平台限流熔断，约 %s 后自动恢复（第 %d 次触发）\n", name, left, count)
+	app.notifier.Notify("ClipStream 发布已暂停（平台限流）",
+		fmt.Sprintf("账号「%s」触发平台投稿频率限制，已自动冷却，约 %s 后恢复，期间发布泵静默等待不再投稿。可到发布中心手动提前恢复（不重置惩罚梯度）。", name, left))
+}
 
 func maybeNotifyNoMatch(app *app) bool {
 	pumpNoMatchState.mu.Lock()
@@ -733,15 +754,21 @@ func dispatchOne(app *app, it *store.PoolItem, platforms string, blocked map[str
 	return acc
 }
 
-// publishThrottled 发布节流三闸判定：通过返回空串；被拦返回原因（日志与通知用）。
+// publishThrottled 发布节流四闸判定（全部通过返回空串；被拦返回原因）。
+// ⓪风控冷却闸（平台限流熔断：B站 137022 投稿过于频繁后账号级冷却，冷却中
+// 不派不发——越撞窗口越久，详见 MarkAccountRiskPaused）
 // ①间隔闸按 jobs 表派发时刻（含手动发布与失败尝试但不含 dry-run 演练——见 store 计数过滤）。
 // 间隔闸叠加 ±5% 随机抖动：精确的整分钟间隔（每天同一时刻起跳、严格执行固定
 // 节拍器）本身是机器行为签名；随机化放行时刻（通过即立即派发，不会"放行又
-// 收回"），对可用性无实际影响（daily_max 兜底总量）。
+// 收回"），对可用性无实际影响（daily_max 兑底总量）。
 // ②每日上限闸 ③同时在途闸（running 任务数，"不要同时推送超过 N 条"的保险丝：
 // 10min 间隔下上传耗时超过间隔时会多条并发，超量即挡）
 func publishThrottled(st *store.Store, rl config.RateLimit, accName string) string {
 	now := time.Now()
+	if until, count := st.AccountRiskPaused(accName); until > now.Unix() {
+		left := time.Until(time.Unix(until, 0)).Round(time.Minute)
+		return fmt.Sprintf("账号风控冷却中（平台限流熔断，剩余 %s，第 %d 次触发；可在发布中心手动恢复）", left, count)
+	}
 	if rl.MaxInflight > 0 {
 		if n, err := st.CountRunningPublish(accName); err == nil && n >= rl.MaxInflight {
 			return fmt.Sprintf("同时在途已达上限（%d/%d 条，等上传完成释放）", n, rl.MaxInflight)
