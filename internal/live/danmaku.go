@@ -259,7 +259,14 @@ func (c *DanmakuCollector) handleFrame(frame []byte) {
 }
 
 func (c *DanmakuCollector) handlePacket(pkt []byte) {
+	// 头部长度越界防御（2026-10-28）：协议头固定 16 字节，headerLen 由服务端
+	// 下发（uint16，可达 65535）。畸形/被篡改的帧会让 pkt[headerLen:] 立即
+	// slice bounds panic，而弹幕采集跑在 daemon 的 goroutine 里、Start 没有
+	// recover——单帧就能打崩整个录制守护，所有并发场次一起断。
 	headerLen := int(binary.BigEndian.Uint16(pkt[4:6]))
+	if headerLen < 16 || headerLen > len(pkt) {
+		return // 头长非法：丢弃该包
+	}
 	protover := int16(binary.BigEndian.Uint16(pkt[6:8]))
 	op := int32(binary.BigEndian.Uint32(pkt[8:12]))
 	body := pkt[headerLen:]

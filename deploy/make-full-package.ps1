@@ -1,124 +1,89 @@
-# Build the FULL (compiled) ClipStream deploy package for the target machine.
-# Run on the dev machine. Output: .temp\clipstream-full-deploy.zip
-# This package bundles EVERYTHING so the target machine is ready after unzip:
-#   bin\clipstream.exe, bin\clipstream-daemon.exe
-#   engines\biliup.exe, engines\ffmpeg.exe, engines\ffprobe.exe,
-#   engines\yt-dlp.exe, engines\whisper-cli.exe, engines\ggml-small.bin
-#   configs\, config.example.yaml (engines pre-pointed into ./engines/),
-#   launcher .cmd + deploy instructions .txt (Chinese-named files, wildcard-copied)
-# NOT bundled: data/ (DB & cookies), config.yaml (real keys) -> target fills them.
+# Build a CLEAN ClipStream deploy package from temp_server\ (the staging dir the
+# operator drags to the server). Output: .temp\clipstream-clean\  (+ .zip with -Zip)
+#
+# Why this script exists / what it deliberately EXCLUDES:
+#   config.yaml : holds real LLM/PushMe keys -> copy it over deliberately, never bundle
+#   data\       : local test residue, DB, cookies -> never ship to the server
+#   log\        : local run logs -> would overwrite the server's production log
+#
+# 2026-10-28 fixes (the old version could not even finish):
+#   1. It took exe from the REPO-ROOT bin\ -- that is a stale build
+#      (measured: root bin\clipstream.exe version = 0.4.3, while temp_server\bin = 0.6.2).
+#   2. It read launcher scripts from .temp\deploy-binary-stage, which no longer exists;
+#      with $ErrorActionPreference='Stop' the script died at step 5 every time.
+#
+# Usage:
+#   powershell -ExecutionPolicy Bypass -File deploy\make-full-package.ps1
+#   powershell -ExecutionPolicy Bypass -File deploy\make-full-package.ps1 -Zip
+#   powershell -ExecutionPolicy Bypass -File deploy\make-full-package.ps1 -IncludeConfig
+#     (-IncludeConfig bundles the real config WITH keys: offline personal use only)
+
+param(
+  [switch]$Zip,
+  [switch]$IncludeConfig
+)
 
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent $PSScriptRoot
-$stage = Join-Path $root '.temp\full-stage'
-$zip   = Join-Path $root '.temp\clipstream-full-deploy.zip'
+$root    = Split-Path -Parent $PSScriptRoot
+$src     = Join-Path $root 'temp_server'
+$stage   = Join-Path $root '.temp\clipstream-clean'
+$zipPath = Join-Path $root '.temp\clipstream-clean.zip'
+
+if (-not (Test-Path (Join-Path $src 'bin\clipstream.exe'))) {
+  throw "missing $src\bin\clipstream.exe -- put the current pair of exes in temp_server\bin first"
+}
 
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
-New-Item -ItemType Directory -Path (Join-Path $stage 'bin')   -Force | Out-Null
-New-Item -ItemType Directory -Path (Join-Path $stage 'engines') -Force | Out-Null
-New-Item -ItemType Directory -Path (Join-Path $stage 'configs\platforms') -Force | Out-Null
+New-Item -ItemType Directory -Path $stage -Force | Out-Null
 
-# ---- 1) binaries ----
-Copy-Item (Join-Path $root 'bin\clipstream.exe')        (Join-Path $stage 'bin\') -Force
-Copy-Item (Join-Path $root 'bin\clipstream-daemon.exe') (Join-Path $stage 'bin\') -Force
-
-# ---- 2) configs + platform files ----
-Copy-Item (Join-Path $root 'configs\platforms\bilibili.yaml') (Join-Path $stage 'configs\platforms\') -Force
-Copy-Item (Join-Path $root 'configs\platforms\douyin.yaml')   (Join-Path $stage 'configs\platforms\') -Force
-
-# ---- 3) engine binaries (bundled, must be SELF-CONTAINED) ----
-Copy-Item (Join-Path $root 'engines\biliup.exe')                    (Join-Path $stage 'engines\') -Force
-Copy-Item 'D:\tools\ffmpeg\ffmpeg.exe'                              (Join-Path $stage 'engines\') -Force
-Copy-Item 'D:\tools\ffmpeg\ffprobe.exe'                             (Join-Path $stage 'engines\') -Force
-# yt-dlp: OFFICIAL STANDALONE exe (repo-local engines\yt-dlp.exe).
-# NEVER ship the pip wrapper exe: it embeds the dev machine's python.exe path
-# and dies instantly on any other host (exit status 1, zero output).
-Copy-Item (Join-Path $root 'engines\yt-dlp.exe')                     (Join-Path $stage 'engines\') -Force
-# whisper.cpp: plain build + its DLL chain. The exe ALONE cannot run:
-# whisper-cli.exe -> whisper.dll -> ggml.dll -> ggml-cpu-<arch>.dll (+ ggml-base.dll)
-$wh = Join-Path $root 'engines\whisper\plain\Release'
-Copy-Item (Join-Path $wh 'whisper-cli.exe') (Join-Path $stage 'engines\') -Force
-Copy-Item (Join-Path $wh 'whisper.dll')     (Join-Path $stage 'engines\') -Force
-Copy-Item (Join-Path $wh 'ggml.dll')        (Join-Path $stage 'engines\') -Force
-Copy-Item (Join-Path $wh 'ggml-base.dll')   (Join-Path $stage 'engines\') -Force
-Copy-Item (Join-Path $wh 'ggml-cpu-*.dll') (Join-Path $stage 'engines\') -Force
-# VC runtime app-local: a bare Windows Server may lack the VC++ 2015-2022 redist
-foreach ($d in 'msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll') {
-  Copy-Item (Join-Path $env:SystemRoot "System32\$d") (Join-Path $stage 'engines\') -Force
+function Copy-Tree([string]$from, [string]$to) {
+  if (-not (Test-Path $from)) { Write-Warning "missing: $from (skip)"; return }
+  New-Item -ItemType Directory -Path $to -Force | Out-Null
+  robocopy $from $to /E /NFL /NDL /NJH /NJS /NP | Out-Null
+  if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE): $from -> $to" }
 }
-Copy-Item (Join-Path $root 'engines\whisper\ggml-small.bin')        (Join-Path $stage 'engines\') -Force
 
-# ---- 4) bundled config.example.yaml (engines pre-pointed to ./engines/) ----
-$bundledConfig = @'
-# ClipStream bundled config template (engines pre-pointed to ./engines/).
-# Copy to config.yaml, then fill llm.api_key / notify.push_key / notify.url.
-data_dir: ./data
-proxy: ""
+# 1) binaries (single source of truth: temp_server\bin)
+Copy-Tree (Join-Path $src 'bin') (Join-Path $stage 'bin')
 
-engines:
-  ytdlp: "./engines/yt-dlp.exe"
-  ffmpeg: "./engines/ffmpeg.exe"
-  ffprobe: "./engines/ffprobe.exe"
-  biliup: "./engines/biliup.exe"
-  asr:
-    binary: "./engines/whisper-cli.exe"
-    model: "./engines/ggml-small.bin"
-    language: auto
+# 2) bundled engines (self-contained: target machine needs zero installs)
+Copy-Tree (Join-Path $src 'engines') (Join-Path $stage 'engines')
 
-llm:
-  base_url: "https://api.deepseek.com/v1"
-  api_key: ""
-  model: "deepseek-flash"
-  thinking: "disabled"
-  proxy: ""
+# 3) platform selector configs
+Copy-Tree (Join-Path $src 'configs') (Join-Path $stage 'configs')
 
-web:
-  listen: "127.0.0.1:8899"
+# 4) launchers + deploy notes (Chinese file names: wildcard copy, no literals)
+Get-ChildItem $src -File | Where-Object { $_.Extension -in '.cmd', '.txt' } |
+  ForEach-Object { Copy-Item $_.FullName $stage -Force }
 
-publish:
-  headless: false
-  screenshots: true
-  platforms_dir: "configs/platforms"
+# 5) data / log: empty skeleton only, never content
+foreach ($d in 'data', 'data\jobs', 'data\live\queue', 'data\accounts', 'log') {
+  New-Item -ItemType Directory -Path (Join-Path $stage $d) -Force | Out-Null
+}
 
-notify:
-  pushme:
-    enable: true
-    url: ""
-    push_key: ""
+# 6) config.yaml: not bundled by default
+if ($IncludeConfig) {
+  Copy-Item (Join-Path $src 'config.yaml') (Join-Path $stage 'config.yaml') -Force
+  Write-Warning 'config.yaml INCLUDED (contains real keys) -- do not share, do not commit'
+} else {
+  Write-Host 'config.yaml NOT bundled (contains real LLM/PushMe keys): copy it manually when deploying'
+}
 
-chrome:
-  path: ""
+# 7) verify the packaged binary version (prevents shipping a stale build again)
+$verOut = & (Join-Path $stage 'bin\clipstream.exe') version 2>&1
+Write-Host "package ready: $stage"
+Write-Host "binary version: $verOut"
 
-live:
-  check_interval: 60
-  segment_time: 600
-  auto_clip: true
+if ($Zip) {
+  if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+  # engines are ~750MB; Fastest is good enough and much quicker
+  Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zipPath -CompressionLevel Fastest
+  $mb = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
+  Write-Host "zip: $zipPath ($mb MB)"
+}
 
-retention:
-  enabled: true
-  segments_days: 7
-  consumed_seg_days: 1
-  min_free_percent: 10
-  check_minutes: 60
-
-auto_review:
-  enabled: false
-  min_score: 60
-  hard_min_dur_sec: 15
-  hard_max_dur_sec: 120
-  banned_words: []
-'@
-$cfgPath = Join-Path $stage 'config.example.yaml'
-[IO.File]::WriteAllText($cfgPath, $bundledConfig + "`r`n", [Text.UTF8Encoding]::new($false))
-
-# ---- 5) launcher + instructions (wildcard copy keeps names, no safe literals) ----
-$bootSrc = Join-Path $root '.temp\deploy-binary-stage'
-Get-ChildItem (Join-Path $bootSrc '*.cmd') | ForEach-Object { Copy-Item -Path $_.FullName -Destination $stage -Force }
-Get-ChildItem (Join-Path $bootSrc '*.txt') | ForEach-Object { Copy-Item -Path $_.FullName -Destination $stage -Force }
-
-# ---- 6) zip ----
-if (Test-Path $zip) { Remove-Item $zip -Force }
-Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal
-$size = [math]::Round((Get-Item $zip).Length / 1MB)
-Write-Host "full package ready: $zip ($size MB)"
-Write-Host 'target-machine: unzip anywhere, copy config.example.yaml to config.yaml, fill keys, run the bundled .cmd launcher'
+Write-Host ''
+Write-Host 'Before dragging to the server:'
+Write-Host '  - data\ and log\ must be EMPTY (they are after this script), otherwise they overwrite server DB/log'
+Write-Host '  - copy config.yaml deliberately; if the server publish rhythm was already tuned,'
+Write-Host '    do NOT overwrite it wholesale (it would silently revert to the sprint profile)'

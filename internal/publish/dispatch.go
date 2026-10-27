@@ -3,6 +3,7 @@ package publish
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"chopperbot/internal/config"
@@ -60,22 +61,35 @@ func Dispatch(ctx context.Context, cfg *config.Config, req *Request, videoPath, 
 	return result
 }
 
+// authCodeRe 数字型认证错误码的边界匹配：-101 是 biliup/B 站"账号未登录"专用码，
+// 必须按边界匹配——裸子串会把 "-1013"（其它错误码）误判成登录失效，进而把正常
+// 账号永久停号（停号后路由整体规避该账号，只能扫电重登恢复）。
+var authCodeRe = regexp.MustCompile(`(^|[^0-9])-101([^0-9]|$)`)
+
 // IsAuthError 登录态/认证类失败判定（停号依据）：供 publish finalize 匹配。
 // 旧版只匹配“登录态缺失”四字——cookie 文件在但 token 过期时（biliup 报 -101/
 // csrf/401）与抖音路径措辞（“登录态已失效”“未登录”）全部漏网，账号永不停号。
 func IsAuthError(detail string) bool {
 	d := strings.ToLower(detail)
-	for _, kw := range []string{"登录态缺失", "登录态已失效", "未登录", "login expired"} {
+	for _, kw := range []string{"登录态缺失", "登录态已失效", "未登录", "登录已过期", "登录过期",
+		"请重新登录", "请重新扫码", "重新扫码登录"} {
 		if strings.Contains(detail, kw) {
 			return true
 		}
 	}
-	for _, kw := range []string{"-101", "csrf", "token", "401", "cookie"} {
+	for _, kw := range []string{
+		"login expired", "login required", "not logged in", "unauthorized",
+		"cookie 失效", "cookie 过期", "cookie 已过期", "cookie expired", "cookie invalid",
+		"cookies.json 不存在", "cookies 不存在",
+		"csrf token 校验失败", "csrf 校验失败", "csrf token invalid",
+		"invalid access token", "access token expired", "token expired",
+		"token 已过期", "token 失效", "token 无效",
+	} {
 		if strings.Contains(d, kw) {
 			return true
 		}
 	}
-	return false
+	return authCodeRe.MatchString(d)
 }
 
 // IsRateLimited 平台限流判定（风控熔断依据）：B 站"投稿过于频繁"（错误码

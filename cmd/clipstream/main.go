@@ -490,11 +490,15 @@ func doServe(cfgPath string) error {
 			}
 			if j.Kind == "publish" {
 				j.Status = core.StatusFailed
-				j.Error = "服务中断：发布不自动重试（防重复投稿），对应待发池条目已回池，由发布泵冷却后重发"
+				j.Error = "服务中断：发布过程被打断，未自动重试（防重复投稿）。该切片已投到哪些平台无法确认——请先到平台侧核对是否已出现，确认没有再重新入池。"
 				_ = app.store.UpdateJob(j)
-				if req, err := publish.ParseRequest(j.Input); err == nil && req.PoolItemID > 0 {
-					_ = app.store.SetPoolItemStatus(req.PoolItemID, "pending")
-				}
+				// 不回池（2026-10-28 修）：biliup 以 DETACHED_PROCESS 启动，父进程被杀后
+				// 子进程仍可能把视频提交成功；此时把池条目改回 pending = 让发布泵过一会儿
+				// 再投一次同一个视频，平台出现两份。而 stagePublishRun 只在整轮 Dispatch
+				// 返回后才写 publish_results，中途崩溃时“B 站已投成”这件事没有任何落库
+				// 痕迹，恢复时也无从判断。旧注释写“防重复投稿”，实际语义是“一定会重投”。
+				// 池条目留在 dispatched（发布中心可见，可手动移除或重新入池），
+				// 宁可停下等人工核对，也不拿有封禁史的号去赌。
 				publishDropped++
 				continue
 			}
@@ -507,8 +511,9 @@ func doServe(cfgPath string) error {
 			fmt.Printf("[recover] 恢复 %d 个未完成任务（queued/running）\n", recovered)
 		}
 		if publishDropped > 0 {
-			fmt.Printf("[recover] %d 个中断的发布任务置 failed（防重复投稿），池条目已回池\n", publishDropped)
-			app.notifier.Notify("ClipStream 服务重启", fmt.Sprintf("%d 个发布任务因服务中断终止自动重试，对应切片已退回待发池（冷却后自动重发）", publishDropped))
+			fmt.Printf("[recover] %d 个中断的发布任务置 failed（防重复投稿，池条目保持 dispatched 等人工核对）\n", publishDropped)
+			app.notifier.Notify("ClipStream 服务重启",
+				fmt.Sprintf("%d 个发布任务因服务中断终止（不自动重试，防重复投稿）。这些切片已投到哪些平台无法确认：请到平台侧核对后，再决定是否重新入池。", publishDropped))
 		}
 	}
 

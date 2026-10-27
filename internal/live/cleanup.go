@@ -170,8 +170,8 @@ func RunCleanup(cfg *config.Config, st *store.Store, notifier *notify.Pushme) (C
 				if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 					continue
 				}
-				if j.Kind == "clips" && st.PoolItemActiveCount(j.ID) > 0 {
-					continue // 源任务池里还有活跃条目：素材仍在役，不删
+				if j.Kind == "clips" && st.JobArtifactInUse(j.ID) {
+					continue // 素材仍在役（待发引用 / 审核台字幕配音 / 在途发布），不删
 				}
 				freed := dirSize(dir)
 				if err := os.RemoveAll(dir); err == nil {

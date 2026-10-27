@@ -17,6 +17,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -807,7 +808,13 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 }
 
 // listSegFiles 列出目录下有效分段（>64KB：虎牙 60fps 短连接碎段最小实测 ~76KB/2s，
-// 旧阈值 1MB 会把碎段流九成以上的段全部漏掉；空文件/写一半的段仍被忽略）
+// 旧阈值 1MB 会把碎段流九成以上的段全部漏掉；空文件/写一半的段仍被忽略）。
+//
+// 必须按段号数字排序（2026-10-28 修）：filepath.Glob 返回字典序，而段名是
+// seg_%03d.flv——第 1000 段起 "seg_1000" 会排在 "seg_999" 前面（第 5 字节
+// '1'<'9'）。虎牙 5-15s 短连接下挂机约 1.5 小时即破 1000 段，mergeAndQueue
+// 按此顺序拼接会得到时间轴错乱的产物：FLV 合法、tag 数正确，只有画面顺序
+// 是错的，不看画面发现不了（现有合并测试也不校验段序）。
 func listSegFiles(dir string) []string {
 	matches, _ := filepath.Glob(filepath.Join(dir, "seg_*.flv"))
 	var out []string
@@ -816,7 +823,18 @@ func listSegFiles(dir string) []string {
 			out = append(out, m)
 		}
 	}
+	sort.SliceStable(out, func(i, j int) bool { return segIndex(out[i]) < segIndex(out[j]) })
 	return out
+}
+
+// segIndex 从 seg_<n>.flv 提取段号（解析失败返回 -1，排在最前且保持稳定顺序）
+func segIndex(p string) int {
+	base := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(p), "seg_"), ".flv")
+	n, err := strconv.Atoi(base)
+	if err != nil {
+		return -1
+	}
+	return n
 }
 
 // countSegFiles 统计目录下已有段文件数（含残段，重连续写用）

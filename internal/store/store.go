@@ -521,6 +521,10 @@ func (s *Store) ListPoolItems(all bool) ([]*PoolItem, error) {
 // PoolItemActiveCount 源任务在池中还有几条活跃条目（pending/dispatched）。
 // 已发布成品清理的前置闩：发布直接引用源 job 目录的 mp4，有活跃条目时
 // 绝不能删（否则派出去的任务 prepare 就地崩溃）
+//
+// ⚠ 2026-10-28 注：成品退役（live/cleanup.go）已改用 JobArtifactInUse，
+// 不再用本方法——dispatched 在发布成功后是永久状态（finalize 成功分支只改
+// job 状态），拿它当“素材在役”会把成品清理彻底堵死。本文保留给旧调用/测试。
 func (s *Store) PoolItemActiveCount(sourceJob string) int {
 	var n int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM content_pool WHERE source_job=? AND status IN ('pending','dispatched')`,
@@ -528,6 +532,32 @@ func (s *Store) PoolItemActiveCount(sourceJob string) int {
 		return 0
 	}
 	return n
+}
+
+// JobArtifactInUse 任务产物目录是否仍被需要（成品退役判据，与 PurgeableJobs 同口径）：
+//  1. 池中还有 pending 条目引用（未发出的切片直接引用源目录里的 mp4）；
+//  2. 仍有非终态任务（queued/running/review）引用其目录（审核台待审字幕/配音成品
+//     就写在源 clips 目录、在途发布正在读源 mp4）。
+//
+// 2026-10-28 修正：cleanup 原来用 PoolItemActiveCount（pending+dispatched 都算活跃）
+// 作判据，但发布成功后池条目永远停在 dispatched（finalize 成功分支只改 job 状态，
+// 不动池条目）——“已发布成品保留 N 天自动退役”对任何走过发布链的目录一次都不
+// 生效，data/jobs 只进不出，挂机数周必撑满磁盘；磁盘满后录制建目录失败且静默
+// （daemon.startSession 直接 return），表现为整夜零录制。
+// dispatched 只表示“已发出”，素材在途与否要看有无活的发布任务，故并入第 2 条。
+func (s *Store) JobArtifactInUse(jobID string) bool {
+	protected, err := s.referencedSourceJobs()
+	if err != nil {
+		return true // 查不到就保守保留
+	}
+	if protected[jobID] {
+		return true
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM content_pool WHERE source_job=? AND status='pending'`, jobID).Scan(&n); err != nil {
+		return true
+	}
+	return n > 0
 }
 
 // ArtifactJob 待清理成品的任务引用（磁盘目录 data/jobs/<id>）

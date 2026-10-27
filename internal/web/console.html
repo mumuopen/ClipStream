@@ -578,7 +578,14 @@ const KIND_STAGES = {
 };
 const $ = s => document.querySelector(s);
 let jobs = [], openId = null, es = null;
-let detailClips = [];
+// 切片上下文按「渲染它的任务 id」分区存放：审核台/详情会在一页内渲染多个任务的
+// 切片网格，而发布/字幕/配音弹窗只能拿到按钮上的 (jobId, idx)。
+// 旧版用单个全局 detailClips，最后一个网格渲染即覆盖全部——点第一个任务的第 3
+// 个切片，文件名对（都叫 clip_0X.mp4）但标题/标签/时间来自另一个任务，且最后
+// 一个任务切片更少时按钮静默无响应。（2026-10-28 修）
+// 值：{clip, sourceJob}——sourceJob 是发布/字幕/配音请求里的 source_job
+// （clipHTML 场景=当前任务；成品卡片场景=成品所属的源任务）。
+const clipStore = new Map();
 let pubCtx = null, subCtx = null, dubCtx = null;
 let stats = null;           // {engines, accounts}
 let taskFilter = 'all';     // 任务中心筛选
@@ -932,6 +939,12 @@ function renderSettingsStatus() {
     <div class="kv"><span class="k">pushme</span><span class="v">${T('set_eng_pushme')}</span>
       <span class="st ${eng && eng.pushme ? 'on' : 'off'}">${eng && eng.pushme ? '● ' + T('set_enabled') : '○ ' + T('set_disabled')}</span></div>`;
 }
+// 设置页不展示、但必须原样回传的字段：整段覆盖式保存时，缺失字段会被
+// 反序列化成零值写回 config.yaml——preview_keywords 被清空=预告态过滤失效，
+// max_stale_sec 变 0=素材停滞兜底失效，llm.proxy 被抹=LLM 走直连超时。
+// （2026-10-28 修：loadConfig 缓存，saveConfig 带回）
+let llmProxyVal = '';
+let liveExtras = { max_stale_sec: 0, preview_keywords: [] };
 async function loadConfig() {
   try {
     const c = await fetchJSON('/api/config');
@@ -954,6 +967,11 @@ async function loadConfig() {
     setF('cfg-pub-daily', c.publish?.rate_limit?.daily_max ?? 9);
     setF('cfg-pub-inflight', c.publish?.rate_limit?.max_inflight ?? 9);
     setF('cfg-pub-riskcd', c.publish?.rate_limit?.risk_cooldown_hours ?? 24);
+    llmProxyVal = c.llm?.proxy || '';
+    liveExtras = {
+      max_stale_sec: c.live?.max_stale_sec ?? 0,
+      preview_keywords: Array.isArray(c.live?.preview_keywords) ? c.live.preview_keywords : [],
+    };
   } catch (e) {}
 }
 async function saveConfig() {
@@ -963,11 +981,12 @@ async function saveConfig() {
   const payload = {
     auto_review: { enabled: chk('cfg-ar-on'), min_score: num('cfg-ar-score'), hard_min_dur_sec: num('cfg-ar-min'), hard_max_dur_sec: num('cfg-ar-max'),
       banned_words: g('cfg-ar-words').value.split(/[,，]/).map(s => s.trim()).filter(Boolean) },
-    live: { check_interval: num('cfg-live-check'), segment_time: num('cfg-live-seg'), auto_clip: chk('cfg-live-clip'), pool_high: num('cfg-live-bphigh'), pool_low: num('cfg-live-bplow') },
+    live: { check_interval: num('cfg-live-check'), segment_time: num('cfg-live-seg'), auto_clip: chk('cfg-live-clip'), pool_high: num('cfg-live-bphigh'), pool_low: num('cfg-live-bplow'),
+      max_stale_sec: liveExtras.max_stale_sec, preview_keywords: liveExtras.preview_keywords },
     retention: { enabled: chk('cfg-rt-on'), segments_days: num('cfg-rt-days'), consumed_seg_days: num('cfg-rt-consumed'), min_free_percent: num('cfg-rt-free'), check_minutes: num('cfg-rt-min'), max_usage_percent: num('cfg-rt-usage'), published_keep_days: num('cfg-rt-keep') },
     notify: { pushme: { enable: chk('cfg-nt-on'), url: g('cfg-nt-url').value.trim(), push_key: g('cfg-nt-key').value.trim() } },
     llm: { base_url: g('cfg-llm-base').value.trim(), api_key: g('cfg-llm-key').value.trim(), model: g('cfg-llm-model').value.trim(),
-      thinking: g('cfg-llm-think').value, proxy: '' },
+      thinking: g('cfg-llm-think').value, proxy: llmProxyVal },
     engines: { ytdlp: g('cfg-eng-ytdlp').value.trim(), ffmpeg: g('cfg-eng-ffmpeg').value.trim(), ffprobe: g('cfg-eng-ffprobe').value.trim(),
       biliup: g('cfg-eng-biliup').value.trim(), asr: { binary: g('cfg-eng-asr-bin').value.trim(), model: g('cfg-eng-asr-model').value.trim() } },
     publish: { active_hours: g('cfg-pub-hours').value.trim(), rate_limit: { min_interval_min: num('cfg-pub-interval'), daily_max: num('cfg-pub-daily'), max_inflight: num('cfg-pub-inflight'), risk_cooldown_hours: num('cfg-pub-riskcd') } },
@@ -1120,24 +1139,21 @@ async function purgeHistory() {
   let p;
   try { p = await fetchJSON('/api/maintenance/purge_preview'); } catch (e) { alert(e.message); return; }
   if (!p.pool_items && !p.jobs && !p.pending) { alert('没有可清理的内容（待发池 0 条、已完结条目 0、终态历史任务 0）'); return; }
+  // 闸序反转（2026-10-28 修）：旧版先问"是否连待发池一起清空"，把"取消"解释成
+  // "保留待发池、继续清历史"，紧接着弹出第二道破坏性确认（默认焦点在确定）——
+  // 用户按 Esc 想放弃清理，顺着后面的回车就把东西删了。现在先问总意图（取消=整体
+  // 放弃），再问可选项。
+  const gb = (p.bytes / 1e9).toFixed(2);
+  const baseScope = `· 已完结池条目 ${p.pool_items} 条（已发布+已退池终态）\n· 终态历史任务 ${p.jobs} 个（含切片产物目录与失败发布记录）\n· 预计释放 ${gb} GB（不含待发池素材）`;
+  if (!confirm(`确认执行清理？将清理：\n\n${baseScope}\n\n此操作不可恢复。`)) return;
   let includePending = false;
   if (p.pending > 0) {
-    includePending = confirm(`待发池里还有 ${p.pending} 条待发内容。
-
-点【确定】：连同待发池一起清空 ——
-  适合"老积压不要了、重新开始"的场景：池子水位立即回落，
-  "池满·暂停录制"自动解除，新直播正常录制切片；这些老切片
-  的素材目录会被删除（不可恢复；仍被审核台字幕/在途任务引用
-  的素材会自动保留）。
-
-点【取消】：保留待发池，只清理已完结条目与历史任务
-  （待发内容继续按发布节奏自动发出）。`);
+    includePending = confirm(`待发池里还有 ${p.pending} 条待发内容。\n\n点【确定】：连同待发池一起清空 ——\n  适合"老积压不要了、重新开始"的场景：池子水位立即回落，\n  "池满·暂停录制"自动解除，新直播正常录制切片；这些老切片\n  的素材目录会被删除（不可恢复；仍被审核台字幕/在途任务引用\n  的素材会自动保留）。\n\n点【取消】：保留待发池，只清上一步已确认的内容\n  （待发内容继续按发布节奏自动发出）。`);
   }
-  const gb = (p.bytes / 1e9).toFixed(2);
   const scope = includePending
-    ? `· 待发池 ${p.pending} 条（清空，解除池满背压）\n· 已完结池条目 ${p.pool_items} 条（已发布+已退池）\n· 终态历史任务 ${p.jobs} 个（含产物目录）\n· 预计释放 ${gb} GB`
-    : `· 已完结池条目 ${p.pool_items} 条（已发布+已退池终态）\n· 终态历史任务 ${p.jobs} 个（含切片产物目录与失败发布记录）\n· 预计释放 ${gb} GB`;
-  if (!confirm(`确认执行清理？将清理：\n\n${scope}\n\n待发池${includePending ? '将被清空' : '保持不动（' + p.pending + ' 条待发内容不受影响）'}。`)) return;
+    ? `· 待发池 ${p.pending} 条（清空，解除池满背压）\n· 已完结池条目 ${p.pool_items} 条（已发布+已退池）\n· 终态历史任务 ${p.jobs} 个（含产物目录）`
+    : `· 已完结池条目 ${p.pool_items} 条（已发布+已退池终态）\n· 终态历史任务 ${p.jobs} 个（含切片产物目录与失败发布记录）`;
+  if (includePending && !confirm(`最后确认：连同待发池一起清空？\n\n${scope}\n\n待发池 ${p.pending} 条素材将被删除，不可恢复。`)) return;
   try {
     const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ include_pending: includePending }) };
     const r = await fetchJSON('/api/maintenance/purge', opts);
@@ -1371,9 +1387,9 @@ function clipHTML(job, c, idx) {
   const acts = job.status === 'review' ? `
     <div class="acts">
       <button class="b-pub" onclick="openPubModal('${job.id}', ${idx})">发布</button>
-      <button class="b-pool" onclick='openPoolModal(${JSON.stringify({ jobId: job.id, clip: { file: c.file, cover: c.cover || '', title: c.title } })})'>${T('rv_pool_btn')}</button>
+      <button class="b-pool" onclick="openPoolModal('${job.id}', ${idx})">${T('rv_pool_btn')}</button>
       <button class="b-sub" onclick="openSubModal('${job.id}', ${idx})">加字幕</button>
-      <button class="b-dub" onclick='openDubModal(${JSON.stringify({ jobId: job.id, clip: { file: c.file, cover: c.cover || '', title: c.title } })})'>配音</button>
+      <button class="b-dub" onclick="openDubModal('${job.id}', ${idx})">配音</button>
       <button class="b-del" onclick="discardJob('${job.id}')">${T('rv_discard')}</button>
     </div>` : '';
   return `<div class="clip">
@@ -1386,22 +1402,30 @@ function clipHTML(job, c, idx) {
     </div>
   </div>`;
 }
+// clipCtx 从 clipStore 取一个已渲染卡片的上下文（按渲染任务 id + 索引）
+function clipCtx(jobId, idx) {
+  const arr = clipStore.get(jobId) || [];
+  return arr[idx] || null;
+}
 function clipsGrid(job, r) {
-  detailClips = r.clips || [];
+  clipStore.set(job.id, (r.clips || []).map(c => ({ clip: c, sourceJob: job.id })));
   return '<div class="clips">' + r.clips.map((c, i) => clipHTML(job, c, i)).join('') + '</div>';
 }
 function subtitleCard(job, r) {
   const src = r.source_job, f = '/api/files/' + src + '/' + r.subtitled;
   const cover = r.cover ? '/api/files/' + src + '/' + r.cover : null;
   const c = { file: r.subtitled, cover: r.cover || '', title: r.title };
+  // 成品卡片也登记进 clipStore：按钮只传 (job.id, 0)，不再把标题内联进属性
+  // ——标题含单引号会把单引号包裹的 onclick 截断，按钮就静默失效（同 10-28 修复）
+  clipStore.set(job.id, [{ clip: c, sourceJob: src }]);
   return `<div class="clip oneclip">
     <video controls preload="metadata" src="${f}" ${cover ? `poster="${cover}"` : ''}></video>
     <div class="meta">
       <div class="title">${esc(r.title || '')}</div>
       <div class="info"><span>字幕成品 · ${r.segments} 条 · ${r.style === 'bilingual' ? '双语' : '纯中文'}</span><a href="${f}" download>下载</a></div>
       <div class="acts">
-        <button class="b-pub" onclick='openPubModalFor(${JSON.stringify({ jobId: src, clip: c })})'>发布</button>
-        <button class="b-dub" onclick='openDubModal(${JSON.stringify({ jobId: src, clip: c })})'>配音解说</button>
+        <button class="b-pub" onclick="openPubModal('${job.id}', 0)">发布</button>
+        <button class="b-dub" onclick="openDubModal('${job.id}', 0)">配音解说</button>
       </div>
     </div></div>`;
 }
@@ -1409,12 +1433,13 @@ function dubCard(job, r) {
   const src = r.source_job, f = '/api/files/' + src + '/' + r.dubbed;
   const cover = r.cover ? '/api/files/' + src + '/' + r.cover : null;
   const c = { file: r.dubbed, cover: r.cover || '', title: r.title };
+  clipStore.set(job.id, [{ clip: c, sourceJob: src }]);
   return `<div class="clip oneclip">
     <video controls preload="metadata" src="${f}" ${cover ? `poster="${cover}"` : ''}></video>
     <div class="meta">
       <div class="title">${esc(r.title || '')}</div>
       <div class="info"><span>配音成品 · ${esc(r.voice)} · 解说稿 ${r.script_len} 字</span><a href="${f}" download>下载</a></div>
-      <div class="acts"><button class="b-pub" onclick='openPubModalFor(${JSON.stringify({ jobId: src, clip: c })})'>发布</button></div>
+      <div class="acts"><button class="b-pub" onclick="openPubModal('${job.id}', 0)">发布</button></div>
     </div></div>`;
 }
 function renderDetailBody(el, job) {
@@ -1450,7 +1475,7 @@ async function delJob(id) {
 }
 
 /* ═══════════ 弹窗（发布/字幕/配音）═══════════ */
-function openPubModal(jobId, idx) { const c = detailClips[idx]; if (c) openPubModalFor({ jobId, clip: c }); }
+function openPubModal(jobId, idx) { const it = clipCtx(jobId, idx); if (it) openPubModalFor({ jobId: it.sourceJob, clip: it.clip }); }
 async function openPubModalFor(ctx) {
   pubCtx = ctx;
   const c = ctx.clip;
@@ -1527,7 +1552,9 @@ function autoTags(title) {
   if (!tags.size) tags.add('游戏');
   return [...tags].join(',');
 }
-function openPoolModal(ctx) {
+function openPoolModal(jobId, idx) {
+  const it = clipCtx(jobId, idx); if (!it) return;
+  const ctx = { jobId: it.sourceJob, clip: it.clip };
   poolCtx = ctx;
   $('#pool-meta').textContent = ctx.clip.file + (ctx.clip.cover ? ' ｜ 封面 ' + ctx.clip.cover : ' ｜ 无封面');
   $('#pool-title').value = ctx.clip.title || '';
@@ -1629,8 +1656,9 @@ async function pollLogin() {
 function stopLoginTimer() { if (loginTimer) { clearInterval(loginTimer); loginTimer = null; } }
 function closeLoginModal() { stopLoginTimer(); $('#login-bg').style.display = 'none'; const ni = $('#lg-name'); if (ni) ni.value = ''; loginCtx = null; }
 function openSubModal(jobId, idx) {
-  const c = detailClips[idx]; if (!c) return;
-  subCtx = { jobId, clip: c };
+  const it = clipCtx(jobId, idx); if (!it) return;
+  const c = it.clip;
+  subCtx = { jobId: it.sourceJob, clip: c };
   $('#sub-meta').textContent = c.file + ' ｜ ' + (c.title || '');
   $('#sub-style-bi').checked = true;
   $('#sub-bg').style.display = 'flex';
@@ -1644,7 +1672,9 @@ async function submitSubtitle() {
     closeSubModal(); refresh();
   } catch (e) { alert('创建字幕任务失败：' + e.message); }
 }
-function openDubModal(ctx) {
+function openDubModal(jobId, idx) {
+  const it = clipCtx(jobId, idx); if (!it) return;
+  const ctx = { jobId: it.sourceJob, clip: it.clip };
   dubCtx = ctx;
   $('#dub-meta').textContent = ctx.clip.file + ' ｜ ' + (ctx.clip.title || '');
   $('#dub-bg').style.display = 'flex';

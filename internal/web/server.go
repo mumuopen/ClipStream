@@ -106,9 +106,10 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		"publish": map[string]any{"headless": s.cfg.Publish.Headless, "screenshots": s.cfg.Publish.Screenshots,
 			"active_hours": s.cfg.Publish.ActiveHours,
 			"rate_limit": map[string]any{
-				"min_interval_min": s.cfg.Publish.RateLimit.MinIntervalMin,
-				"daily_max":        s.cfg.Publish.RateLimit.DailyMax,
-				"max_inflight":     s.cfg.Publish.RateLimit.MaxInflight,
+				"min_interval_min":    s.cfg.Publish.RateLimit.MinIntervalMin,
+				"daily_max":           s.cfg.Publish.RateLimit.DailyMax,
+				"max_inflight":        s.cfg.Publish.RateLimit.MaxInflight,
+				"risk_cooldown_hours": s.cfg.Publish.RateLimit.RiskCooldownHours,
 			}},
 		"chrome":  map[string]string{"path": s.cfg.Chrome.Path},
 	})
@@ -165,6 +166,12 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 			httpError(w, 400, "池上限需 0（关闭）或正数，且解除水位须低于触发水位")
 			return
 		}
+		// 预告态关键词：表单没有输入框，客户端不传时为 nil——保留原值，
+		// 否则每保存一次都会把 daemon 的预告过滤整段清空（赛事房白天轮播的
+		// 预告画面会被当真开播录整场）。空切片是非 nil，表示用户主动清空。
+		if lv.PreviewKeywords == nil {
+			lv.PreviewKeywords = s.cfg.Live.PreviewKeywords
+		}
 		s.cfg.Live = *lv
 	}
 	if req.Retention != nil {
@@ -187,8 +194,12 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.LLM != nil {
 		l := req.LLM
-		if l.BaseURL == "" || l.Model == "" {
-			httpError(w, 400, "llm.base_url 与 llm.model 不能为空")
+		// LLM 是可选的（未配置时高光退化为等分切片，设置页对此有明示）。因此
+		// 只拒绝"半配置"（填了地址没填模型或反之）——旧版把两个都为空也当错误，
+		// 导致全新部署连"改池上限"这种无关操作都保存不了。
+		// 2026-10-28 修。
+		if (l.BaseURL == "") != (l.Model == "") {
+			httpError(w, 400, "llm.base_url 与 llm.model 需同时填写（都留空=不使用 LLM，高光退化为等分切片）")
 			return
 		}
 		if l.APIKey == "" {
@@ -730,6 +741,11 @@ func (s *Server) loginQRPoll(w http.ResponseWriter, r *http.Request) {
 			name = "douyin_" + time.Now().Format("0102-1504")
 		}
 		s.upsertAccount("douyin", name)
+		// 重新登录成功必须把 status 拉回 ok（2026-10-28 补）：upsertAccount 对已存在
+		// 账号直接 return，不改状态，而 routeAccount 又过滤 status!=ok——抖音账号一旦
+		// 被判 login_expired，重扫多少次也发不出去，UI 却显示"登录成功"。
+		// （bilibili 分支早已有对称的一行，抖音侧遗漏。）
+		_ = s.store.SetAccountStatus("douyin", name, "ok")
 		sess.result = name
 		sess.state, sess.message = "ok", "登录成功："+name
 		writeJSON(w, map[string]any{"state": sess.state, "message": sess.message, "account": sess.result})
@@ -1156,11 +1172,21 @@ func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	// 池联动：发布任务被删时，对应池条目回 pending 供泵重发——否则孤儿
-	// dispatched（全库唯一回 pending 的路径是 finalize，任务没了就永远卡住）
+	// 池联动：只在任务「未产生投稿结果」时把池条目回 pending——否则孤儿
+	// dispatched 永远卡住（全库另一条回池路径是 finalize，任务没了就再也不会跑）。
+	//
+	// 判据必须是任务状态，不能只看 kind（2026-10-28 修正）：旧实现只要
+	// kind==publish 就无条件回池，于是「删一条已经发布成功的任务」= 把同一视频
+	// 再发一遍。更隐蔽的是成功发布后 TrimPoolItemPlatforms 把 platforms 写成空串，
+	// 而发布泵把空串当 bilibili——重发只打 B 站，从抖音侧根本看不出来。
+	// 已 done/failed 的任务一律不动池条目：finalize 早已善后完毕（成功=dispatched
+	// 完结，失败=已回池或已退池），删任务不应重置这个结论。
 	if job, err := s.store.GetJob(id); err == nil && job.Kind == "publish" {
-		if req, perr := publish.ParseRequest(job.Input); perr == nil && req.PoolItemID > 0 {
-			_ = s.store.SetPoolItemStatus(req.PoolItemID, "pending")
+		switch job.Status {
+		case core.StatusQueued, core.StatusRunning, core.StatusCanceled:
+			if req, perr := publish.ParseRequest(job.Input); perr == nil && req.PoolItemID > 0 {
+				_ = s.store.SetPoolItemStatus(req.PoolItemID, "pending")
+			}
 		}
 	}
 	if err := s.store.DeleteJob(id); err != nil {
@@ -1170,10 +1196,20 @@ func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"ok": "true"})
 }
 
-// throttleReason 手动发布三闸判定（与调度侧同语义；main.go 的 publishThrottled
-// 在 cmd 包，这里复用同套 SQL 语义）
+// throttleReason 手动发布四闸判定（与调度侧同语义；main.go 的 publishThrottled
+// 在 cmd 包，这里复用同套 SQL 语义）。闸序与调度侧一致：风控冷却 → 在途 → 间隔
+// → 每日上限（同为 AND 判定，顺序只影响多闸同时命中时透出的第一条原因）。
+//
+// ⓪ 风控冷却闸（2026-10-28 补）：0.6.1 的熔断只在泵侧 publishThrottled 生效，
+// 手动路径漏了这道闸——注释写着"同语义"而实际少一闸，冷却期内从审核台点一次
+// 发布就能继续撞 137022，并让 risk_pause_count +1 把冷却 24h 翻成 48h。用户最常
+// 走的就是手动路径，漏这一闸等于熔断形同虚设。
 func throttleReason(st *store.Store, rl config.RateLimit, accName string) string {
 	now := time.Now()
+	if until, count := st.AccountRiskPaused(accName); until > now.Unix() {
+		left := time.Until(time.Unix(until, 0)).Round(time.Minute)
+		return fmt.Sprintf("该账号风控冷却中（平台限流熔断，剩余 %s，第 %d 次触发；可在发布中心手动恢复）", left, count)
+	}
 	if rl.MaxInflight > 0 {
 		if n, err := st.CountRunningPublish(accName); err == nil && n >= rl.MaxInflight {
 			return fmt.Sprintf("该账号同时在途任务已达上限（%d/%d 条），等上传完成后再发", n, rl.MaxInflight)
