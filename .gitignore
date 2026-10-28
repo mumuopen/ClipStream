@@ -7,6 +7,9 @@
 /engines/
 *.exe
 *.log
+# 构建/测试产物误入版本库的历史文件（已删除并禁用）
+/clipstream-deploy.zip
+/qrcode.png
 
 # 本地配置（含密钥，不入库）
 /config.yaml
