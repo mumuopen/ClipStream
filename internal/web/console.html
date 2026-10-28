@@ -443,7 +443,7 @@ const I18N = {
     strip_rate: '成功率', strip_engines: '引擎就绪',
     st_queued: '排队', st_running: '执行中', st_review: '待审核', st_done: '完成', st_failed: '失败', st_canceled: '已取消',
     st_live_idle: '待开播', st_live_recording: '录制中', st_live_error: '异常', st_live_paused: '池满·暂停录制',
-    eng_ytdlp: '下载', eng_ffmpeg: '转码', eng_whisper: '转写', eng_biliup: 'B站投稿', eng_deepseek: 'LLM', eng_pushme: '通知',
+    eng_ytdlp: '下载', eng_ffmpeg: '转码', eng_ffprobe: '探测', eng_whisper: '转写', eng_biliup: 'B站投稿', eng_deepseek: 'LLM', eng_pushme: '通知',
     board_empty: '还没有任务 — 上面粘贴离线视频链接即可开工',
     live_ph: '直播间链接（B站 live.bilibili.com / 虎牙 www.huya.com），回车开始盯播',
     live_idle: '未开播', live_recording: '录制中', live_error: '检测异常',
@@ -494,9 +494,39 @@ const I18N = {
     set_acc_add: '发布中心扫码添加', set_none: '未添加', set_ok: '已登录', set_scan2: '待扫码', set_enabled: '已启用', set_disabled: '未启用',
     set_cg_ops: '运行规则', set_cg_llm: 'AI 模型（高光选择 / 翻译 / 解说稿）', set_cg_paths: '引擎路径（一般不用改，部署包已内置）',
     set_cg_pub: '发布行为',
-    'set_eng_ytdlp': '视频下载（数千站点）', 'set_eng_ffmpeg': '转码 / 切片 / 烧字幕', 'set_eng_whisper': '离线语音转写 whisper.cpp',
+    'set_eng_ytdlp': '视频下载（数千站点）', 'set_eng_ffmpeg': '转码 / 切片 / 烧字幕', 'set_eng_ffprobe': '时长 / 分段探测',
+  'set_eng_whisper': '离线语音转写 whisper.cpp',
     'set_eng_biliup': 'B站投稿直传', 'set_eng_deepseek': '高光选择 / 解说稿 / 翻译', 'set_eng_pushme': '审核 / 发布 / 失败推手机',
     lang_label: '语言', ready: '就绪', not_set: '未配置', nav_tasks_all: '全部', set_cmd_init: '引擎体检与配置生成', set_cmd_serve: '启动本控制台（127.0.0.1:8899）', set_cmd_run: '命令行直接跑任务', set_cmd_login: '[--account 别名] 平台扫码登录', set_cmd_status: '任务一览',
+    /* ── 高风险确认与空态（2026-10-28 补：旧版这几处切 EN 后仍全中文） ── */
+    rv_empty_big: '审核台空着——没有等你决策的切片',
+    rv_empty_small: '切片完成后会自动出现在这里（pushme 会同时提醒你）',
+    rv_none_yet: '切片还没出来（下载/转写/选高光进行中）',
+    resume_confirm: '提前恢复该账号的发布？\n\n平台限流未必已解除，恢复后若再撞限流会触发更长冷却（连续触发翻倍，上限 7 天）。\n建议确认平台投稿功能已恢复正常后再恢复。',
+    resume_done: '已恢复',
+    purge_noop: '没有可清理的内容（待发池 0 条、已完结条目 0、终态历史任务 0）',
+    purge_scope_base: '· 已完结池条目 {pool} 条（已发布+已退池终态）\n· 终态历史任务 {jobs} 个（含切片产物目录与失败发布记录）\n· 预计释放 {gb} GB（不含待发池素材）',
+    purge_confirm: '确认执行清理？将清理：\n\n{scope}\n\n此操作不可恢复。',
+    purge_pending_q: '待发池里还有 {n} 条待发内容。\n\n点【确定】：连同待发池一起清空 ——\n  适合"老积压不要了、重新开始"的场景：池子水位立即回落，\n  "池满·暂停录制"自动解除，新直播正常录制切片；这些老切片\n  的素材目录会被删除（不可恢复；仍被审核台字幕/在途任务引用\n  的素材会自动保留）。\n\n点【取消】：保留待发池，只清上一步已确认的内容\n  （待发内容继续按发布节奏自动发出）。',
+    purge_final: '最后确认：连同待发池一起清空？\n\n{scope}\n\n待发池 {n} 条素材将被删除，不可恢复。',
+    purge_scope_pending: '· 待发池 {n} 条（一并清空，解除池满背压）',
+    purge_done: '清理完成：池条目 {pool} 条{tail}、历史任务 {jobs} 个、释放 {gb} GB',
+    purge_done_tail: '（含待发池清空）',
+    purge_skipped: '\n\n部分条目跳过：\n',
+    purge_fail: '清理失败：',
+    /* ── 设置表单（2026-10-28 补：旧版全中文，切 EN 后整个表单不跟着变） ── */
+    set_ops_hint: '保存即写回 config.yaml；审核/通知即时生效；直播检测/磁盘清理需重启后台；LLM 与引擎路径需重启程序生效',
+    set_llm_hint: '填 DeepSeek 或任意 OpenAI 兼容接口；不填则高光退化为等分切片',
+    set_ar_on: '自动审核', set_ar_score: '入池评分≥', set_ar_dur: '硬闸时长(s)', set_ar_words: '敏感词(逗号分隔)',
+    set_live_check: '检测间隔(s)', set_live_seg: '录制分段(s)', set_live_clip: '下播自动切',
+    set_live_high: '池上限', set_live_low: '恢复水位',
+    set_rt_on: '磁盘清理', set_rt_days: '保留天数', set_rt_consumed: '已消费分段(天)', set_rt_free: '水位%',
+    set_rt_usage: '占用上限%', set_rt_keep: '成品保留(天)', set_rt_min: '清理间隔(min)',
+    set_pub_hours: '发布窗口', set_pub_interval: '发布间隔(min)', set_pub_daily: '每日上限/账号',
+    set_pub_inflight: '同时在途上限', set_pub_riskcd: '风控冷却(h)',
+    set_nt_on: 'pushme', set_nt_url: '地址', set_nt_key: 'push_key',
+    set_llm_base: '接口地址', set_llm_model: '模型', set_llm_think: '思考模式',
+    set_think_off: '关（快·省）', set_think_on: '开（深度）', set_ph_words: '违禁词A,违禁词B',
   },
   en: {
     nav_work: 'Workspace', nav_collect: 'Collect', nav_edit: 'Edit', nav_publish: 'Publish', nav_sys: 'System',
@@ -517,7 +547,7 @@ const I18N = {
     strip_rate: 'Success', strip_engines: 'Engines',
     st_queued: 'Queued', st_running: 'Running', st_review: 'Review', st_done: 'Done', st_failed: 'Failed', st_canceled: 'Canceled',
     st_live_idle: 'Idle', st_live_recording: 'Recording', st_live_error: 'Error', st_live_paused: 'pool full · paused',
-    eng_ytdlp: 'Download', eng_ffmpeg: 'Transcode', eng_whisper: 'ASR', eng_biliup: 'Bilibili', eng_deepseek: 'LLM', eng_pushme: 'Notify',
+    eng_ytdlp: 'Download', eng_ffmpeg: 'Transcode', eng_ffprobe: 'Probe', eng_whisper: 'ASR', eng_biliup: 'Bilibili', eng_deepseek: 'LLM', eng_pushme: 'Notify',
     board_empty: 'No jobs yet — paste a video URL above to start',
     live_ph: 'Live-room link (Bilibili live.bilibili.com / Huya www.huya.com), press Enter',
     live_idle: 'Offline', live_recording: 'Recording', live_error: 'Error',
@@ -531,7 +561,7 @@ const I18N = {
     live_confirm_del: 'Unfollow and stop recording this room? (recordings kept)',
     barrage_ph: 'Select a room (chat counted while live)',
     barrage_nodata: 'No danmaku yet (appears while live)',
-    barrage_total: 'Total', barrage_peak: 'Peak', barrage_rate: 'count', barrage_per5: 'per 5s',
+    barrage_total: 'Total', barrage_peak: 'Peak', barrage_rate: 'count', barrage_per5: 'per 5s', barrage_cover: 'covering',
     'barrage_min30': '30 min', 'barrage_min120': '2 hours', 'barrage_min360': '6 hours',
     m5_acc: 'Publish Accounts', m5_acc_hint: 'rooms bound to an account publish there first; others routed by priority',
     m5_acc_qr_btn: '＋ Add Bilibili account (scan QR)', m5_acc_qr_dy_btn: '＋ Add Douyin account (scan QR)', m5_acc_qr_hint: 'Scan with the App to add & login; douyin loads in a headless browser (~20-30s, no window pops up)',
@@ -565,16 +595,57 @@ const I18N = {
     set_acc_add: 'add via publish center QR scan', set_none: 'not added', set_ok: 'logged in', set_scan2: 'to scan', set_enabled: 'enabled', set_disabled: 'disabled',
     set_cg_ops: 'Runtime rules', set_cg_llm: 'AI model (highlight / translate / narration)', set_cg_paths: 'Engine paths (bundled, usually no change)',
     set_cg_pub: 'Publish behavior',
-    'set_eng_ytdlp': 'video download (thousands of sites)', 'set_eng_ffmpeg': 'transcode / clip / burn subtitles', 'set_eng_whisper': 'offline ASR whisper.cpp',
+    'set_eng_ytdlp': 'video download (thousands of sites)', 'set_eng_ffmpeg': 'transcode / clip / burn subtitles', 'set_eng_ffprobe': 'duration / segment probe', 'set_eng_whisper': 'offline ASR whisper.cpp',
     'set_eng_biliup': 'Bilibili upload', 'set_eng_deepseek': 'highlight / script / translate', 'set_eng_pushme': 'review / publish / failure push',
     lang_label: 'Language', ready: 'ready', not_set: 'not set', nav_tasks_all: 'All', set_cmd_init: 'engine check & config generation', set_cmd_serve: 'start this console (127.0.0.1:8899)', set_cmd_run: 'run a job from CLI', set_cmd_login: '[--account alias] platform QR login', set_cmd_status: 'job overview',
+    rv_empty_big: 'Review queue is empty -- nothing awaiting your decision',
+    rv_empty_small: 'Finished clips show up here automatically (pushme notifies you too)',
+    rv_none_yet: 'No clips yet (download / transcribe / highlight in progress)',
+    resume_confirm: 'Resume publishing for this account early?\n\nThe platform rate limit may not have expired yet; hitting it again will trigger a longer cooldown (doubles each time, capped at 7 days).\nOnly resume after confirming uploads work normally again.',
+    resume_done: 'Resumed',
+    purge_noop: 'Nothing to purge (pool 0, finished items 0, terminal jobs 0)',
+    purge_scope_base: '- Finished pool items: {pool} (published + retired)\n- Terminal jobs: {jobs} (incl. clip output dirs and failed publish records)\n- Estimated release: {gb} GB (excluding pending pool assets)',
+    purge_confirm: 'Run cleanup? This will purge:\n\n{scope}\n\nThis cannot be undone.',
+    purge_pending_q: 'The pending pool still holds {n} items.\n\nOK: also clear the pending pool --\n  for "old backlog is worthless, start over": pool level drops immediately,\n  "pool full - recording paused" clears itself, new streams record normally;\n  those old clips get their asset dirs deleted (irreversible; assets still\n  referenced by review subtitles or in-flight jobs are kept).\n\nCancel: keep the pending pool, only purge what was confirmed above\n  (pending items keep publishing at the normal rhythm).',
+    purge_final: 'Final confirm: clear the pending pool too?\n\n{scope}\n\n{n} pending assets will be deleted, irreversibly.',
+    purge_scope_pending: '- Pending pool: {n} (also cleared, releases backpressure)',
+    purge_done: 'Cleanup done: {pool} pool items{tail}, {jobs} jobs, released {gb} GB',
+    purge_done_tail: ' (pending pool cleared)',
+    purge_skipped: '\n\nSome items skipped:\n',
+    purge_fail: 'Cleanup failed: ',
+    set_ops_hint: 'Save writes config.yaml; review/notify apply immediately; live checks & disk cleanup need a daemon restart; LLM and engine paths need a program restart',
+    set_llm_hint: 'Any OpenAI-compatible endpoint (DeepSeek etc.); leave blank to fall back to equal-split clipping',
+    set_ar_on: 'Auto review', set_ar_score: 'Pool score >=', set_ar_dur: 'Hard limits (s)', set_ar_words: 'Banned words (comma)',
+    set_live_check: 'Check interval (s)', set_live_seg: 'Segment length (s)', set_live_clip: 'Auto-clip on end',
+    set_live_high: 'Pool high', set_live_low: 'Pool low',
+    set_rt_on: 'Disk cleanup', set_rt_days: 'Keep days', set_rt_consumed: 'Consumed segs (d)', set_rt_free: 'Free level %',
+    set_rt_usage: 'Usage cap %', set_rt_keep: 'Keep outputs (d)', set_rt_min: 'Cleanup interval (min)',
+    set_pub_hours: 'Publish window', set_pub_interval: 'Interval (min)', set_pub_daily: 'Daily max/account',
+    set_pub_inflight: 'Max in flight', set_pub_riskcd: 'Risk cooldown (h)',
+    set_nt_on: 'pushme', set_nt_url: 'URL', set_nt_key: 'push_key',
+    set_llm_base: 'Base URL', set_llm_model: 'Model', set_llm_think: 'Thinking',
+    set_think_off: 'off (fast, cheap)', set_think_on: 'on (deeper)', set_ph_words: 'badwordA,badwordB',
   },
 };
 let LANG = localStorage.getItem('clipstream_lang') || 'zh';
 function T(key) { return (I18N[LANG] && I18N[LANG][key]) || I18N.zh[key] || key; }
+// TF 带占位符的 T：TF('purge_done', {pool: 3}) → 把 {pool} 换成 3。
+// 带数值/动态文本的弹窗文案必须走这个（i18n 字串里用 {name} 占位），
+// 否则只能拼接，切到英文后语序会错。
+function TF(key, vars) {
+  return T(key).replace(/\{(\w+)\}/g, (m, k) => (vars && vars[k] !== undefined ? String(vars[k]) : m));
+}
 function setLang(l) { LANG = l; localStorage.setItem('clipstream_lang', l); route(); }
 function statusCN(s) { return T('st_' + s) || s; }
-function engineCN(k) { return T('eng_' + (k || '')) || k; }
+function engineCN(k) {
+  const key = 'eng_' + engKey(k);
+  const v = T(key);
+  return v === key ? k : v;
+}
+// engKey 引擎标识 → i18n 键片段（"yt-dlp" → "ytdlp"）。stats.engines 的键是
+// "yt-dlp"/"ffprobe" 这类标识，而 i18n 键是 eng_ytdlp/eng_ffprobe（去标点）——
+// 旧版直接拼 "eng_"+k，yt-dlp 拼成 eng_yt-dlp 永远找不到，侧栏直接显示原始 key。
+function engKey(k) { return String(k || '').replace(/[^A-Za-z0-9]/g, ''); }
 /* ═══════════ 基础 ═══════════ */
 const KIND_STAGES = {
   clips:    ['download', 'transcribe', 'highlight', 'cut', 'finalize'],
@@ -596,10 +667,15 @@ let pubCtx = null, subCtx = null, dubCtx = null;
 let stats = null;           // {engines, accounts}
 let taskFilter = 'all';     // 任务中心筛选
 let page = 'board';         // 当前路由页
-let reviewSig = '';         // 审核台差分签名：review 任务 id 列表，变化才重建
+let reviewSig = null;      // 审核台差分签名：review 任务 id 列表，变化才重建（null=尚未渲染过）
 
 const esc = s => { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; };
-const fmtRange = (s, e) => { const f = t => Math.floor(t / 60) + ':' + String(Math.round(t % 60)).padStart(2, '0'); return f(s) + ' - ' + f(e); };
+// fmtRange 区间显示（秒 → m:ss）。先四舍五入到整秒再拆分钟，
+// 否则 119.7s 会算出 floor(1.995)=1 与 round(59.7)=60 拼成 "1:60"。
+const fmtRange = (s, e) => {
+  const f = t => { const n = Math.max(0, Math.round(t)); return Math.floor(n / 60) + ':' + String(n % 60).padStart(2, '0'); };
+  return f(s) + ' - ' + f(e);
+};
 const fmtClock = ts => new Date(ts * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 // 任务摘要：clips 显示原输入；publish/subtitle/dub 解析出人话摘要，不裸露 JSON
 function jobSummary(j) {
@@ -685,8 +761,11 @@ function renderStrip() {
   const failed = jobs.filter(j => j.status === 'failed').length;
   const rate = (done + failed) ? Math.round(done / (done + failed) * 100) : null;
   const eng = stats ? stats.engines : null;
-  const ready = eng ? Object.values(eng).filter(Boolean).length + 2 : 0;
-  const total = eng ? Object.keys(eng).length + 2 : 0;
+  // 引擎就绪数：直接数 stats.engines 的布尔项。旧版剑意算 +2（无数据源的
+  // "隐藏项"），页面上恒显示 7/8、8/8——而 ffprobe 缺失时仍显全绿，误导排障。
+  // 2026-10-28 修为实际计数，且 server 侧补上 ffprobe 一项。
+  const ready = eng ? Object.values(eng).filter(Boolean).length : 0;
+  const total = eng ? Object.keys(eng).length : 0;
   $('#strip').innerHTML = `
     <div class="s"><span class="n">${today.length}</span><span class="l">${T('strip_today')}</span></div>
     <div class="s warn ${review ? 'pulse' : ''}"><span class="n">${review}</span><span class="l">${T('strip_review')}</span></div>
@@ -725,8 +804,8 @@ function renderReview(el) {
   const review = jobs.filter(j => j.status === 'review');
   if (!review.length) {
     el.innerHTML = `<div class="empty"><span class="arrow">✓</span>
-      <div class="big">审核台空着——没有等你决策的切片</div>
-      <div class="small">切片完成后会自动出现在这里（pushme 会同时提醒你）</div></div>`;
+      <div class="big">${T('rv_empty_big')}</div>
+      <div class="small">${T('rv_empty_small')}</div></div>`;
     return;
   }
   el.innerHTML = review.map(j => {
@@ -747,10 +826,15 @@ function renderReview(el) {
 
 // 审核台差分渲染：review 任务 id 列表无变化时不重建 #page——
 // 否则 2.5s 轮询每次重建会反复替换 <video> 元素，预览播放永远被打断
-// （用户报"页面自动刷新、视频无法播放"的根因）。有切片进出 review 才重建。
+// （用户报"页面自动刷新、视频无法播放"的根因）。
+//
+// 2026-10-28 修：旧版早退条件是 `sig === reviewSig && el.querySelector('.clips')`，
+// 而字幕/配音成品卡片用的是 .oneclip（不是 .clips）——审核台只剩字幕/配音时
+// 早退永不成立，正好是这次想解决的"预览被打断"症状。改成只看签名本身，
+// reviewSig 初值改 null（否则首次进入且列表为空时 sig=''===初值，空态永不渲染）。
 function renderReviewDiff(el) {
   const sig = jobs.filter(j => j.status === 'review').map(j => j.id).join('|');
-  if (sig === reviewSig && el.querySelector('.clips')) return;
+  if (sig === reviewSig) return;
   reviewSig = sig;
   renderReview(el);
 }
@@ -785,9 +869,18 @@ function renderDaemonStatus(el) {
 async function refreshWatches() {
   try { watches = await fetchJSON('/api/live/watches'); } catch (e) { return; }
   refreshDaemon();
-  if (page !== 'livefollow') return;
   // 输入框与列表分离：轮询只刷列表，永不重建输入框（贴链接打字到一半不再被清空）
-  if ($('#watch-list')) renderWatchList(); else renderLiveFollow($('#page'));
+  if (page === 'livefollow') {
+    if ($('#watch-list')) renderWatchList(); else renderLiveFollow($('#page'));
+    return;
+  }
+  // 弹幕页：房间下拉依赖 watches。直接打开 #/barrage（收藏/刷新）时本次 fetch
+  // 返回前就渲染了空下拉，而旧版此后只在 livefollow 页重绘——页面不会自愈，
+  // 下拉永远为空（"刷新"按钮在无房间时也静默无效）。选项数与 watches 不符就重绘。
+  if (page === 'barrage') {
+    const sel = document.getElementById('barrage-room');
+    if (sel && sel.options.length !== watches.length) renderPage();
+  }
 }
 function renderLiveFollow(el) {
   el.innerHTML = `
@@ -864,43 +957,43 @@ function renderSettings(el) {
       <div class="set-card" id="set-accounts-card"></div>
       <div class="set-card" style="grid-column:1/-1">
         <h4>${T('set_cg_ops')}
-          <span class="hint">保存即写回 config.yaml；审核/通知即时生效；直播检测/磁盘清理需重启后台；LLM 与引擎路径需重启程序生效</span></h4>
+          <span class="hint">${T('set_ops_hint')}</span></h4>
         <div class="m5-form" id="cfg-form" style="flex-wrap:wrap;row-gap:10px">
-          <label>自动审核 <input id="cfg-ar-on" type="checkbox" style="width:auto"></label>
-          <label>入池评分≥ <input id="cfg-ar-score" type="number" min="0" max="100" style="width:60px"></label>
-          <label>硬闸时长(s) <input id="cfg-ar-min" type="number" min="0" style="width:60px"> ~ <input id="cfg-ar-max" type="number" style="width:60px"></label>
-          <label>敏感词(逗号分隔) <input id="cfg-ar-words" style="width:150px" placeholder="违禁词A,违禁词B"></label>
-          <label>检测间隔(s) <input id="cfg-live-check" type="number" min="5" style="width:60px"></label>
-          <label>录制分段(s) <input id="cfg-live-seg" type="number" min="60" style="width:60px"></label>
-          <label>下播自动切 <input id="cfg-live-clip" type="checkbox" style="width:auto"></label>
-          <label>池上限 <input id="cfg-live-bphigh" type="number" min="0" style="width:55px" title="待发池 pending ≥ 此值时暂停录制与送切（0=关闭背压）"></label>
-          <label>恢复水位 <input id="cfg-live-bplow" type="number" min="0" style="width:55px" title="待发池降回此值以下恢复录制（须低于触发水位）"></label>
-          <label>磁盘清理 <input id="cfg-rt-on" type="checkbox" style="width:auto"></label>
-          <label>保留天数 <input id="cfg-rt-days" type="number" min="1" style="width:60px"></label>
-          <label>已消费分段(天) <input id="cfg-rt-consumed" type="number" min="0" style="width:60px"></label>
-          <label>水位% <input id="cfg-rt-free" type="number" min="1" max="95" style="width:60px"></label>
-          <label>占用上限% <input id="cfg-rt-usage" type="number" min="0" max="95" style="width:60px" title="ClipStream 数据目录最多占用整盘百分比（默认 50 = 只用一半；0=不启用）"></label>
-          <label>成品保留(天) <input id="cfg-rt-keep" type="number" min="0" max="90" style="width:60px" title="已发布切片成品目录保留天数，到期自动清理（0=不清）"></label>
-          <label>清理间隔(min) <input id="cfg-rt-min" type="number" min="5" style="width:60px"></label>
-          <label>发布窗口 <input id="cfg-pub-hours" style="width:100px" placeholder="10:00-23:00" title="窗口外不派发（夜里发没人看）；空=全天；支持跨夜如 22:00-06:00"></label>
-          <label>发布间隔(min) <input id="cfg-pub-interval" type="number" min="0" max="1440" style="width:65px" title="同一账号两次发布的最小间隔（0=不限）；叠加 ±5% 随机抖动"></label>
-          <label>每日上限/账号 <input id="cfg-pub-daily" type="number" min="0" max="200" style="width:55px" title="每账号每天最多发布条数（0=不限）；9 条×10min ≈ 90 分钟发完当日配额"></label>
-          <label>同时在途上限 <input id="cfg-pub-inflight" type="number" min="0" max="50" style="width:55px" title="同一账号同时执行中的发布任务上限（0=不限）——上传慢时防多条并发"></label>
-          <label>风控冷却(h) <input id="cfg-pub-riskcd" type="number" min="0" max="168" style="width:55px" title="平台限流（投稿过于频繁）触发熔断的基础冷却时长；连续触发翻倍，上限 7 天；0=默认 24"></label>
-          <label>pushme <input id="cfg-nt-on" type="checkbox" style="width:auto"></label>
-          <label>地址 <input id="cfg-nt-url" style="width:170px" placeholder="http://server:36591"></label>
-          <label>push_key <input id="cfg-nt-key" style="width:140px"></label>
+          <label>${T('set_ar_on')} <input id="cfg-ar-on" type="checkbox" style="width:auto"></label>
+          <label>${T('set_ar_score')} <input id="cfg-ar-score" type="number" min="0" max="100" style="width:60px"></label>
+          <label>${T('set_ar_dur')} <input id="cfg-ar-min" type="number" min="0" style="width:60px"> ~ <input id="cfg-ar-max" type="number" style="width:60px"></label>
+          <label>${T('set_ar_words')} <input id="cfg-ar-words" style="width:150px" placeholder="${T('set_ph_words')}"></label>
+          <label>${T('set_live_check')} <input id="cfg-live-check" type="number" min="5" style="width:60px"></label>
+          <label>${T('set_live_seg')} <input id="cfg-live-seg" type="number" min="60" style="width:60px"></label>
+          <label>${T('set_live_clip')} <input id="cfg-live-clip" type="checkbox" style="width:auto"></label>
+          <label>${T('set_live_high')} <input id="cfg-live-bphigh" type="number" min="0" style="width:55px" title="待发池 pending ≥ 此值时暂停录制与送切（0=关闭背压）"></label>
+          <label>${T('set_live_low')} <input id="cfg-live-bplow" type="number" min="0" style="width:55px" title="待发池降回此值以下恢复录制（须低于触发水位）"></label>
+          <label>${T('set_rt_on')} <input id="cfg-rt-on" type="checkbox" style="width:auto"></label>
+          <label>${T('set_rt_days')} <input id="cfg-rt-days" type="number" min="1" style="width:60px"></label>
+          <label>${T('set_rt_consumed')} <input id="cfg-rt-consumed" type="number" min="0" style="width:60px"></label>
+          <label>${T('set_rt_free')} <input id="cfg-rt-free" type="number" min="1" max="95" style="width:60px"></label>
+          <label>${T('set_rt_usage')} <input id="cfg-rt-usage" type="number" min="0" max="95" style="width:60px" title="ClipStream 数据目录最多占用整盘百分比（默认 50 = 只用一半；0=不启用）"></label>
+          <label>${T('set_rt_keep')} <input id="cfg-rt-keep" type="number" min="0" max="90" style="width:60px" title="已发布切片成品目录保留天数，到期自动清理（0=不清）"></label>
+          <label>${T('set_rt_min')} <input id="cfg-rt-min" type="number" min="5" style="width:60px"></label>
+          <label>${T('set_pub_hours')} <input id="cfg-pub-hours" style="width:100px" placeholder="10:00-23:00" title="窗口外不派发（夜里发没人看）；空=全天；支持跨夜如 22:00-06:00"></label>
+          <label>${T('set_pub_interval')} <input id="cfg-pub-interval" type="number" min="0" max="1440" style="width:65px" title="同一账号两次发布的最小间隔（0=不限）；叠加 ±5% 随机抖动"></label>
+          <label>${T('set_pub_daily')} <input id="cfg-pub-daily" type="number" min="0" max="200" style="width:55px" title="每账号每天最多发布条数（0=不限）；9 条×10min ≈ 90 分钟发完当日配额"></label>
+          <label>${T('set_pub_inflight')} <input id="cfg-pub-inflight" type="number" min="0" max="50" style="width:55px" title="同一账号同时执行中的发布任务上限（0=不限）——上传慢时防多条并发"></label>
+          <label>${T('set_pub_riskcd')} <input id="cfg-pub-riskcd" type="number" min="0" max="168" style="width:55px" title="平台限流（投稿过于频繁）触发熔断的基础冷却时长；连续触发翻倍，上限 7 天；0=默认 24"></label>
+          <label>${T('set_nt_on')} <input id="cfg-nt-on" type="checkbox" style="width:auto"></label>
+          <label>${T('set_nt_url')} <input id="cfg-nt-url" style="width:170px" placeholder="http://server:36591"></label>
+          <label>${T('set_nt_key')} <input id="cfg-nt-key" style="width:140px"></label>
         </div>
       </div>
       <div class="set-card" style="grid-column:1/-1">
-        <h4>${T('set_cg_llm')} <span class="hint">填 DeepSeek 或任意 OpenAI 兼容接口；不填则高光退化为等分切片</span></h4>
+        <h4>${T('set_cg_llm')} <span class="hint">${T('set_llm_hint')}</span></h4>
         <div class="m5-form" style="flex-wrap:wrap;row-gap:10px">
-          <label>接口地址 <input id="cfg-llm-base" style="width:220px" placeholder="https://api.deepseek.com/v1"></label>
+          <label>${T('set_llm_base')} <input id="cfg-llm-base" style="width:220px" placeholder="https://api.deepseek.com/v1"></label>
           <label>API Key <input id="cfg-llm-key" type="password" style="width:230px" autocomplete="new-password"></label>
-          <label>模型 <input id="cfg-llm-model" style="width:150px" placeholder="deepseek-flash"></label>
-          <label>思考模式 <select id="cfg-llm-think" style="width:90px">
-            <option value="disabled">关（快·省）</option>
-            <option value="enabled">开（深度）</option>
+          <label>${T('set_llm_model')} <input id="cfg-llm-model" style="width:150px" placeholder="deepseek-flash"></label>
+          <label>${T('set_llm_think')} <select id="cfg-llm-think" style="width:90px">
+            <option value="disabled">${T('set_think_off')}</option>
+            <option value="enabled">${T('set_think_on')}</option>
           </select></label>
         </div>
       </div>
@@ -940,7 +1033,7 @@ function renderSettings(el) {
 // 引擎/账号状态卡（fetchStats 轮询单独刷新，不碰运营配置表单）
 function renderSettingsStatus() {
   const eng = stats ? stats.engines : null;
-  const engDesc = k => T('set_eng_' + k) || '';
+  const engDesc = k => { const key = 'set_eng_' + engKey(k); const v = T(key); return v === key ? '' : v; };
   const ec = $('#set-engines-card'), ac = $('#set-accounts-card');
   if (ec) ec.innerHTML = `
     <h4>${T('set_engines')}</h4>
@@ -1160,10 +1253,10 @@ async function delPoolItem(id) {
 }
 // 手动恢复风控冷却（触发计数保留：再触发冷却继续翻倍）
 async function resumePublish(id) {
-  if (!confirm('提前恢复该账号的发布？\n\n平台限流未必已解除，恢复后若再撞限流会触发更长冷却（连续触发翻倍，上限 7 天）。\n建议确认平台投稿功能已恢复正常后再恢复。')) return;
+  if (!confirm(T('resume_confirm'))) return;
   try {
     const r = await fetchJSON('/api/accounts/' + id + '/resume_publish', { method: 'POST' });
-    alert(r.note || '已恢复'); refreshMatrix();
+    alert(r.note || T('resume_done')); refreshMatrix();
   } catch (e) { alert(e.message); }
 }
 // 一键清理历史：预览确认再执行。待发池有积压时先问是否连待发一起清空
@@ -1172,30 +1265,33 @@ async function resumePublish(id) {
 async function purgeHistory() {
   let p;
   try { p = await fetchJSON('/api/maintenance/purge_preview'); } catch (e) { alert(e.message); return; }
-  if (!p.pool_items && !p.jobs && !p.pending) { alert('没有可清理的内容（待发池 0 条、已完结条目 0、终态历史任务 0）'); return; }
+  if (!p.pool_items && !p.jobs && !p.pending) { alert(T('purge_noop')); return; }
   // 闸序反转（2026-10-28 修）：旧版先问"是否连待发池一起清空"，把"取消"解释成
   // "保留待发池、继续清历史"，紧接着弹出第二道破坏性确认（默认焦点在确定）——
   // 用户按 Esc 想放弃清理，顺着后面的回车就把东西删了。现在先问总意图（取消=整体
   // 放弃），再问可选项。
   const gb = (p.bytes / 1e9).toFixed(2);
-  const baseScope = `· 已完结池条目 ${p.pool_items} 条（已发布+已退池终态）\n· 终态历史任务 ${p.jobs} 个（含切片产物目录与失败发布记录）\n· 预计释放 ${gb} GB（不含待发池素材）`;
-  if (!confirm(`确认执行清理？将清理：\n\n${baseScope}\n\n此操作不可恢复。`)) return;
+  const baseScope = TF('purge_scope_base', { pool: p.pool_items, jobs: p.jobs, gb });
+  if (!confirm(TF('purge_confirm', { scope: baseScope }))) return;
   let includePending = false;
   if (p.pending > 0) {
-    includePending = confirm(`待发池里还有 ${p.pending} 条待发内容。\n\n点【确定】：连同待发池一起清空 ——\n  适合"老积压不要了、重新开始"的场景：池子水位立即回落，\n  "池满·暂停录制"自动解除，新直播正常录制切片；这些老切片\n  的素材目录会被删除（不可恢复；仍被审核台字幕/在途任务引用\n  的素材会自动保留）。\n\n点【取消】：保留待发池，只清上一步已确认的内容\n  （待发内容继续按发布节奏自动发出）。`);
+    includePending = confirm(TF('purge_pending_q', { n: p.pending }));
   }
   const scope = includePending
-    ? `· 待发池 ${p.pending} 条（清空，解除池满背压）\n· 已完结池条目 ${p.pool_items} 条（已发布+已退池）\n· 终态历史任务 ${p.jobs} 个（含产物目录）`
-    : `· 已完结池条目 ${p.pool_items} 条（已发布+已退池终态）\n· 终态历史任务 ${p.jobs} 个（含切片产物目录与失败发布记录）`;
-  if (includePending && !confirm(`最后确认：连同待发池一起清空？\n\n${scope}\n\n待发池 ${p.pending} 条素材将被删除，不可恢复。`)) return;
+    ? baseScope + '\n' + TF('purge_scope_pending', { n: p.pending })
+    : baseScope;
+  if (includePending && !confirm(TF('purge_final', { scope, n: p.pending }))) return;
   try {
     const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ include_pending: includePending }) };
     const r = await fetchJSON('/api/maintenance/purge', opts);
-    let msg = `清理完成：池条目 ${r.pool_items} 条${includePending ? '（含待发池清空）' : ''}、历史任务 ${r.jobs} 个、释放 ${(r.bytes / 1e9).toFixed(2)} GB`;
-    if (r.errors && r.errors.length) msg += '\n\n部分条目跳过：\n' + r.errors.join('\n');
+    let msg = TF('purge_done', {
+      pool: r.pool_items, jobs: r.jobs, gb: (r.bytes / 1e9).toFixed(2),
+      tail: includePending ? T('purge_done_tail') : '',
+    });
+    if (r.errors && r.errors.length) msg += T('purge_skipped') + r.errors.join('\n');
     alert(msg);
     refreshMatrix();
-  } catch (e) { alert('清理失败：' + e.message); }
+  } catch (e) { alert(T('purge_fail') + e.message); }
 }
 function platBadge(p) {
   const m = PLAT_META[p] || { cn: p, color: '#888' };
@@ -1337,15 +1433,64 @@ function trackHTML(job) {
   });
   return h + '</div>';
 }
+// jobBox 按 data-jid 找列表行（不用 id 选择器：任务 id 来自后端，
+// 拼进 CSS 选择器一旦含特殊字符就选不中）
+function jobBox(container, id) {
+  for (const el of container.children) {
+    if (el.dataset && el.dataset.jid === id) return el;
+  }
+  return null;
+}
+
+// syncJobRow 原地更新一行的可变展示字段（不改结构、不碰 detail 节点）。
+// 只同步：状态徽标 / 阶段轨道 / 输入摘要。createdAt 不变故时间不刷。
+function syncJobRow(container, j) {
+  const box = jobBox(container, j.id);
+  if (!box) return;
+  const row = box.querySelector('.job-row');
+  if (!row) return;
+  const badge = row.querySelector('.badge');
+  if (badge) {
+    const label = statusCN(j.status);
+    if (badge.textContent !== label) badge.textContent = label;
+    if (badge.className !== 'badge ' + j.status) badge.className = 'badge ' + j.status;
+  }
+  const track = row.querySelector('.track');
+  if (track) {
+    const want = trackHTML(j);
+    if (track.outerHTML !== want) {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = want;
+      if (tmp.firstElementChild) track.replaceWith(tmp.firstElementChild);
+    }
+  }
+  const inp = row.querySelector('.jinput');
+  if (inp) {
+    const summary = jobSummary(j);
+    if (inp.textContent !== summary) inp.textContent = summary;
+    if (inp.title !== (j.input || '')) inp.title = j.input || '';
+  }
+}
+
 function renderJobList(container, list, expandable) {
   if (!list.length) {
+    container.dataset.sig = '';
     container.innerHTML = `<div class="empty"><span class="arrow">↓ 投喂链接</span>
       <div class="big">${page === 'board' ? '流水线还没有开工' : '没有这类任务'}</div>
       <div class="small">${page === 'board' ? '粘贴一个视频链接，回车即开：下载 → 转写 → 选高光 → 切片 → 审核 → 发布' : '切个筛选看看其他类型'}</div></div>`;
     return;
   }
-  container.innerHTML = list.map(j => `
-    <div class="job" id="job-${j.id}">
+  // 结构复用（2026-10-28 修）：旧版每次轮询都 container.innerHTML = 全量重建，
+  // #detail-xxx 成了新节点、dataset.dsig 随之丢失——下面的“详情差分”永远判不等，
+  // 展开里的 <video> 每 2.5 秒被替换一次，播放位置归零（注释写了差分但从不生效）。
+  // 现在：任务 id 序列未变就只原地同步徽标/轨道/摘要，detail 子树（含 <video>）完全不动。
+  const sig = list.map(j => j.id).join('|');
+  if (container.dataset.sig === sig) {
+    list.forEach(j => syncJobRow(container, j));
+  } else {
+    container.dataset.sig = sig;
+    container.innerHTML = list.map(j => `
+    <div class="job" data-jid="${esc(j.id)}">
       <div class="job-row" onclick="toggle('${j.id}')">
         <span class="kind ${j.kind}">${j.kind}</span>
         <span class="jid">${j.id}</span>
@@ -1357,17 +1502,17 @@ function renderJobList(container, list, expandable) {
       </div>
       <div class="detail" id="detail-${j.id}"></div>
     </div>`).join('');
+  }
   if (openId) {
     const el = document.getElementById('detail-' + openId);
     const job = jobs.find(j => j.id === openId);
     if (el && job) {
       el.classList.add('open');
-      // 详情差分：2.5s 轮询每次重建会把展开里的 <video> 反复替换、打断播放
-      // （同审核台问题）。已渲染且任务状态未变则不重建——日志走 SSE 增量追加；
+      // 详情差分：状态/阶段/进度未变就不重建（日志走 SSE 增量追加）；
       // 仅任务状态变化（如 running→review 出切片结果）才重渲染。
-      const sig = job.status + ':' + (job.stage || '') + ':' + job.progress;
-      if (el.dataset.dsig !== sig) {
-        el.dataset.dsig = sig;
+      const dsig = job.status + ':' + (job.stage || '') + ':' + job.progress;
+      if (el.dataset.dsig !== dsig) {
+        el.dataset.dsig = dsig;
         renderDetailBody(el, job);
       }
     }
@@ -1478,6 +1623,12 @@ function dubCard(job, r) {
 }
 function renderDetailBody(el, job) {
   if (!el || !job) return;
+  // 日志防截断覆盖（2026-10-28）：列表接口 GET /api/jobs 只回传日志尾部 2000 字符
+  // （省带宽），而详情里的日志来自上一次 fetch 全量或 SSE 增量。直接拿列表里的
+  // 截断版重建会把已展开的历史日志“变短”。规则：新日志比现有短就不覆盖。
+  const oldPre = el.querySelector('pre.log');
+  const oldLog = oldPre ? oldPre.textContent : '';
+  const newLog = job.log || '';
   let extra = '';
   try {
     const r = JSON.parse(job.result || '{}');
@@ -1493,10 +1644,11 @@ function renderDetailBody(el, job) {
       extra = '<h4>切片成品（' + r.clips.length + '）</h4>' + clipsGrid(job, r);
     }
   } catch (e) {}
+  const shown = newLog.length >= oldLog.length ? newLog : oldLog;
   el.innerHTML = `
     ${job.error ? '<div class="err-line">✗ ' + esc(job.error) + '</div>' : ''}
     <h4>运行日志</h4>
-    <pre class="log">${esc(job.log || '（等待输出…）')}</pre>
+    <pre class="log">${esc(shown || '（等待输出…）')}</pre>
     ${extra}`;
   const pre = el.querySelector('pre.log');
   if (pre) pre.scrollTop = pre.scrollHeight;

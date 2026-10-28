@@ -1007,6 +1007,7 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 	engines := map[string]bool{
 		"yt-dlp":   cfg.Engines.YtDlp != "",
 		"ffmpeg":   cfg.Engines.FFmpeg != "",
+		"ffprobe":  cfg.Engines.Probe != "", // 2026-10-28 补：ffprobe 缺失会让高光时长/分段探测降级，旧版不报
 		"biliup":   cfg.Engines.Biliup != "",
 		"whisper":  cfg.Engines.ASR.Binary != "" && cfg.Engines.ASR.Model != "",
 		"deepseek": cfg.LLM.APIKey != "",

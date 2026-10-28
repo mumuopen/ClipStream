@@ -1,7 +1,7 @@
 # HANDOFF — ClipStream 交接文档
 
 > 新 agent 从这里开始。本文档记录"当前活状态"与接手路径；设计演进史读 CHANGELOG（倒序），运维全貌读 `temp_server\部署说明.txt`。
-> 最后更新：2026-10-28（v0.6.3）
+> 最后更新：2026-10-28（v0.6.4）
 
 ## 项目一句话
 
@@ -10,7 +10,7 @@ ClipStream：Go 编写的直播切片自动发布平台（直播监控→分段�
 
 ## 接手路径（按顺序）
 
-1. **CHANGELOG.md 倒序读最近三版**（0.6.3/0.6.2/0.6.1）——每段都带事故背景，是当前架构"为什么长这样"的最快入口
+1. **CHANGELOG.md 倒序读最近三版**（0.6.4/0.6.3/0.6.2）——每段都带事故背景，是当前架构"为什么长这样"的最快入口
 2. **代码主链**（注释密度极高，设计决策与事故教训全部写在注释里，改代码前必读）：
    - `cmd/clipstream/main.go` — 发布泵 `pumpTick`、四闸 `publishThrottled`、调度 `scheduleTicker`
    - `internal/store/store.go` — 全部表结构与迁移（幂等 ALTER）、清理三闸、风控冷却
@@ -20,10 +20,10 @@ ClipStream：Go 编写的直播切片自动发布平台（直播监控→分段�
 
 ## 当前活状态（2026-10-28）
 
-- 版本 **0.6.3**，Release v0.6.3 = Latest；`temp_server\bin\` 双 exe 已同步
+- 版本 **0.6.4**，Release v0.6.4 = Latest；`temp_server\bin\` 双 exe 已同步
 - **服务器已停 serve**（风控冷却中）：B站账号 10-24 触发 137022"投稿过于频繁"（详见 CHANGELOG 0.6.1 背景）
 - **服务器待办**（用户自己执行，agent 不碰服务器）：
-  1. 换血 `temp_server\bin\` 双 exe（0.6.3）；config.yaml **按需**覆盖（已调过的发布节奏不要整包覆盖）
+  1. 换血 `temp_server\bin\` 双 exe（0.6.4）；config.yaml **按需**覆盖（已调过的发布节奏不要整包覆盖）
   2. 看板 → 发布中心 → 一键清理 → 选【确定】连待发池清空（老 pending 占着背压水位）
   3. 风控冷却过了再开：`active_hours` 填保守窗口、`min_interval_min: 30-60`、`daily_max: 9-20`
   4. 观察熔断链路首次真实触发（通知+账号卡徽标）
