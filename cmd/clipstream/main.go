@@ -37,7 +37,7 @@ import (
 	"chopperbot/internal/web"
 )
 
-const version = "0.6.4"
+const version = "0.6.5"
 
 func main() {
 	log.SetFlags(log.LstdFlags)

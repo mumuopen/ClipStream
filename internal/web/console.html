@@ -527,6 +527,62 @@ const I18N = {
     set_nt_on: 'pushme', set_nt_url: '地址', set_nt_key: 'push_key',
     set_llm_base: '接口地址', set_llm_model: '模型', set_llm_think: '思考模式',
     set_think_off: '关（快·省）', set_think_on: '开（深度）', set_ph_words: '违禁词A,违禁词B',
+    /* 任务行摘要（列表每行都显示） */
+    sum_publish: '发布 {clip} → {platforms}', sum_publish_dry: '发布 {clip} → {platforms}（演练）',
+    sum_subtitle: '字幕 {clip}（{style}）', sum_style_zh: '纯中文', sum_style_bi: '双语',
+    sum_dub: '配音 {clip}',
+    err_create: '创建失败：', err_add: '添加失败：', err_sub: '创建字幕任务失败：', err_dub: '创建配音任务失败：',
+    err_pool: '存入待发池失败：', err_del: '删除失败：',
+    pub_need_platform: '至少选择一个发布平台', pool_need_title: '标题必填',
+    pub_throttled: '发布被节奏保护拦下：',
+    pub_throttled_risk: '账号正在平台限流冷却中，强行发布只会把冷却翻倍（24→48→96h，封顶 7 天）。\n建议等冷却到期，或先在「发布中心」确认平台投稿已恢复正常再手动恢复。',
+    pub_throttled_inflight: '同一账号还有上传未完成的发布任务，等它跑完即可（在「任务」页看进度）。这闸不必也不建议调大。',
+    pub_throttled_interval: '距上次发布还不够久。确需提前，可到「设置」页临时调小发布间隔（设 0 解除）。',
+    /* ── 卡片与详情（2026-10-28 补齐：切 EN 后仍全中文） ── */
+    btn_publish: '发布', btn_sub: '加字幕', btn_dub: '配音', btn_dub_narr: '配音解说',
+    btn_download: '下载', untitled: '未命名', score: '评分',
+    sub_done: '字幕成品 · {n} 条 · {style}', dub_done: '配音成品 · {voice} · 解说稿 {n} 字',
+    detail_log: '运行日志', detail_log_wait: '（等待输出…）',
+    detail_pub: '发布结果', detail_pub_dry: '发布结果（演练）',
+    detail_sub: '字幕成品', detail_dub: '配音成品', detail_clips: '切片成品（{n}）',
+    empty_board_big: '流水线还没有开工', empty_tasks_big: '没有这类任务',
+    empty_board_small: '粘贴一个视频链接，回车即开：下载 → 转写 → 选高光 → 切片 → 审核 → 发布',
+    empty_tasks_small: '切个筛选看看其他类型',
+    del_job_confirm: '删除任务 {id}？（文件保留在 data/jobs/）',
+    cfg_saved: '已保存 ✓', cfg_save_fail: '保存失败：', cfg_save_all: '保存全部配置',
+    set_asr_bin: '转写程序', set_asr_model: '转写模型',
+    barrage_hint: '直播时自动统计弹幕（每 5 秒一桶）——弹幕高峰一般就是切片高光的候选位置。',
+    barrage_axis: '弹幕/5s',
+    pool_remove_confirm: '移出内容池？（不影响源切片）',
+    all_platforms: '全部',
+    m5_int_val: '{n} min（±5% 抖动）', m5_count_val: '{n} 条',
+    m5_pool_count: '待发池 {n} 条 — 窗口内自动匀速发出', m5_retry_tag: '重试 {n}/3',
+    lbl_cover: '封面', lbl_nocover: '无封面',
+    pub_no_account: '（还没有可用的B站账号，先去发布中心扫码添加）',
+    rv_discard_n: '（该任务的 {n} 个切片将一起移除）',
+    lg_name_rule: '账号名仅限中英文/数字/下划线/连字符（≤32字）',
+    plat_bilibili: 'B站', plat_douyin: '抖音', lg_title: '扫码登录 {plat}',
+    lg_scan_dy: '打开抖音 App → 首页右上角扫一扫', lg_scan_bili: '打开 B站 App → 首页右上角扫一扫',
+    lg_retry_suffix: '（点「刷新二维码」重试）',
+    lg_boot_tip: '首次出码约 20-30 秒：后台正在启动无头浏览器打开抖音登录页，桌面不会弹窗，请稍候',
+    a11y_stage: '阶段',
+    tip_bphigh: '待发池 pending ≥ 此值时暂停录制与送切（0=关闭背压）',
+    tip_bplow: '待发池降回此值以下恢复录制（须低于触发水位）',
+    tip_usage: 'ClipStream 数据目录最多占用整盘百分比（默认 50 = 只用一半；0=不启用）',
+    tip_keep: '已发布切片成品目录保留天数，到期自动清理（0=不清）',
+    tip_hours: '窗口外不派发（夜里发没人看）；空=全天；支持跨夜如 22:00-06:00',
+    tip_interval: '同一账号两次发布的最小间隔（0=不限）；叠加 ±5% 随机抖动',
+    tip_daily: '每账号每天最多发布条数（0=不限）；9 条×10min ≈ 90 分钟发完当日配额',
+    tip_inflight: '同一账号同时执行中的发布任务上限（0=不限）——上传慢时防多条并发',
+    tip_riskcd: '平台限流（投稿过于频繁）触发熔断的基础冷却时长；连续触发翻倍，上限 7 天；0=默认 24',
+    tip_purge: '清理已发布/已退池条目与终态历史任务（含切片产物目录）',
+    tip_riskbadge: '平台限流熔断：冷却期间不派发，到点自动恢复',
+    cmd_input_ph: 'URL或路径', empty_arrow: '投喂链接',
+
+
+
+    pub_throttled_daily: '该账号今日配额已用完。确需多发，可到「设置」页临时调大每日上限（设 0 解除）。',
+    err_publish_job: '创建发布任务失败：',
   },
   en: {
     nav_work: 'Workspace', nav_collect: 'Collect', nav_edit: 'Edit', nav_publish: 'Publish', nav_sys: 'System',
@@ -625,6 +681,61 @@ const I18N = {
     set_nt_on: 'pushme', set_nt_url: 'URL', set_nt_key: 'push_key',
     set_llm_base: 'Base URL', set_llm_model: 'Model', set_llm_think: 'Thinking',
     set_think_off: 'off (fast, cheap)', set_think_on: 'on (deeper)', set_ph_words: 'badwordA,badwordB',
+    sum_publish: 'publish {clip} -> {platforms}', sum_publish_dry: 'publish {clip} -> {platforms} (dry run)',
+    sum_subtitle: 'subtitles {clip} ({style})', sum_style_zh: 'zh only', sum_style_bi: 'bilingual',
+    sum_dub: 'dub {clip}',
+    err_create: 'Create failed: ', err_add: 'Add failed: ', err_sub: 'Create subtitle job failed: ', err_dub: 'Create dub job failed: ',
+    err_pool: 'Failed to add to pool: ', err_del: 'Delete failed: ',
+    pub_need_platform: 'Select at least one platform', pool_need_title: 'Title is required',
+    pub_throttled: 'Blocked by publish pacing guard:',
+    pub_throttled_risk: 'The account is in a platform rate-limit cooldown. Forcing a publish only doubles the cooldown (24->48->96h, capped at 7 days).\nWait it out, or verify uploads work again in Publish Center before resuming manually.',
+    pub_throttled_inflight: 'An upload for this account is still running; wait for it to finish (see Tasks). No need to raise this limit.',
+    pub_throttled_interval: 'Not enough time since the last publish. If you really need to go sooner, lower the interval in Settings temporarily (0 = off).',
+    btn_publish: 'Publish', btn_sub: 'Subtitles', btn_dub: 'Dub', btn_dub_narr: 'Dub narration',
+    btn_download: 'Download', untitled: 'Untitled', score: 'score',
+    sub_done: 'Subtitles · {n} lines · {style}', dub_done: 'Dub · {voice} · script {n} chars',
+    detail_log: 'Run log', detail_log_wait: '(waiting for output...)',
+    detail_pub: 'Publish result', detail_pub_dry: 'Publish result (dry run)',
+    detail_sub: 'Subtitle output', detail_dub: 'Dub output', detail_clips: 'Clips ({n})',
+    empty_board_big: 'The pipeline has not started yet', empty_tasks_big: 'No jobs of this kind',
+    empty_board_small: 'Paste a video link and press Enter: download -> transcribe -> highlight -> clip -> review -> publish',
+    empty_tasks_small: 'Try another filter',
+    del_job_confirm: 'Delete job {id}? (files stay in data/jobs/)',
+    cfg_saved: 'Saved', cfg_save_fail: 'Save failed: ', cfg_save_all: 'Save all settings',
+    set_asr_bin: 'ASR binary', set_asr_model: 'ASR model',
+    barrage_hint: 'Barrage is counted live (one bucket per 5s) -- barrage peaks are usually where the good highlights are.',
+    barrage_axis: 'msgs/5s',
+    pool_remove_confirm: 'Remove from pool? (source clip is untouched)',
+    all_platforms: 'all',
+    m5_int_val: '{n} min (+/-5% jitter)', m5_count_val: '{n} items',
+    m5_pool_count: 'Pending pool: {n} items -- auto-published at a steady pace inside the window', m5_retry_tag: 'retry {n}/3',
+    lbl_cover: 'cover', lbl_nocover: 'no cover',
+    pub_no_account: '(no Bilibili account yet -- add one via QR in Publish Center)',
+    rv_discard_n: ' ({n} clips of this job will be removed too)',
+    lg_name_rule: 'Letters/digits/underscore/hyphen only (max 32 chars)',
+    plat_bilibili: 'Bilibili', plat_douyin: 'Douyin', lg_title: 'QR login - {plat}',
+    lg_scan_dy: 'Open the Douyin app -> scan from the top right of the home screen',
+    lg_scan_bili: 'Open the Bilibili app -> scan from the top right of the home screen',
+    lg_retry_suffix: ' (click Refresh QR to retry)',
+    lg_boot_tip: 'First QR takes ~20-30s: a headless browser is opening the Douyin login page in the background (no window pops up), please wait',
+    a11y_stage: 'stage',
+    tip_bphigh: 'Pause recording and clip dispatch while the pending pool reaches this size (0 = off)',
+    tip_bplow: 'Resume recording once the pending pool drops below this (must be lower than pool high)',
+    tip_usage: 'Max share of the disk the ClipStream data dir may use (default 50 = half; 0 = off)',
+    tip_keep: 'Days to keep published clip output dirs before cleanup (0 = never)',
+    tip_hours: 'Do not dispatch outside this window (nobody watches at night); empty = all day; supports overnight like 22:00-06:00',
+    tip_interval: 'Minimum gap between two publishes for one account (0 = no limit); plus +/-5% jitter',
+    tip_daily: 'Max publishes per account per day (0 = no limit); 9 clips x 10min ~ 90 min to finish the daily quota',
+    tip_inflight: 'Max concurrent publish jobs per account (0 = no limit) -- protects against parallel uploads when uploads are slow',
+    tip_riskcd: 'Base cooldown when the platform rate limits you; doubles per consecutive hit, capped at 7 days; 0 = default 24',
+    tip_purge: 'Purge published/retired pool items and terminal jobs (including clip output dirs)',
+    tip_riskbadge: 'Platform rate-limit breaker: no dispatch during cooldown, auto-recovers when it expires',
+    cmd_input_ph: 'URL or path', empty_arrow: 'Feed a link',
+
+
+
+    pub_throttled_daily: 'The daily quota for this account is used up. To publish more, raise the daily max in Settings temporarily (0 = off).',
+    err_publish_job: 'Create publish job failed: ',
   },
 };
 let LANG = localStorage.getItem('clipstream_lang') || 'zh';
@@ -682,9 +793,15 @@ function jobSummary(j) {
   if (j.kind === 'clips') return j.input;
   try {
     const r = JSON.parse(j.input);
-    if (j.kind === 'publish') return `发布 ${r.clip || ''} → ${(r.platforms || []).join('/')}${r.dry_run ? '（演练）' : ''}`;
-    if (j.kind === 'subtitle') return `字幕 ${r.clip || ''}（${r.style === 'zh' ? '纯中文' : '双语'}）`;
-    if (j.kind === 'dub') return `配音 ${r.clip || ''}`;
+    const clip = r.clip || '';
+    if (j.kind === 'publish') {
+      const plats = (r.platforms || []).join('/');
+      return TF(r.dry_run ? 'sum_publish_dry' : 'sum_publish', { clip, platforms: plats });
+    }
+    if (j.kind === 'subtitle') {
+      return TF('sum_subtitle', { clip, style: T(r.style === 'zh' ? 'sum_style_zh' : 'sum_style_bi') });
+    }
+    if (j.kind === 'dub') return TF('sum_dub', { clip });
   } catch (e) {}
   return j.input;
 }
@@ -783,7 +900,7 @@ async function submitJob() {
     await fetchJSON('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input, kind: 'clips' }) });
     $('#input').value = '';
     refresh();
-  } catch (e) { alert('创建失败：' + e.message); }
+  } catch (e) { alert(T('err_create') + e.message); }
   $('#submit').disabled = false;
 }
 
@@ -934,7 +1051,7 @@ async function addWatch() {
     await fetchJSON('/api/live/watches', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
     $('#live-url').value = ''; // 表单不再被轮询重建，成功后显式清空
     refreshWatches();
-  } catch (e) { alert('添加失败：' + e.message); }
+  } catch (e) { alert(T('err_add') + e.message); }
 }
 async function delWatch(id) {
   if (!confirm(T('live_confirm_del'))) return;
@@ -966,20 +1083,20 @@ function renderSettings(el) {
           <label>${T('set_live_check')} <input id="cfg-live-check" type="number" min="5" style="width:60px"></label>
           <label>${T('set_live_seg')} <input id="cfg-live-seg" type="number" min="60" style="width:60px"></label>
           <label>${T('set_live_clip')} <input id="cfg-live-clip" type="checkbox" style="width:auto"></label>
-          <label>${T('set_live_high')} <input id="cfg-live-bphigh" type="number" min="0" style="width:55px" title="待发池 pending ≥ 此值时暂停录制与送切（0=关闭背压）"></label>
-          <label>${T('set_live_low')} <input id="cfg-live-bplow" type="number" min="0" style="width:55px" title="待发池降回此值以下恢复录制（须低于触发水位）"></label>
+          <label>${T('set_live_high')} <input id="cfg-live-bphigh" type="number" min="0" style="width:55px" title="${T('tip_bphigh')}"></label>
+          <label>${T('set_live_low')} <input id="cfg-live-bplow" type="number" min="0" style="width:55px" title="${T('tip_bplow')}"></label>
           <label>${T('set_rt_on')} <input id="cfg-rt-on" type="checkbox" style="width:auto"></label>
           <label>${T('set_rt_days')} <input id="cfg-rt-days" type="number" min="1" style="width:60px"></label>
           <label>${T('set_rt_consumed')} <input id="cfg-rt-consumed" type="number" min="0" style="width:60px"></label>
           <label>${T('set_rt_free')} <input id="cfg-rt-free" type="number" min="1" max="95" style="width:60px"></label>
-          <label>${T('set_rt_usage')} <input id="cfg-rt-usage" type="number" min="0" max="95" style="width:60px" title="ClipStream 数据目录最多占用整盘百分比（默认 50 = 只用一半；0=不启用）"></label>
-          <label>${T('set_rt_keep')} <input id="cfg-rt-keep" type="number" min="0" max="90" style="width:60px" title="已发布切片成品目录保留天数，到期自动清理（0=不清）"></label>
+          <label>${T('set_rt_usage')} <input id="cfg-rt-usage" type="number" min="0" max="95" style="width:60px" title="${T('tip_usage')}"></label>
+          <label>${T('set_rt_keep')} <input id="cfg-rt-keep" type="number" min="0" max="90" style="width:60px" title="${T('tip_keep')}"></label>
           <label>${T('set_rt_min')} <input id="cfg-rt-min" type="number" min="5" style="width:60px"></label>
-          <label>${T('set_pub_hours')} <input id="cfg-pub-hours" style="width:100px" placeholder="10:00-23:00" title="窗口外不派发（夜里发没人看）；空=全天；支持跨夜如 22:00-06:00"></label>
-          <label>${T('set_pub_interval')} <input id="cfg-pub-interval" type="number" min="0" max="1440" style="width:65px" title="同一账号两次发布的最小间隔（0=不限）；叠加 ±5% 随机抖动"></label>
-          <label>${T('set_pub_daily')} <input id="cfg-pub-daily" type="number" min="0" max="200" style="width:55px" title="每账号每天最多发布条数（0=不限）；9 条×10min ≈ 90 分钟发完当日配额"></label>
-          <label>${T('set_pub_inflight')} <input id="cfg-pub-inflight" type="number" min="0" max="50" style="width:55px" title="同一账号同时执行中的发布任务上限（0=不限）——上传慢时防多条并发"></label>
-          <label>${T('set_pub_riskcd')} <input id="cfg-pub-riskcd" type="number" min="0" max="168" style="width:55px" title="平台限流（投稿过于频繁）触发熔断的基础冷却时长；连续触发翻倍，上限 7 天；0=默认 24"></label>
+          <label>${T('set_pub_hours')} <input id="cfg-pub-hours" style="width:100px" placeholder="10:00-23:00" title="${T('tip_hours')}"></label>
+          <label>${T('set_pub_interval')} <input id="cfg-pub-interval" type="number" min="0" max="1440" style="width:65px" title="${T('tip_interval')}"></label>
+          <label>${T('set_pub_daily')} <input id="cfg-pub-daily" type="number" min="0" max="200" style="width:55px" title="${T('tip_daily')}"></label>
+          <label>${T('set_pub_inflight')} <input id="cfg-pub-inflight" type="number" min="0" max="50" style="width:55px" title="${T('tip_inflight')}"></label>
+          <label>${T('set_pub_riskcd')} <input id="cfg-pub-riskcd" type="number" min="0" max="168" style="width:55px" title="${T('tip_riskcd')}"></label>
           <label>${T('set_nt_on')} <input id="cfg-nt-on" type="checkbox" style="width:auto"></label>
           <label>${T('set_nt_url')} <input id="cfg-nt-url" style="width:170px" placeholder="http://server:36591"></label>
           <label>${T('set_nt_key')} <input id="cfg-nt-key" style="width:140px"></label>
@@ -1004,13 +1121,13 @@ function renderSettings(el) {
           <label>ffmpeg <input id="cfg-eng-ffmpeg" style="width:220px" placeholder="./engines/ffmpeg.exe"></label>
           <label>ffprobe <input id="cfg-eng-ffprobe" style="width:220px" placeholder="./engines/ffprobe.exe"></label>
           <label>biliup <input id="cfg-eng-biliup" style="width:220px" placeholder="./engines/biliup.exe"></label>
-          <label>转写程序 <input id="cfg-eng-asr-bin" style="width:220px" placeholder="./engines/whisper-cli.exe"></label>
-          <label>转写模型 <input id="cfg-eng-asr-model" style="width:220px" placeholder="./engines/ggml-small.bin"></label>
+          <label>${T('set_asr_bin')} <input id="cfg-eng-asr-bin" style="width:220px" placeholder="./engines/whisper-cli.exe"></label>
+          <label>${T('set_asr_model')} <input id="cfg-eng-asr-model" style="width:220px" placeholder="./engines/ggml-small.bin"></label>
         </div>
       </details>
       <div class="set-card" style="grid-column:1/-1">
         <div style="margin-top:2px">
-          <button onclick="saveConfig()">保存全部配置</button>
+          <button onclick="saveConfig()">${T('cfg_save_all')}</button>
           <span class="hint" id="cfg-msg" style="margin-left:10px"></span>
         </div>
       </div>
@@ -1018,7 +1135,7 @@ function renderSettings(el) {
         <h4>${T('set_cmds')}</h4>
         <div class="cmd"><b>clipstream init</b>                ${T('set_cmd_init')}</div>
         <div class="cmd"><b>clipstream serve</b>               ${T('set_cmd_serve')}</div>
-        <div class="cmd"><b>clipstream run -i &lt;URL或路径&gt;</b>        ${T('set_cmd_run')}</div>
+        <div class="cmd"><b>clipstream run -i &lt;${T('cmd_input_ph')}&gt;</b>        ${T('set_cmd_run')}</div>
         <div class="cmd"><b>clipstream login --platform bilibili|douyin</b> ${T('set_cmd_login')}</div>
         <div class="cmd"><b>clipstream status</b>              ${T('set_cmd_status')}</div>
         <div style="margin-top:12px">
@@ -1123,8 +1240,8 @@ async function saveConfig() {
   if (!payload.engines.asr.binary && !payload.engines.asr.model) delete payload.engines.asr;
   try {
     const res = await fetchJSON('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    g('cfg-msg').textContent = res.note || '已保存 ✓';
-  } catch (e) { g('cfg-msg').textContent = '保存失败：' + e.message; }
+    g('cfg-msg').textContent = res.note || T('cfg_saved');
+  } catch (e) { g('cfg-msg').textContent = T('cfg_save_fail') + e.message; }
 }
 
 /* ═══════════ 页面：弹幕曲线 ═══════════ */
@@ -1163,7 +1280,7 @@ function renderBarrage(el) {
       <div class="ph-name">${T('barrage_total')}<span id="barrage-label"></span></div>
       <div class="ph-desc" id="barrage-stat" style="margin-bottom:12px"></div>
       <canvas id="barrage-canvas" style="width:100%;height:260px;background:var(--card);border:1px solid var(--line);border-radius:10px"></canvas>
-      <div class="hint" style="margin-top:10px">直播时自动统计弹幕（每 5 秒一桶）——弹幕高峰一般就是切片高光的候选位置。</div>
+      <div class="hint" style="margin-top:10px">${T('barrage_hint')}</div>
     </div>`;
   const sel = $('#barrage-room');
   if (sel) {
@@ -1208,7 +1325,7 @@ function drawBarrage(canvas, buckets) {
   if (pk) {
     const x = (pk.ts - t0) / span * (W - pad) + pad;
     ctx.fillStyle = '#e8e0d0'; ctx.font = '11px system-ui';
-    ctx.fillText('峰值 ' + peak, Math.max(4, x - 24), pad - 2);
+    ctx.fillText(T('barrage_peak') + ' ' + peak, Math.max(4, x - 24), pad - 2);
   }
   // 时间轴标签
   ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '11px system-ui';
@@ -1219,14 +1336,14 @@ function drawBarrage(canvas, buckets) {
     ctx.fillText(fmtClock(t), x - 24, H - 6);
   }
   ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = '11px system-ui';
-  ctx.fillText('弹幕/5s', 4, 12);
+  ctx.fillText(T('barrage_axis'), 4, 12);
 }
 
 /* ═══════════ 发布中心（发布账号 + 发布节奏 + 待发池）═══════════ */
 // 平台元数据：B站是自动发布全支持的唯一平台；抖音需桌面浏览器（仅显示）
 const PLAT_META = {
-  bilibili: { cn: 'B站', color: '#23ade5' },
-  douyin:   { cn: '抖音', color: '#8f8f96' },
+  bilibili: { cn: 'B站', en: 'Bilibili', color: '#23ade5' },
+  douyin:   { cn: '抖音', en: 'Douyin', color: '#8f8f96' },
 };
 let accounts = [];
 let poolItems = [];
@@ -1245,10 +1362,10 @@ async function refreshMatrix() {
   if ($('#acc-list')) renderMatrixLists(); else renderLabels($('#page'));
 }
 function platChipsFor(plats) {
-  return (plats || '').split(',').filter(Boolean).map(p => platBadge(p)).join('') || '<span class="tag">全部</span>';
+  return (plats || '').split(',').filter(Boolean).map(p => platBadge(p)).join('') || '<span class="tag">' + T('all_platforms') + '</span>';
 }
 async function delPoolItem(id) {
-  if (!confirm('移出内容池？（不影响源切片）')) return;
+  if (!confirm(T('pool_remove_confirm'))) return;
   try { await fetchJSON('/api/pool/' + id, { method: 'DELETE' }); refreshMatrix(); } catch (e) { alert(e.message); }
 }
 // 手动恢复风控冷却（触发计数保留：再触发冷却继续翻倍）
@@ -1294,8 +1411,10 @@ async function purgeHistory() {
   } catch (e) { alert(T('purge_fail') + e.message); }
 }
 function platBadge(p) {
-  const m = PLAT_META[p] || { cn: p, color: '#888' };
-  return `<span class="plat" style="background:${m.color}22;color:${m.color};border:1px solid ${m.color}55">${m.cn}</span>`;
+  const m = PLAT_META[p] || { cn: p, en: p, color: '#888' };
+  // 平台名按当前语言选（2026-10-28）：旧版只存中文名，英文界面下仍显“B站/抖音”
+  const label = LANG === 'en' ? (m.en || m.cn) : m.cn;
+  return `<span class="plat" style="background:${m.color}22;color:${m.color};border:1px solid ${m.color}55">${label}</span>`;
 }
 function tagChips(s) {
   return (s || '').split(',').filter(Boolean).map(t => `<span class="tag">${esc(t)}</span>`).join('') || `<span class="tag dim">${T('m5_unlabel')}</span>`;
@@ -1322,7 +1441,7 @@ function renderLabels(el) {
 
       <div class="set-panel m5-rule">
         <h4>${T('m5_pool_title')}<span class="hint">${T('m5_sch_hint')}</span>
-          <button class="b-login" style="float:right;margin-top:-4px" title="清理已发布/已退池条目与终态历史任务（含切片产物目录）" onclick="purgeHistory()">${T('m5_purge_btn')}</button></h4>
+          <button class="b-login" style="float:right;margin-top:-4px" title="${T('tip_purge')}" onclick="purgeHistory()">${T('m5_purge_btn')}</button></h4>
         <div class="acc-list" id="pool-list"></div>
       </div>
 
@@ -1354,7 +1473,7 @@ function renderMatrixLists() {
       <div class="acc-top">${platBadge(a.platform)}<b>${esc(a.name)}</b>
         <span class="acc-star" title="${T('m5_prio')}">${'★'.repeat(Math.max(1, Math.min(5, Math.ceil((a.priority || 0) / 2))))}</span>
         <span class="badge ${state}">${label}</span>
-        ${riskLeft > 0 ? `<span class="badge failed" title="平台限流熔断：冷却期间不派发，到点自动恢复">⏸ ${T('m5_risk_badge')} ${fmtDur(riskLeft)}</span>
+        ${riskLeft > 0 ? `<span class="badge failed" title="${T('tip_riskbadge')}">⏸ ${T('m5_risk_badge')} ${fmtDur(riskLeft)}</span>
           <button class="b-login" onclick="resumePublish(${a.id})">${T('m5_risk_resume')}</button>` : ''}
         ${a.platform === 'bilibili' && needLogin ? `<button class="b-login" onclick="startLogin('${esc(a.platform)}','${esc(a.name)}')">${T('m5_login_btn')}</button>` : ''}
         ${a.platform === 'douyin' && needLogin ? `<button class="b-login" onclick="startLogin('douyin','${esc(a.name)}')">${T('m5_login_btn')}</button>` : ''}
@@ -1367,9 +1486,9 @@ function renderMatrixLists() {
   if (ri) {
     if (pubCfg) {
       const win = pubCfg.hours || T('m5_sch_allday');
-      const interval = pubCfg.interval > 0 ? pubCfg.interval + ' min（±5% 抖动）' : T('m5_sch_unlimited');
-      const daily = pubCfg.daily > 0 ? pubCfg.daily + ' 条' : T('m5_sch_unlimited');
-      const inflight = pubCfg.inflight > 0 ? pubCfg.inflight + ' 条' : T('m5_sch_unlimited');
+      const interval = pubCfg.interval > 0 ? TF('m5_int_val', { n: pubCfg.interval }) : T('m5_sch_unlimited');
+      const daily = pubCfg.daily > 0 ? TF('m5_count_val', { n: pubCfg.daily }) : T('m5_sch_unlimited');
+      const inflight = pubCfg.inflight > 0 ? TF('m5_count_val', { n: pubCfg.inflight }) : T('m5_sch_unlimited');
       const pend = (poolItems || []).filter(it => it.status === 'pending').length;
       const lvl = pubCfg.high > 0 ? (pend + ' / ' + pubCfg.high + (pend >= pubCfg.high ? '（' + T('m5_bp_hold') + '）' : '')) : String(pend);
       ri.innerHTML = `
@@ -1386,7 +1505,7 @@ function renderMatrixLists() {
   if (pm) {
     const pend = (poolItems || []).filter(it => it.status === 'pending').length;
     pm.innerHTML = pend > 0
-      ? `<div class="hint" style="margin-top:10px">待发池 ${pend} 条 — 窗口内自动匀速发出</div>`
+      ? `<div class="hint" style="margin-top:10px">${TF('m5_pool_count', { n: pend })}</div>`
       : '';
   }
 
@@ -1395,7 +1514,7 @@ function renderMatrixLists() {
   const POOL_ST = { pending: ['queued', 'm5_pool_pending'], dispatched: ['running', 'm5_pool_dispatched'], failed: ['failed', 'm5_pool_failed'] };
   $('#pool-list').innerHTML = (poolItems||[]).map(it => {
     const st = POOL_ST[it.status] || POOL_ST.pending;
-    const fails = (it.status === 'pending' && it.fails > 0) ? `<span class="tag" style="color:#e5484d">重试 ${it.fails}/3</span>` : '';
+    const fails = (it.status === 'pending' && it.fails > 0) ? `<span class="tag" style="color:#e5484d">${TF('m5_retry_tag', { n: it.fails })}</span>` : '';
     return `
     <div class="acc-card">
       <div class="acc-top"><span class="time-badge">${T('m5_pool_title')}</span><b title="${esc(it.clip)}">${esc(it.title)}</b>
@@ -1426,7 +1545,7 @@ function trackHTML(job) {
     nodeState = i => i < cur ? 'done' : i === cur ? 'fail' : '';
     segState = i => i < cur ? 'done' : '';
   }
-  let h = '<div class="track" role="img" aria-label="阶段 ' + (job.stage || '') + '">';
+  let h = '<div class="track" role="img" aria-label="' + T('a11y_stage') + ' ' + (job.stage || '') + '">';
   stages.forEach((s, i) => {
     if (i > 0) h += `<span class="seg ${segState(i - 1)}"></span>`;
     h += `<span class="node ${nodeState(i)}" title="${s}"></span>`;
@@ -1475,9 +1594,9 @@ function syncJobRow(container, j) {
 function renderJobList(container, list, expandable) {
   if (!list.length) {
     container.dataset.sig = '';
-    container.innerHTML = `<div class="empty"><span class="arrow">↓ 投喂链接</span>
-      <div class="big">${page === 'board' ? '流水线还没有开工' : '没有这类任务'}</div>
-      <div class="small">${page === 'board' ? '粘贴一个视频链接，回车即开：下载 → 转写 → 选高光 → 切片 → 审核 → 发布' : '切个筛选看看其他类型'}</div></div>`;
+    container.innerHTML = `<div class="empty"><span class="arrow">↓ ${T('empty_arrow')}</span>
+      <div class="big">${T(page === 'board' ? 'empty_board_big' : 'empty_tasks_big')}</div>
+      <div class="small">${T(page === 'board' ? 'empty_board_small' : 'empty_tasks_small')}</div></div>`;
     return;
   }
   // 结构复用（2026-10-28 修）：旧版每次轮询都 container.innerHTML = 全量重建，
@@ -1498,7 +1617,7 @@ function renderJobList(container, list, expandable) {
         <span class="badge ${j.status}">${statusCN(j.status)}</span>
         <span class="jtime">${fmtClock(j.createdAt)}</span>
         <span class="jinput" title="${esc(j.input)}">${esc(jobSummary(j))}</span>
-        <button class="del" title="删除" onclick="event.stopPropagation();delJob('${j.id}')">✕</button>
+        <button class="del" title="${T('btn_del')}" onclick="event.stopPropagation();delJob('${j.id}')">✕</button>
       </div>
       <div class="detail" id="detail-${j.id}"></div>
     </div>`).join('');
@@ -1565,18 +1684,18 @@ function clipHTML(job, c, idx) {
   const dur = Math.round(c.end - c.start);
   const acts = job.status === 'review' ? `
     <div class="acts">
-      <button class="b-pub" onclick="openPubModal('${job.id}', ${idx})">发布</button>
+      <button class="b-pub" onclick="openPubModal('${job.id}', ${idx})">${T('btn_publish')}</button>
       <button class="b-pool" onclick="openPoolModal('${job.id}', ${idx})">${T('rv_pool_btn')}</button>
-      <button class="b-sub" onclick="openSubModal('${job.id}', ${idx})">加字幕</button>
-      <button class="b-dub" onclick="openDubModal('${job.id}', ${idx})">配音</button>
+      <button class="b-sub" onclick="openSubModal('${job.id}', ${idx})">${T('btn_sub')}</button>
+      <button class="b-dub" onclick="openDubModal('${job.id}', ${idx})">${T('btn_dub')}</button>
       <button class="b-del" onclick="discardJob('${job.id}')">${T('rv_discard')}</button>
     </div>` : '';
   return `<div class="clip">
     <video controls preload="metadata" src="${file}" ${cover ? `poster="${cover}"` : ''}></video>
     <div class="meta">
-      <div class="title">${esc(c.title || '未命名')}</div>
-      <div class="info"><span>${fmtRange(c.start, c.end)} · ${dur}s${c.score ? ' · 评分' + Math.round(c.score) : ''}</span>
-      <a href="${file}" download>下载</a></div>
+      <div class="title">${esc(c.title || T('untitled'))}</div>
+      <div class="info"><span>${fmtRange(c.start, c.end)} · ${dur}s${c.score ? ' · ' + T('score') + Math.round(c.score) : ''}</span>
+      <a href="${file}" download>${T('btn_download')}</a></div>
       ${acts}
     </div>
   </div>`;
@@ -1601,10 +1720,10 @@ function subtitleCard(job, r) {
     <video controls preload="metadata" src="${f}" ${cover ? `poster="${cover}"` : ''}></video>
     <div class="meta">
       <div class="title">${esc(r.title || '')}</div>
-      <div class="info"><span>字幕成品 · ${r.segments} 条 · ${r.style === 'bilingual' ? '双语' : '纯中文'}</span><a href="${f}" download>下载</a></div>
+      <div class="info"><span>${TF('sub_done', { n: r.segments, style: T(r.style === 'bilingual' ? 'sum_style_bi' : 'sum_style_zh') })}</span><a href="${f}" download>${T('btn_download')}</a></div>
       <div class="acts">
-        <button class="b-pub" onclick="openPubModal('${job.id}', 0)">发布</button>
-        <button class="b-dub" onclick="openDubModal('${job.id}', 0)">配音解说</button>
+        <button class="b-pub" onclick="openPubModal('${job.id}', 0)">${T('btn_publish')}</button>
+        <button class="b-dub" onclick="openDubModal('${job.id}', 0)">${T('btn_dub_narr')}</button>
       </div>
     </div></div>`;
 }
@@ -1617,8 +1736,8 @@ function dubCard(job, r) {
     <video controls preload="metadata" src="${f}" ${cover ? `poster="${cover}"` : ''}></video>
     <div class="meta">
       <div class="title">${esc(r.title || '')}</div>
-      <div class="info"><span>配音成品 · ${esc(r.voice)} · 解说稿 ${r.script_len} 字</span><a href="${f}" download>下载</a></div>
-      <div class="acts"><button class="b-pub" onclick="openPubModal('${job.id}', 0)">发布</button></div>
+      <div class="info"><span>${TF('dub_done', { voice: esc(r.voice), n: r.script_len })}</span><a href="${f}" download>${T('btn_download')}</a></div>
+      <div class="acts"><button class="b-pub" onclick="openPubModal('${job.id}', 0)">${T('btn_publish')}</button></div>
     </div></div>`;
 }
 function renderDetailBody(el, job) {
@@ -1633,22 +1752,22 @@ function renderDetailBody(el, job) {
   try {
     const r = JSON.parse(job.result || '{}');
     if (job.kind === 'publish' && r.results) {
-      extra = '<h4>发布结果' + (r.dry_run ? '（演练）' : '') + '</h4>' + r.results.map(pr => `
+      extra = '<h4>' + T(r.dry_run ? 'detail_pub_dry' : 'detail_pub') + '</h4>' + r.results.map(pr => `
         <div class="pub-result ${pr.ok ? 'ok' : 'fail'}">${pr.ok ? '✔' : '✗'} <b>${esc(pr.platform)}</b>：${esc(pr.detail || '')}
         ${pr.screenshot ? `<img src="/api/files/${job.id}/${pr.screenshot}">` : ''}</div>`).join('');
     } else if (job.kind === 'subtitle' && r.subtitled) {
-      extra = '<h4>字幕成品</h4>' + subtitleCard(job, r);
+      extra = '<h4>' + T('detail_sub') + '</h4>' + subtitleCard(job, r);
     } else if (job.kind === 'dub' && r.dubbed) {
-      extra = '<h4>配音成品</h4>' + dubCard(job, r);
+      extra = '<h4>' + T('detail_dub') + '</h4>' + dubCard(job, r);
     } else if (r.clips && r.clips.length) {
-      extra = '<h4>切片成品（' + r.clips.length + '）</h4>' + clipsGrid(job, r);
+      extra = '<h4>' + TF('detail_clips', { n: r.clips.length }) + '</h4>' + clipsGrid(job, r);
     }
   } catch (e) {}
   const shown = newLog.length >= oldLog.length ? newLog : oldLog;
   el.innerHTML = `
     ${job.error ? '<div class="err-line">✗ ' + esc(job.error) + '</div>' : ''}
-    <h4>运行日志</h4>
-    <pre class="log">${esc(shown || '（等待输出…）')}</pre>
+    <h4>${T('detail_log')}</h4>
+    <pre class="log">${esc(shown || T('detail_log_wait'))}</pre>
     ${extra}`;
   const pre = el.querySelector('pre.log');
   if (pre) pre.scrollTop = pre.scrollHeight;
@@ -1656,7 +1775,7 @@ function renderDetailBody(el, job) {
 
 /* ═══════════ 删除 ═══════════ */
 async function delJob(id) {
-  if (!confirm('删除任务 ' + id + '？（文件保留在 data/jobs/）')) return;
+  if (!confirm(TF('del_job_confirm', { id }))) return;
   try { await fetchJSON('/api/jobs/' + id, { method: 'DELETE' }); if (openId === id) closeDetail(); refresh(); } catch (e) { alert(e.message); }
 }
 
@@ -1665,7 +1784,7 @@ function openPubModal(jobId, idx) { const it = clipCtx(jobId, idx); if (it) open
 async function openPubModalFor(ctx) {
   pubCtx = ctx;
   const c = ctx.clip;
-  $('#pub-meta').textContent = c.file + (c.cover ? ' ｜ 封面 ' + c.cover : ' ｜ 无封面');
+  $('#pub-meta').textContent = c.file + (c.cover ? ' ｜ ' + T('lbl_cover') + ' ' + c.cover : ' ｜ ' + T('lbl_nocover'));
   $('#pub-title').value = c.title || '';
   $('#pub-desc').value = '';
   $('#pub-tags').value = '';
@@ -1683,7 +1802,7 @@ async function fillPubAccounts() {
     // "默认账号(default)"占位——用户实测疑惑"我明明加了账号却不发"的元凶之一）
     html += mine.map((a, i) => `<option value="${esc(a.name)}"${i === 0 ? ' selected' : ''}>${esc(a.name)}${a.logged_in && a.status !== 'login_expired' ? '' : '（' + T('m5_login') + '）'}</option>`).join('');
   } catch (e) {}
-  if (!html) html = `<option value="">（还没有可用的B站账号，先去发布中心扫码添加）</option>`;
+  if (!html) html = `<option value="">${T('pub_no_account')}</option>`;
   sel.innerHTML = html;
 }
 function closePubModal() { $('#pub-bg').style.display = 'none'; pubCtx = null; }
@@ -1692,7 +1811,7 @@ async function submitPublish() {
   const platforms = [];
   if ($('#pub-bilibili').checked) platforms.push('bilibili');
   if ($('#pub-douyin').checked) platforms.push('douyin');
-  if (!platforms.length) { alert('至少选择一个发布平台'); return; }
+  if (!platforms.length) { alert(T('pub_need_platform')); return; }
   const req = {
     source_job: pubCtx.jobId, clip: pubCtx.clip.file, cover: pubCtx.clip.cover || '',
     title: $('#pub-title').value.trim() || (pubCtx.clip.title || ''),
@@ -1711,27 +1830,24 @@ async function submitPublish() {
     // 而在途上限与风控冷却两闸调那个没用——风控冷却期调快只会把冷却翻倍。
     if (msg.startsWith('429')) {
       const why = msg.replace(/^429\s*/, '');
+      // 后端 429 文案永远是中文（服务端不做 i18n）：这里按中文关键词分类，
+      // 但给用户的建议走 T()，英文界面下建议也是英文。
       let tip = '';
-      if (why.includes('风控冷却')) {
-        tip = '账号正在平台限流冷却中，强行发布只会把冷却翻倍（24→48→96h，封顶 7 天）。\n建议等冷却到期，或先在「发布中心」确认平台投稿已恢复正常再手动恢复。';
-      } else if (why.includes('在途')) {
-        tip = '同一账号还有上传未完成的发布任务，等它跑完即可（在「任务」页看进度）。这闸不必也不建议调大。';
-      } else if (why.includes('间隔')) {
-        tip = '距上次发布还不够久。确需提前，可到「设置」页临时调小发布间隔（设 0 解除）。';
-      } else if (why.includes('每日')) {
-        tip = '该账号今日配额已用完。确需多发，可到「设置」页临时调大每日上限（设 0 解除）。';
-      }
-      alert('发布被节奏保护拦下：\n' + why + (tip ? '\n\n' + tip : ''));
+      if (why.includes('风控冷却')) tip = T('pub_throttled_risk');
+      else if (why.includes('在途')) tip = T('pub_throttled_inflight');
+      else if (why.includes('间隔')) tip = T('pub_throttled_interval');
+      else if (why.includes('每日')) tip = T('pub_throttled_daily');
+      alert(T('pub_throttled') + '\n' + why + (tip ? '\n\n' + tip : ''));
       return;
     }
-    alert('创建发布任务失败：' + e.message);
+    alert(T('err_publish_job') + e.message);
   }
 }
 // 不采用：丢弃整个待审任务的全部切片（现状粒度：一次录制/下载的产物一起处理）
 async function discardJob(jobId) {
   const job = jobs.find(j => j.id === jobId);
   const n = (job && job.result) ? (() => { try { return (JSON.parse(job.result).clips || []).length; } catch (e) { return 0; } })() : 0;
-  if (!confirm(T('rv_discard_confirm') + (n > 1 ? `（该任务的 ${n} 个切片将一起移除）` : ''))) return;
+  if (!confirm(T('rv_discard_confirm') + (n > 1 ? TF('rv_discard_n', { n }) : ''))) return;
   try { await fetchJSON('/api/jobs/' + jobId, { method: 'DELETE' }); if (openId === jobId) closeDetail(); refresh(); } catch (e) { alert(e.message); }
 }
 /* ═══════════ 入池（错峰调度）═══════════ */
@@ -1759,7 +1875,7 @@ function openPoolModal(jobId, idx) {
   const it = clipCtx(jobId, idx); if (!it) return;
   const ctx = { jobId: it.sourceJob, clip: it.clip };
   poolCtx = ctx;
-  $('#pool-meta').textContent = ctx.clip.file + (ctx.clip.cover ? ' ｜ 封面 ' + ctx.clip.cover : ' ｜ 无封面');
+  $('#pool-meta').textContent = ctx.clip.file + (ctx.clip.cover ? ' ｜ ' + T('lbl_cover') + ' ' + ctx.clip.cover : ' ｜ ' + T('lbl_nocover'));
   $('#pool-title').value = ctx.clip.title || '';
   $('#pool-desc').value = '';
   $('#pool-tags').value = autoTags(ctx.clip.title); // 标题自动生成，用户可改
@@ -1777,7 +1893,7 @@ async function submitPool() {
     tags: $('#pool-tags').value.trim(),
     platforms: 'bilibili',
   };
-  if (!item.title) { alert('标题必填'); return; }
+  if (!item.title) { alert(T('pool_need_title')); return; }
   try {
     await fetchJSON('/api/pool', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item) });
     closePoolModal(); refreshMatrix();
@@ -1785,7 +1901,7 @@ async function submitPool() {
   } catch (e) {
     // 409 = 已在池（查重保护）：提示但不弹错误样式语义
     if (String(e.message).startsWith('409')) { closePoolModal(); alert(String(e.message).replace(/^409\s*/, '')); return; }
-    alert('入池失败：' + e.message);
+    alert(T('err_pool') + e.message);
   }
 }
 
@@ -1807,19 +1923,19 @@ async function startLogin(platform, account) {
         $('#login-bg').style.display = 'flex';
         stopLoginTimer();
         loginCtx = null; // 丢弃在途轮询响应（pollLogin 二段检查），防提示被覆盖
-        $('#login-state').textContent = '账号名仅限中英文/数字/下划线/连字符（≤32字）';
+        $('#login-state').textContent = T('lg_name_rule');
         return;
       }
       account = typed;
     }
     const res = await fetchJSON('/api/login/qr/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform, account: account || '' }) });
     loginCtx = { ...res, platform, account: account || '', renew };
-    const platCN = platform === 'douyin' ? '抖音' : 'B站';
-    $('#login-title').textContent = '扫码登录 ' + platCN;
+    const platCN = platform === 'douyin' ? T('plat_douyin') : T('plat_bilibili');
+    $('#login-title').textContent = TF('lg_title', { plat: platCN });
     $('#login-meta').textContent = account ? (platCN + ' · ' + account) : (platCN + ' · ' + T('m5_acc_qr_new'));
-    $('#login-scan-tip').textContent = platform === 'douyin' ? '打开抖音 App → 首页右上角扫一扫' : '打开 B站 App → 首页右上角扫一扫';
+    $('#login-scan-tip').textContent = T(platform === 'douyin' ? 'lg_scan_dy' : 'lg_scan_bili');
     const bootTip = $('#login-booting-tip');
-    if (platform === 'douyin') { bootTip.style.display = 'block'; bootTip.textContent = '首次出码约 20-30 秒：后台正在启动无头浏览器打开抖音登录页，桌面不会弹窗，请稍候'; }
+    if (platform === 'douyin') { bootTip.style.display = 'block'; bootTip.textContent = T('lg_boot_tip'); }
     else bootTip.style.display = 'none';
     $('#login-state').textContent = T('lg_running');
     $('#login-img').src = res.qr || ''; // B站同步返回；抖音 booting 后由 poll 送二维码
@@ -1846,7 +1962,7 @@ async function pollLogin() {
   if (st.state === 'waiting' || st.state === 'booting') { $('#login-state').textContent = st.message || T('lg_running'); return; }
   stopLoginTimer();
   if (st.state === 'expired') {
-    $('#login-state').textContent = st.message + '（点「刷新二维码」重试）';
+    $('#login-state').textContent = st.message + T('lg_retry_suffix');
     return;
   }
   if (st.state === 'error') { $('#login-state').textContent = (st.message || '').slice(0, 160); return; }
@@ -1873,7 +1989,7 @@ async function submitSubtitle() {
   try {
     await fetchJSON('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'subtitle', input: JSON.stringify(req) }) });
     closeSubModal(); refresh();
-  } catch (e) { alert('创建字幕任务失败：' + e.message); }
+  } catch (e) { alert(T('err_sub') + e.message); }
 }
 function openDubModal(jobId, idx) {
   const it = clipCtx(jobId, idx); if (!it) return;
@@ -1889,7 +2005,7 @@ async function submitDub() {
   try {
     await fetchJSON('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'dub', input: JSON.stringify(req) }) });
     closeDubModal(); refresh();
-  } catch (e) { alert('创建配音任务失败：' + e.message); }
+  } catch (e) { alert(T('err_dub') + e.message); }
 }
 
 /* ═══════════ 刷新循环 ═══════════ */
