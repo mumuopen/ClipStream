@@ -219,15 +219,16 @@ func dubReqClip(job *core.Job) string {
 	return req.Clip
 }
 
-// dubOutName clip_06.mp4 / clip_06_sub.mp4 → clip_06_dub.mp4
+// dubOutName 配音产物名：只换扩展名，不剥 _sub。
+// 旧版把 clip_06.mp4 与 clip_06_sub.mp4 都映射成 clip_06_dub.mp4——同一场直播
+// 先给原片配音、再给字幕版配音时，第二次静默覆盖第一次的产物（结果里还写着
+// 两条都成功）。
 func dubOutName(base string) string {
-	name := base
-	for _, suf := range []string{"_sub.mp4", ".mp4"} {
-		if strings.HasSuffix(name, suf) {
-			return strings.TrimSuffix(name, suf) + "_dub.mp4"
-		}
+	ext := filepath.Ext(base)
+	if ext == "" {
+		return base + "_dub.mp4"
 	}
-	return strings.TrimSuffix(name, filepath.Ext(name)) + "_dub.mp4"
+	return strings.TrimSuffix(base, ext) + "_dub" + ext
 }
 
 func clipStr(s string, n int) string {

@@ -1094,7 +1094,10 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 				job = j
 			})
 			if throttleMsg != "" {
-				httpError(w, 429, throttleMsg+"（防风控限流：手动发布同样受限；如需救急可在设置页临时调大间隔/上限参数）")
+				// 尾注中性化（2026-10-28）：旧版不论哪道闸都写“调大间隔/上限参数”，
+				// 而在途上限与风控冷却两闸调那个没用（风控冷却期调快只会把冷却翻倍）。
+				// 具体可行动建议由前端按原因分类给出
+				httpError(w, 429, throttleMsg+"（手动与自动发布同样受限，这是防风控保护）")
 				return
 			}
 			if buildErr != "" {

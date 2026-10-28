@@ -103,6 +103,34 @@ func hitBanned(s string, words []string) string {
 	return ""
 }
 
+// defaultPlatforms 自动入池的默认目标平台：优先 bilibili（保持既有行为不变），
+// 只有非 bilibili 账号时用该平台——旧版硬编码 "bilibili"，只配抖音账号的部署里
+// 条目永远路由不到账号（routeAccount 要求平台匹配），池永不下降 → 背压永不解除
+// → 录制与送切永久停摆，且 maybeNotifyNoMatch 一天只提醒一次。
+// 一个可用账号都没有时仍回退 "bilibili"（此时本来就发不出去，保持原行为）。
+func (env *Env) defaultPlatforms() string {
+	as, err := env.Store.ListAccounts()
+	if err != nil {
+		return "bilibili"
+	}
+	seen := map[string]bool{}
+	var order []string
+	for _, a := range as {
+		if a.Status != "ok" || a.Platform == "" || seen[a.Platform] {
+			continue
+		}
+		seen[a.Platform] = true
+		order = append(order, a.Platform)
+	}
+	if seen["bilibili"] {
+		return "bilibili"
+	}
+	if len(order) > 0 {
+		return order[0]
+	}
+	return "bilibili"
+}
+
 // applyAutoReview 在 stageFinalize 后执行：判定 + 入池 + 日志。
 // 返回 (auto入池数, 留人工数, 拒绝数)。
 func applyAutoReview(job *core.Job, env *Env) (auto, manual, rejected int) {
@@ -143,7 +171,7 @@ func applyAutoReview(job *core.Job, env *Env) (auto, manual, rejected int) {
 				Title:     v.Clip.Title,
 				Desc:      desc,
 				Tags:      deriveTags(v.Clip.Title, desc),
-				Platforms: "bilibili",
+				Platforms: env.defaultPlatforms(),
 				RoomID:    roomID,
 			}
 			if _, err := env.Store.AddPoolItem(item); err != nil {

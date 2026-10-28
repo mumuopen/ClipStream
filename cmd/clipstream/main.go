@@ -37,7 +37,7 @@ import (
 	"chopperbot/internal/web"
 )
 
-const version = "0.6.2"
+const version = "0.6.3"
 
 func main() {
 	log.SetFlags(log.LstdFlags)
@@ -487,6 +487,11 @@ func doServe(cfgPath string) error {
 		for _, j := range jobs {
 			if j.Status != core.StatusQueued && j.Status != core.StatusRunning {
 				continue
+			}
+			// ListJobs 的日志是截断过的（列表接口省带宽）：写回前必须取全量，
+			// 否则恢复动作会把该任务的历史日志截成尾部 2000 字符（2026-10-28）
+			if full, gerr := app.store.GetJob(j.ID); gerr == nil {
+				j = full
 			}
 			if j.Kind == "publish" {
 				j.Status = core.StatusFailed

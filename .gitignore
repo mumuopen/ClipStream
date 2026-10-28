@@ -1,12 +1,15 @@
 # 数据与产物
-data/
-bin/
-engines/
+# 注意：这些必须加前导斜杠（根目录锚定）。不带斜杠的 engines/ 会匹配任意层级，
+# 把 internal/engines/（源码包，main.go 依赖它）一起忽略——后果是仓库 clone 下来
+# go build ./... 直接编译不过，2026-10-28 修复。
+/data/
+/bin/
+/engines/
 *.exe
 *.log
 
 # 本地配置（含密钥，不入库）
-config.yaml
+/config.yaml
 .env
 
 # 临时文件

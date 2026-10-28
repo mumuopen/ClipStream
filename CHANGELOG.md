@@ -2,6 +2,118 @@
 
 ClipStream 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本（SemVer）。本文件使用中文记录。
 
+## [0.6.3] - 2026-10-28
+
+> 发布安全与挂机可靠性版：重复投稿三面封口 + 误停号收紧 + 背压补送闭环——全量代码审查后的修复批次
+
+### 背景
+
+0.6.2 上线后做了一次全量代码审查（后端核心 / 发布链 / 采集链 / 控制台），找到缺陷三类：
+
+1. **重复投稿面**：手动发布路径没有风控冷却闸；删一条已发布成功的任务会把池条目打回待发；
+   崩溃重启无条件回池。三条都能让同一个视频在那个有封禁史的 B 站号上出现两次。
+2. **误停号面**：`IsAuthError` 对 `-101`/`401`/`cookie`/`token` 做裸子串匹配，而 biliup
+   每次失败的输出都会回显 `-u ...\cookies.json`——网络超时、封面尺寸不符都会被判成登录失效
+   并**永久停号**；而抖音侧扫码成功从不把 status 改回 ok，一次误停就是永久停。
+3. **静默停摆面**：`data/jobs` 里发布成功的成品目录从未被“保留 3 天自动退役”清理过（判据把
+   `dispatched` 当“素材在役”，而发布成功后池条目永远停在 `dispatched`）→ 磁盘只进不出；
+   磁盘满后 `startSession` 建目录失败直接 `return`，不写 `last_error`、不推送，心跳照跳、
+   `/api/live/daemon` 照报 running，表现为整夜零字节且永不自愈。
+
+另有一批确定但尚未真实触发的问题：虎牙碎段 ≥1000 段时按字典序合并（时间轴错乱而 FLV 合法）、
+弹幕单帧畸形可 panic 打崩整个 daemon、审核台多任务切片标题串台、保存配置静默抹掉
+`preview_keywords`/`max_stale_sec`/`llm.proxy`。
+
+### 修复
+
+- **手动发布补风控冷却闸**（`web/server.go` `throttleReason`）：0.6.1 的熔断只在泵侧
+  `publishThrottled` 生效，web 侧漏了这一闸却注释写“与调度侧同语义”。冷却期内从审核台点一次
+  发布即可继续撞 137022，并让 `risk_pause_count` +1 把冷却 24h 翻成 48h——用户最常走的正是
+  手动路径。现为四闸同序：风控冷却 → 在途 → 间隔 → 每日上限。
+- **删任务不再无条件回池**（`deleteJob`）：旧实现只要 `kind==publish` 就把池条目打回 pending，
+  删一条已成功的任务＝把同一视频再发一遍；成功后 `platforms` 被 trim 成空串、泵又把空串当
+  bilibili，重发只打 B 站、最难察觉。现在只对 queued/running/canceled 回池，done/failed 不动。
+- **崩溃重启不回池**（`doServe`）：biliup 以 DETACHED_PROCESS 启动，父进程被杀后子进程仍可能
+  提交成功；旧逻辑无条件回池＝泵稍后重发。池条目一律留在 `dispatched` 等人工核对，通知直说
+  “先到平台侧核对再决定是否重新入池”。恢复前先 `GetJob` 取全量，避免把截断的列表日志写回。
+- **`IsAuthError` 收紧**（`publish/dispatch.go`）：数字码改边界正则 `(^|[^0-9])-101([^0-9]|$)`，
+  拉丁词只认具体短语（cookie 失效/过期/不存在、token expired、csrf 校验失败等），裸词（含
+  `401`/`cookie`/`token`）一律不认。测试补 6 条负例（原实现会把“分区 401 不存在”判成登录失效）。
+- **抖音扫码成功恢复 status**：`upsertAccount` 对已存在账号直接 return，`routeAccount` 又过滤
+  `status!=ok`——抖音账号一旦被误标 `login_expired`，重扫多少次也发不出去。补上 bilibili
+  分支早已有的那一行。
+- **成品退役解开死结**（`store.JobArtifactInUse` + `live/cleanup.go`）：判据改为“池中还有 pending
+  引用 + 仍有非终态任务引用”（与一键清理同口径），`dispatched` 不再算素材在役。
+- **背压补送闭环**（`live/daemon.go`）：旧版池满时只推一条“发布追平后自动恢复”的通知就 return，
+  分段既没送切也没人补送，最终被 `segments_days` 整目录删掉——通知里的承诺从没实现过。现在
+  跳过的会话登记到 `data/live/pending_clips.json`，背压解除后自动补送；送切成功写 `.queued`
+  标记防重复送切；登记文件跨 daemon 重启存活。磁盘治理把登记目录列入保护白名单。
+- **录制失败可见**（`startSession` / `runLoop`）：建目录失败写 `last_error` + 状态置 error + 推送；
+  拉流/取地址失败限频（30 分钟一次）写入 `last_error` 并报警，不再“录着但零字节”。
+- **素材停滞判定修正**（`segDirStale`）：不再把目录 mtime 当基线（每次失败重连新建空段都会刷新
+  它），且 0 字节空段不算“素材在流动”。“CDN 返回 200 但 body 立即 EOF”的冷流不再永远 recording。
+- **daemon panic 免疫**：tick 与 cleanup 两个 goroutine 都加 recover（旧版任一处 panic 直接杀死
+  整个守护进程，所有并发录制一起断且不执行 endSession）。
+- **段序按数字排**（`listSegFiles`）：Glob 返回字典序，`seg_%03d.flv` 到第 1000 段起
+  `seg_1000` 排在 `seg_999` 前；虎牙 5-15s 短连接挂机约 1.5 小时即破千段，合并产物时间轴错乱
+  且 FLV 合法、tag 数正确，不看画面发现不了。
+- **弹幕帧边界防御**（`danmaku.go`）：`headerLen` 由服务端下发（uint16 可达 65535），旧实现直接
+  `pkt[headerLen:]` 触发 panic。
+- **清理不再误删在途会话**（`cleanup.go`）：队列 `*.seg` 引用的会话目录与待送切登记目录
+  一律保留——`scanClipQueue` 是 10s 一条串行消费，一次下播送切 35 段要 6 分钟，窗口足够撞上
+  水位清理。
+- **`consumed_seg_days` 生效**：已送切（`.queued`）的会话按该值更积极清理。此前配置项一直
+  有注释却全仓无引用（空头承诺）。
+- **自动入池平台不再硬编码**（`autoreview.go` `defaultPlatforms`）：优先 bilibili（行为不变），
+  只配抖音账号时用 douyin。旧版硬编码导致“只有抖音账号”的部署池永不下降→背压永不解除→
+  录制与送切永久停摆。
+- **配音产物不再互相覆盖**（`dubOutName`）：旧版把 `clip_06.mp4` 与 `clip_06_sub.mp4` 都映射成
+  `clip_06_dub.mp4`，同一场直播先给原片配音再给字幕版配音时第二次静默覆盖第一次。
+- **入池查重扩大到已发布**（`AddPoolItem`）：`pending` 与 `dispatched` 都拦。旧版只查 pending，
+  发布成功后在审核台再点一次入池毫无拦截＝同一视频再发一遍。`failed`（已退池）不拦，重试合理。
+- **转写截断改按字符**（`maxTranscriptRunes`）：旧版 `sb.Len() > 8000` 按字节，中文 ≈2666 字，
+  而 600s 分段在游戏主播语速下可达 4000 字——后半场永远进不了候选集。改为 12000 字。
+- **引擎安装**：`engines install` 只缺 `ffprobe.exe` 时也能修（旧版只检查 ffmpeg.exe 就整体跳过）；
+  下载先写 `.part` 再改名，并校验 exe 的 MZ / zip 的 PK 文件头（旧版半截文件会被当成“已存在”永久钉死）。
+- **`/api/jobs` 日志截断**：列表只回传尾部 2000 字符（单条上限 200KB × 100 条，2.5s 一轮），
+  全量日志走 `GET /api/jobs/{id}` 与 SSE 增量。SQL 用 `substr(..., -N)` 按字符切，不劈裂 UTF-8。
+  注意：任何“列表→改状态→写回”的路径必须先 `GetJob` 取全量，否则会截掉历史日志（崩溃恢复已照此修）。
+- **`.gitignore` 误伤源码包**（重要）：`engines/` 不带前导斜杠会匹配任意层级，把
+  `internal/engines/`（`main.go` 依赖的安装器包）整个排除在仓库之外——**从 GitHub clone
+  下来 `go build ./...` 直接编译不过**。改为根锚定 `/engines/`（同时把 `/data/`、`/bin/`、
+  `/config.yaml` 一并锚定），`internal/engines` 现已入库。
+
+### 新增
+
+- 直播关注页常驻**录制守护状态灯**：daemon 未运行时红字提示“开播不会被录制”。此前 daemon 挂了
+  页面只显示“待开播”，提示语却说“每 60 秒检测一次开播”——用户会以为只是没开播，整晚不录。
+- 手动发布 429 按闸给可行动建议：风控冷却期明确写“强行发布只会把冷却翻倍”，不再对四闸统一
+  说“调大间隔/每日上限”（在途与冷却两闸调那个没用）。
+
+### 验证
+
+- 全量 `go build` / `go vet` / `go test ./...` 绿；前端 JS 过 `node --check`。
+- 新增测试：`JobArtifactInUse` 三态（dispatched 可退役 / pending 保留 / 非终态引用保留）、
+  `throttleReason` 风控闸与三闸回归、`deleteJob` 池联动三态、`listSegFiles` 段序（含 999/1000
+  边界）、弹幕畸形帧不 panic、背压补送（登记→补送→不重复送切）、`segDirStale` 空段不计入、
+  清理保护（队列引用 / 待送切登记 / consumed_seg_days）、`defaultPlatforms` 四态、
+  `dubOutName` 不冲突。
+- 拟真（隔离目录）：风控冷却期手动发布返回 429 且透出剩余时长与触发次数；配置往返后
+  `max_stale_sec`/`preview_keywords`/`risk_cooldown_hours`/`llm.proxy` 全部保留；崩溃现场数据
+  重启后池条目仍是 dispatched；一键清理预览与执行口径一致；成品退役三态符合预期。
+
+### 打包
+
+- `deploy/make-full-package.ps1` 重写：旧版从仓库根 `bin\` 取 exe（实测 `version` = 0.4.3，而
+  `temp_server\bin` 是当前版本），且依赖早已不存在的 `.temp\deploy-binary-stage`，跑到第 5 步必中断。
+  改为从 `temp_server\` 打包，排除 `config.yaml`/`data`/`log`，打包后校验二进制版本。
+- `temp_server\data` 与 `log\` 的本地测试残留已清空（18 个空 jobs 目录、0.4.3 时代日志、陈旧
+  `daemon.lock`/`heartbeat`、空 accounts 树），整包拖动不再污染服务器。
+
+### 未包含
+
+- **抖音发布链路**：仍是占位实现（扫码登录可用，发布未接）。本版不动它。
+
 ## [0.6.2] - 2026-10-25
 
 > 一键清理事故热修：审核台素材误删修复 + 清空待发池选项——10-25 服务器实测复盘产物

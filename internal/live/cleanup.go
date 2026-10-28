@@ -51,6 +51,7 @@ func RunCleanup(cfg *config.Config, st *store.Store, notifier *notify.Pushme) (C
 	if segDays <= 0 {
 		segDays = 7
 	}
+	consumedDays := rt.ConsumedSegDays // 已送切会话的更积极保留天数（000=不启用）
 	freePct := rt.MinFreePercent
 	if freePct <= 0 {
 		freePct = 10
@@ -70,6 +71,35 @@ func RunCleanup(cfg *config.Config, st *store.Store, notifier *notify.Pushme) (C
 	}
 
 	liveDir := filepath.Join(cfg.DataDir, "live")
+
+	// 队列引用保护（2026-10-28）：data/live/queue/*.seg 里登记的分段所属的会话目录
+	// 仍待 serve 消费——scanClipQueue 是 10s 一条串行消费，一次下播送切 35 段就要
+	// 6 分钟（虎牙碎段积压更久）。此时若磁盘低于水位，水位/占用清理会把排在最前面
+	// 的那个目录 RemoveAll，管线 Cut 就地失败（切片文件不存在）。
+	queuedDirs := map[string]bool{}
+	if qes, err := os.ReadDir(filepath.Join(liveDir, "queue")); err == nil {
+		for _, qe := range qes {
+			if qe.IsDir() || !strings.HasSuffix(qe.Name(), ".seg") {
+				continue
+			}
+			b, rerr := os.ReadFile(filepath.Join(liveDir, "queue", qe.Name()))
+			if rerr != nil {
+				continue
+			}
+			content := strings.TrimPrefix(strings.TrimSpace(string(b)), "\ufeff")
+			if parts := strings.SplitN(content, "\t", 2); len(parts) >= 1 && parts[0] != "" {
+				queuedDirs[filepath.Clean(filepath.Dir(parts[0]))] = true
+			}
+		}
+	}
+	// 待送切保护（背压期间下播、已登记等补送的会话）：素材尚未消化，同样不能当空壳删
+	for d := range PendingClipDirs(cfg.DataDir) {
+		queuedDirs[d] = true
+	}
+	protected := func(p string) bool {
+		cp := filepath.Clean(p)
+		return recordingDirs[p] || recordingDirs[cp] || queuedDirs[cp]
+	}
 	if _, err := os.Stat(liveDir); err == nil {
 		// ① 超期会话目录清理
 		entries, err := os.ReadDir(liveDir)
@@ -88,8 +118,17 @@ func RunCleanup(cfg *config.Config, st *store.Store, notifier *notify.Pushme) (C
 			}
 			p := filepath.Join(liveDir, e.Name())
 			sz := dirSize(p)
-			sessions = append(sessions, cleanupSession{path: p, ts: ts, size: sz})
-			if time.Since(ts) > time.Duration(segDays)*24*time.Hour && !recordingDirs[p] {
+			// 已送切（.queued 标记）的会话按 consumed_seg_days 更积极清理：
+			// 切片已完成使命，源分段留着只占盘。config 里这个字段一直有注释却
+			// 从未被引用（空头承诺），2026-10-28 接上。
+			keepDays := segDays
+			if consumedDays > 0 {
+				if _, serr := os.Stat(queuedMarker(p)); serr == nil {
+					keepDays = consumedDays
+				}
+			}
+			sessions = append(sessions, cleanupSession{path: p, ts: ts, size: sz, days: keepDays})
+			if time.Since(ts) > time.Duration(keepDays)*24*time.Hour && !protected(p) {
 				if err := os.RemoveAll(p); err == nil {
 					cst.DeletedSessions++
 					cst.FreedBytes += sz
@@ -118,7 +157,7 @@ func RunCleanup(cfg *config.Config, st *store.Store, notifier *notify.Pushme) (C
 		// 可回收会话（未超期、非录制中），最旧在前：水位与占用上限共用
 		var reclaimable []cleanupSession
 		for _, s := range sessions {
-			if time.Since(s.ts) <= time.Duration(segDays)*24*time.Hour && !recordingDirs[s.path] {
+			if time.Since(s.ts) <= time.Duration(s.days)*24*time.Hour && !protected(s.path) {
 				reclaimable = append(reclaimable, s)
 			}
 		}
@@ -204,6 +243,7 @@ type cleanupSession struct {
 	path string
 	ts   time.Time
 	size int64
+	days int // 本会话适用的保留天数（已送切 → consumed_seg_days）
 }
 
 func dropOldest(sessions []cleanupSession, stop func() bool) (deleted int, freed int64) {

@@ -17,6 +17,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,9 +37,10 @@ type Daemon struct {
 	store  *store.Store
 	notify *notify.Pushme
 
-	mu       sync.Mutex
-	sessions map[string]*liveSession // roomID → 录制会话
-	bpOn     bool                    // 池背压当前状态（tick 与会话收尾共写，mu 保护）
+	mu        sync.Mutex
+	sessions  map[string]*liveSession // roomID → 录制会话
+	bpOn      bool                    // 池背压当前状态（tick 与会话收尾共写，mu 保护）
+	pendingMu sync.Mutex              // 待送切登记文件（pending_clips.json）读写锁
 
 	ctx    context.Context
 	stopFn context.CancelFunc
@@ -51,6 +53,7 @@ type liveSession struct {
 	platform string
 	segDir   string
 	title    string
+	startAt  time.Time // 会话开始时刻（素材停滞兜底的基线：一个有效段都没写出来时从此刻算）
 segCount atomic.Int32
 	danmaku  danmakuCollector
 
@@ -95,7 +98,19 @@ func (d *Daemon) Start() {
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
-		d.tick() // 启动立即查一轮
+		// panic 免疫（2026-10-28）：旧版两个 goroutine 都没有 recover——弹幕解析、
+		// 清理目录遍历里任一处 panic 都会直接杀死整个 daemon 进程，所有并发录制
+		// 一起断且不会执行 endSession（分段不入队列）。scheduleTicker 早已这么做了，
+		// 录制侧一直漏着。recover 放在单次 tick 内：崩一次不杀守护，下一轮继续。
+		safeTick := func(what string, fn func()) {
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Printf("[daemon] %s panic 已拦截（继续运行）: %v\n%s\n", what, r, debug.Stack())
+				}
+			}()
+			fn()
+		}
+		safeTick("tick", d.tick) // 启动立即查一轮
 		d.heartbeat()
 		t := time.NewTicker(interval)
 		defer t.Stop()
@@ -104,7 +119,7 @@ func (d *Daemon) Start() {
 			case <-d.ctx.Done():
 				return
 			case <-t.C:
-				d.tick()
+				safeTick("tick", d.tick)
 				d.heartbeat()
 			}
 		}
@@ -113,6 +128,20 @@ func (d *Daemon) Start() {
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
+		safeClean := func() {
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Printf("[daemon] cleanup panic 已拦截（继续运行）: %v\n%s\n", r, debug.Stack())
+				}
+			}()
+			if !d.cfg.Retention.Enabled {
+				return
+			}
+			if st, err := RunCleanup(d.cfg, d.store, d.notify); err == nil && (st.DeletedSessions > 0 || st.LowDisk || st.DeletedJobs > 0) {
+				fmt.Printf("[cleanup] 清理完成：删除 %d 会话 + %d 成品目录，释放 %.2f GB，磁盘剩余 %.0f%%\n",
+					st.DeletedSessions, st.DeletedJobs, float64(st.FreedBytes)/1e9, st.FreePercent)
+			}
+		}
 		mins := d.cfg.Retention.CheckMinutes
 		if mins <= 0 {
 			mins = 60
@@ -130,13 +159,7 @@ func (d *Daemon) Start() {
 			case <-d.ctx.Done():
 				return
 			case <-t.C:
-				if !d.cfg.Retention.Enabled {
-					continue
-				}
-				if st, err := RunCleanup(d.cfg, d.store, d.notify); err == nil && (st.DeletedSessions > 0 || st.LowDisk || st.DeletedJobs > 0) {
-					fmt.Printf("[cleanup] 清理完成：删除 %d 会话 + %d 成品目录，释放 %.2f GB，磁盘剩余 %.0f%%\n",
-						st.DeletedSessions, st.DeletedJobs, float64(st.FreedBytes)/1e9, st.FreePercent)
-				}
+				safeClean()
 			}
 		}
 	}()
@@ -183,6 +206,10 @@ func (d *Daemon) tick() {
 	for _, w := range watches {
 		d.check(w)
 	}
+	// 背压解除后补送之前留下的分段（2026-10-28）：旧版池满时只推一条“发布追平
+	// 后自动恢复”的通知就 return，分段既没送切也没人补送，最终被 segments_days
+	// 整目录删掉——通知里的承诺从来没实现过。
+	d.drainPendingClips()
 }
 
 // check 单直播间状态机：recording→确认会话存活；idle/error→开播检测
@@ -206,7 +233,7 @@ func (d *Daemon) check(w *store.Watch) {
 			// 时，拉流重试会一直失败、watch 状态永远 recording。看分段写入：
 			// 超过 MaxStaleSec 无新段 = 实锤下播，强制结束会话（endSession 收尾送切+置 idle）
 			if d.cfg.Live.MaxStaleSec > 0 {
-				if st := segDirStale(s.segDir); st >= time.Duration(d.cfg.Live.MaxStaleSec)*time.Second {
+				if st := segDirStale(s.segDir, s.startAt); st >= time.Duration(d.cfg.Live.MaxStaleSec)*time.Second {
 					fmt.Printf("[stale] 房间 %s 素材停滞 %.0fmin（≥%ds），判定下播，结束会话\n",
 						w.RoomID, st.Minutes(), d.cfg.Live.MaxStaleSec)
 					s.cancel()
@@ -359,6 +386,15 @@ func lowOf(high, low int) int {
 func (d *Daemon) startSession(w *store.Watch, info *RoomInfo) {
 	segDir := filepath.Join(d.cfg.DataDir, "live", fmt.Sprintf("%s_%s", w.RoomID, time.Now().Format("20060102_150405")))
 	if err := os.MkdirAll(segDir, 0o755); err != nil {
+		// 绝不能静默 return（2026-10-28 修）：旧版直接 return，不写 last_error、
+		// 不推送、状态不变，而 tick 与心跳照跳、/api/live/daemon 照报 running——
+		// 用户看到的是“待开播”，整晚零字节且永不自愈（磁盘满时的典型形态）。
+		fmt.Printf("[start] 房间 %s 建会话目录失败：%v\n", w.RoomID, err)
+		w.Status = "error"
+		w.LastError = fmt.Sprintf("建录制目录失败（磁盘满/权限？）：%v", err)
+		_ = d.store.UpdateWatch(w)
+		d.notify.Send("ClipStream 录制启动失败",
+			fmt.Sprintf("《%s》（房间 %s）无法开始录制：%v\n请检查磁盘剩余空间与目录权限。", info.Title, w.RoomID, err))
 		return
 	}
 
@@ -368,6 +404,7 @@ func (d *Daemon) startSession(w *store.Watch, info *RoomInfo) {
 		platform: w.Platform,
 		segDir:   segDir,
 		title:    info.Title,
+		startAt:  time.Now(),
 		cancel:   cancel,
 		done:     make(chan struct{}),
 	}
@@ -426,6 +463,26 @@ func (d *Daemon) startSession(w *store.Watch, info *RoomInfo) {
 // runLoop 会话录制循环：拉流 → 断流判定 → 重连/结束
 func (d *Daemon) runLoop(ctx context.Context, s *liveSession) {
 	defer d.endSession(s)
+	// 拉流失败可见性（2026-10-28）：旧版 playURL/StreamFLV 的错误只用于“是否下播”
+	// 判定，从不落库也不推送——CDN 403、磁盘写满、风控期 API 异常都表现为“录着但
+	// 零字节”，控制台长久停在 recording，没人能发现。这里限频（30 分钟一次）把
+	// 首个错误写进 last_error 并推手机，不刷屏。
+	var lastNotify time.Time
+	notifyFail := func(stage string, err error) {
+		if err == nil || time.Since(lastNotify) < 30*time.Minute {
+			return
+		}
+		lastNotify = time.Now()
+		msg := fmt.Sprintf("%s：%v", stage, err)
+		fmt.Printf("[stream] 房间 %s %s\n", s.roomID, msg)
+		if w, werr := d.store.WatchByRoomID(s.roomID); werr == nil {
+			w.LastError = msg
+			_ = d.store.UpdateWatch(w)
+		}
+		d.notify.Send("ClipStream 拉流异常",
+			fmt.Sprintf("《%s》（房间 %s）%s\n正在自动重试；若持续失败请检查 CDN 可用性与磁盘空间。", s.title, s.roomID, msg))
+	}
+
 	for attempt := 0; ; attempt++ {
 		if ctx.Err() != nil {
 			return
@@ -443,6 +500,7 @@ func (d *Daemon) runLoop(ctx context.Context, s *liveSession) {
 				}
 				attempt = 0
 			}
+			notifyFail("获取播放地址失败", err)
 			if !sleepCtx(ctx, 15*time.Second) {
 				return
 			}
@@ -450,7 +508,7 @@ func (d *Daemon) runLoop(ctx context.Context, s *liveSession) {
 		}
 
 		// 进程内拉流（分段写 segDir，onSeg 回调更新段计数；首段即算 1；重连续写段号）
-		_, _, err = StreamFLV(ctx, playURL, s.segDir, d.cfg.Live.SegmentSec, countSegFiles(s.segDir),
+		_, _, streamErr := StreamFLV(ctx, playURL, s.segDir, d.cfg.Live.SegmentSec, countSegFiles(s.segDir),
 			func(segIdx int, _ int64) { s.segCount.Store(int32(segIdx + 1)) })
 		if ctx.Err() != nil {
 			return
@@ -470,6 +528,7 @@ func (d *Daemon) runLoop(ctx context.Context, s *liveSession) {
 		if down {
 			return // 下播收工
 		}
+		notifyFail("拉流中断", streamErr)
 		if !sleepCtx(ctx, 5*time.Second) {
 			return
 		}
@@ -499,49 +558,222 @@ func (d *Daemon) endSession(s *liveSession) {
 
 	// 池背压：池已满时分段不送切（正在录的这场录完收尾，不中途掐断浪费
 	// 流量；素材留在会话目录，等磁盘治理按保留天数兑底，发布追平后新场次
-	// 恢复正常送切）
+	// 恢复正常送切）。
+	// 2026-10-28：跳过前先登记到 pending_clips.json——背压解除后由
+	// drainPendingClips 补送（旧版只推一条通知就 return，那些分段会被
+	// segments_days 整目录删掉，而通知里写的“自动恢复”从没发生过）。
 	if bp, _ := d.backpressureActive(); bp {
+		d.addPendingClip(s.segDir, s.title, s.roomID)
 		d.notify.Send("ClipStream 分段暂停送切",
-			fmt.Sprintf("待发池已满，《%s》（房间 %s）%d 个分段保留在磁盘未送切——发布追平后自动恢复", s.title, s.roomID, len(segs)))
+			fmt.Sprintf("待发池已满，《%s》（房间 %s）%d 个分段保留在磁盘，已登记待送切——发布追平后自动补送", s.title, s.roomID, len(segs)))
 		return
 	}
 
 	if d.cfg.Live.AutoClip {
-		// 碎段流判定（按段数 + 段大小，不按时长）：虎牙 CDN 是 5-15 秒短连接，一场直播
-		// 留下数百段且段均 ~0.5MB；B站长连接 600s 分段一场最多 ~10 段、段均数十 MB。
-		// 仅"段多且段小"才合并；段数多但段大（B站录满 6 小时=35 段）走逐段。
-		// 注：不能用 ffprobe 判段时长——直播流切出的 FLV 段 metadata duration 是"流内累计
-		// 时间"假值（实测 B站段标 4562s、虎牙段标 5718s，均非本段真实长度）。
-		isFrag := len(segs) >= 20
-		if isFrag {
-			var totalSize int64
-			for _, seg := range segs {
-				if fi, err := os.Stat(seg); err == nil {
-					totalSize += fi.Size()
-				}
-			}
-			if avgMB := float64(totalSize) / float64(len(segs)) / (1 << 20); avgMB >= 8 {
-				isFrag = false // 段均 ≥8MB：正常分段流（600s 段低码率也远超此值）
-			}
-		}
-		if isFrag {
-			merged, err := d.mergeAndQueue(segs, s.title, s.segDir)
-			if err != nil {
-				fmt.Printf("[queue] 房间 %s 碎段合并失败：%v（%d 段未送切）\n", s.roomID, err, len(segs))
-				d.notify.Send("ClipStream 碎段合并失败",
-					fmt.Sprintf("《%s》（房间 %s）%d 段未能送切：%v", s.title, s.roomID, len(segs), err))
-			} else {
-				fmt.Printf("[queue] 房间 %s 碎段合并：%d 段 → %d 个合并段送切\n", s.roomID, len(segs), merged)
-			}
+		if err := d.queueSession(segs, s.title, s.segDir); err != nil {
+			fmt.Printf("[queue] 房间 %s 送切失败：%v（%d 段未送切，已登记待补送）\n", s.roomID, err, len(segs))
+			d.notify.Send("ClipStream 切片排队失败",
+				fmt.Sprintf("《%s》（房间 %s）%d 段送入切片队列失败：%v（已登记，下一轮重试）", s.title, s.roomID, len(segs), err))
+			d.addPendingClip(s.segDir, s.title, s.roomID)
 		} else {
-			// 正常分段流：逐段直接送切（短尾巴残段交管线时长下限兜底）
-			for _, seg := range segs {
-				if err := d.queueClip(seg, s.title); err != nil {
-					d.notify.Send("ClipStream 切片排队失败",
-						fmt.Sprintf("分段 %s 送入切片队列失败：%v", seg, err))
-				}
+			// 送切完成标记：磁盘治理据此按 consumed_seg_days 更积极清理源分段
+			d.markQueued(s.segDir)
+		}
+	}
+}
+
+// queueSession 把一个会话目录的分段送切（碎段合流 / 正常分段逐段），
+// 供 endSession 与背压补送（drainPendingClips）共用，保证两条路径口径一致。
+func (d *Daemon) queueSession(segs []string, title, segDir string) error {
+	if len(segs) == 0 {
+		return nil
+	}
+	// 碎段流判定（按段数 + 段大小，不按时长）：虎牙 CDN 是 5-15 秒短连接，一场直播
+	// 留下数百段且段均 ~0.5MB；B站长连接 600s 分段一场最多 ~10 段、段均数十 MB。
+	// 仅"段多且段小"才合并；段数多但段大（B站录满 6 小时=35 段）走逐段。
+	// 注：不能用 ffprobe 判段时长——直播流切出的 FLV 段 metadata duration 是"流内累计
+	// 时间"假值（实测 B站段标 4562s、虎牙段标 5718s，均非本段真实长度）。
+	isFrag := len(segs) >= 20
+	if isFrag {
+		var totalSize int64
+		for _, seg := range segs {
+			if fi, err := os.Stat(seg); err == nil {
+				totalSize += fi.Size()
 			}
 		}
+		if avgMB := float64(totalSize) / float64(len(segs)) / (1 << 20); avgMB >= 8 {
+			isFrag = false // 段均 ≥8MB：正常分段流（600s 段低码率也远超此值）
+		}
+	}
+	if isFrag {
+		merged, err := d.mergeAndQueue(segs, title, segDir)
+		if err != nil {
+			return fmt.Errorf("碎段合并失败：%w", err)
+		}
+		fmt.Printf("[queue] 碎段合并：%d 段 → %d 个合并段送切\n", len(segs), merged)
+		return nil
+	}
+	// 正常分段流：逐段直接送切（短尾巴残段交管线时长下限兜底）
+	var firstErr error
+	sent := 0
+	for _, seg := range segs {
+		if err := d.queueClip(seg, title); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		sent++
+	}
+	if firstErr != nil {
+		return fmt.Errorf("%d/%d 段送切失败（首个错误：%w）", len(segs)-sent, len(segs), firstErr)
+	}
+	return nil
+}
+
+// ── 待送切登记（背压期间下播、分段留在磁盘的会话）──
+// 背景（2026-10-28）：池背压触发时 endSession 只推一条“发布追平后自动恢复”的通知
+// 就 return，分段既没送切也没人补送，最终被 segments_days 整目录删掉——通知里的
+// 承诺从来没实现过。现在把跳过的会话登记到 pending_clips.json，背压解除后自动
+// 补送；文件落盘所以跨 daemon 重启存活。
+
+type pendingClip struct {
+	SegDir string `json:"seg_dir"`
+	Title  string `json:"title"`
+	RoomID string `json:"room_id"`
+	At     int64  `json:"at"`
+}
+
+func (d *Daemon) pendingClipsFile() string {
+	return filepath.Join(d.cfg.DataDir, "live", "pending_clips.json")
+}
+
+func (d *Daemon) loadPendingClips() []pendingClip {
+	b, err := os.ReadFile(d.pendingClipsFile())
+	if err != nil {
+		return nil
+	}
+	var list []pendingClip
+	if err := json.Unmarshal(b, &list); err != nil {
+		return nil // 文件损坏：当作空（宁可丢登记不卡住循环）
+	}
+	return list
+}
+
+func (d *Daemon) savePendingClips(list []pendingClip) error {
+	p := d.pendingClipsFile()
+	if len(list) == 0 {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	b, err := json.Marshal(list)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(p, b, 0o644)
+}
+
+// PendingClipDirs 待送切的会话目录集合（磁盘治理白名单用：这些目录还有未消化的
+// 素材，不能被当成“超期空壳”删掉）
+func PendingClipDirs(dataDir string) map[string]bool {
+	out := map[string]bool{}
+	b, err := os.ReadFile(filepath.Join(dataDir, "live", "pending_clips.json"))
+	if err != nil {
+		return out
+	}
+	var list []pendingClip
+	if json.Unmarshal(b, &list) != nil {
+		return out
+	}
+	for _, pc := range list {
+		if pc.SegDir != "" {
+			out[filepath.Clean(pc.SegDir)] = true
+		}
+	}
+	return out
+}
+
+// addPendingClip 登记一个待送切会话（同目录去重）
+func (d *Daemon) addPendingClip(segDir, title, roomID string) {
+	d.pendingMu.Lock()
+	defer d.pendingMu.Unlock()
+	list := d.loadPendingClips()
+	for _, pc := range list {
+		if pc.SegDir == segDir {
+			return
+		}
+	}
+	list = append(list, pendingClip{SegDir: segDir, Title: title, RoomID: roomID, At: time.Now().Unix()})
+	if err := d.savePendingClips(list); err != nil {
+		fmt.Printf("[queue] 待送切登记失败（%s）：%v\n", segDir, err)
+	}
+}
+
+// queuedMarker 送切完成标记：防崩溃重启后把已送切的分段再送一次
+//（重复送切 = 同一分段生成两个 clips 任务，白烧 LLM 算力并污染审核台）
+func queuedMarker(segDir string) string { return filepath.Join(segDir, ".queued") }
+
+func (d *Daemon) markQueued(segDir string) {
+	_ = os.WriteFile(queuedMarker(segDir), []byte(strconv.FormatInt(time.Now().Unix(), 10)), 0o644)
+}
+
+// drainPendingClips 背压解除后补送登记的会话；仍满则不动，失败保留登记下轮重试
+func (d *Daemon) drainPendingClips() {
+	if !d.cfg.Live.AutoClip {
+		return
+	}
+	d.pendingMu.Lock()
+	defer d.pendingMu.Unlock()
+	list := d.loadPendingClips()
+	if len(list) == 0 {
+		return
+	}
+	// 背压仍开着：不补送（backpressureActive 自己会在状态翻转时推送）
+	if bp, _ := d.backpressureActive(); bp {
+		return
+	}
+
+	d.mu.Lock()
+	recording := map[string]bool{}
+	for _, s := range d.sessions {
+		recording[s.segDir] = true
+	}
+	d.mu.Unlock()
+
+	var keep []pendingClip
+	sentDirs, sentSegs := 0, 0
+	for _, pc := range list {
+		if recording[pc.SegDir] {
+			continue // 目录又在录了（新场次用新目录，理论上不会命中），留登记
+		}
+		if _, err := os.Stat(queuedMarker(pc.SegDir)); err == nil {
+			continue // 已送切过（上次处理完但没来得及写回登记）
+		}
+		segs := listSegFiles(pc.SegDir)
+		if len(segs) == 0 {
+			continue // 目录已不在/无有效段：登记作废（可能已被磁盘治理清理）
+		}
+		if err := d.queueSession(segs, pc.Title, pc.SegDir); err != nil {
+			fmt.Printf("[queue] 补送失败（%s）：%v——保留登记下轮重试\n", pc.SegDir, err)
+			keep = append(keep, pc)
+			continue
+		}
+		d.markQueued(pc.SegDir)
+		sentDirs++
+		sentSegs += len(segs)
+	}
+	if err := d.savePendingClips(keep); err != nil {
+		fmt.Printf("[queue] 待送切登记写回失败：%v\n", err)
+	}
+	if sentDirs > 0 {
+		fmt.Printf("[queue] 背压解除，补送 %d 个会话（%d 个分段）\n", sentDirs, sentSegs)
+		d.notify.Send("ClipStream 补送切片段",
+			fmt.Sprintf("待发池已消化，之前暂存未送切的 %d 个录制会话（%d 个分段）已补送切片管线", sentDirs, sentSegs))
 	}
 }
 
@@ -843,26 +1075,40 @@ func countSegFiles(dir string) int {
 	return len(matches)
 }
 
-// segDirStale 返回会话目录"最后写入距今"的时长：取最新文件 mtime（含目录本身，
-// 空目录/无段文件时用目录 mtime 兜底）。tick 每轮对 recording 会话调用一次，
-// 目录内文件数几百个时仅 stat 开销，可接受。
-func segDirStale(dir string) time.Duration {
-	fi, err := os.Stat(dir)
-	if err != nil {
-		return 0
-	}
-	latest := fi.ModTime()
+// segDirStale 返回会话目录“素材停滞”时长（自最后一次有实质写入至今）。
+// tick 每轮对 recording 会话调用一次，目录内文件数几百个时仅 stat 开销，可接受。
+//
+// 2026-10-28 修两个漏洞：
+//   1. 不再把目录 mtime 当基线：StreamFLV 在任何数据到达前就 os.Create 段文件，
+//      每次失败重连都会新建空段并刷新目录 mtime——“CDN 返回 200 但 body 立即
+//      EOF”的冷流下目录永远“新鲜”，max_stale_sec 永远不触发，会话永远
+//      recording，空段文件无上限增长（12 个/分钟 ≈ 1.7 万/天）。
+//   2. 不看 0 字节文件：新建的空段不是“素材在流动”；正在写但还没写满的当前段
+//      mtime 持续刷新，不会被误判为停滞。
+// 一个有效段都没有时从会话开始时刻（since）算；since 零值则返回 0（不判停滞）。
+func segDirStale(dir string, since time.Time) time.Duration {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return time.Since(latest)
+		return 0 // 目录不存在：交由会话层处理，这里不判停滞
 	}
+	var latest time.Time
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".flv") {
 			continue
 		}
-		if fi2, err := e.Info(); err == nil && fi2.ModTime().After(latest) {
-			latest = fi2.ModTime()
+		info, ierr := e.Info()
+		if ierr != nil || info.Size() == 0 {
+			continue // 空段（连上即 EOF 的产物）不算素材在流动
 		}
+		if info.ModTime().After(latest) {
+			latest = info.ModTime()
+		}
+	}
+	if latest.IsZero() {
+		if since.IsZero() {
+			return 0
+		}
+		return time.Since(since)
 	}
 	return time.Since(latest)
 }

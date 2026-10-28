@@ -313,12 +313,22 @@ func (s *Store) GetJob(id string) (*core.Job, error) {
 	return scanJob(row)
 }
 
+// listLogChars 列表接口回传的日志尾部长度（字符，非字节）。
+// 背景（2026-10-28）：control 每 2.5s 轮询 GET /api/jobs，而单条任务日志上限
+// 200KB（core.Job.AppendLog），100 条任务单次响应可达数 MB——本机 JSON 编解码
+// 与前端解析都白白被吃掉。列表只要“一眼看到卡在哪”，全量日志由详情面板
+// GET /api/jobs/{id} 与 SSE 增量负责。
+// 用 SQLite substr 的负索引（按字符切，不会把 UTF-8 汉字切成两半）。
+const listLogChars = 2000
+
+// ListJobs 任务列表（日志只回传尾部 listLogChars 字符；需要全量日志用 GetJob）
 func (s *Store) ListJobs(limit int) ([]*core.Job, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := s.db.Query(`SELECT id,kind,status,stage,progress,input,params,result,error,log,dir,created_at,updated_at
-		FROM jobs ORDER BY created_at DESC LIMIT ?`, limit)
+	rows, err := s.db.Query(`SELECT id,kind,status,stage,progress,input,params,result,error,
+			substr(COALESCE(log,''), -?1) AS log,dir,created_at,updated_at
+		FROM jobs ORDER BY created_at DESC LIMIT ?2`, listLogChars, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -472,17 +482,21 @@ type PoolItem struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
-// ErrAlreadyInPool 同一切片已有待发条目（入池查重：审核台双击/重复审核防护）
-var ErrAlreadyInPool = errors.New("该切片已在待发池中，请勿重复入池")
+// ErrAlreadyInPool 同一切片已有待发/已发布条目（重复入池防护）
+var ErrAlreadyInPool = errors.New("该切片已在待发池或已发布过，请勿重复入池（如需重发请先在发布中心删掉原条目）")
 
-// AddPoolItem 切片入池（审核通过）。同 (source_job, clip) 已有 pending 条目时
-// 拒绝（ErrAlreadyInPool）：旧版无查重，双击入池即重复发布同一视频
+// AddPoolItem 切片入池（审核通过）。同 (source_job, clip) 已有 pending **或
+// dispatched** 条目时拒绝（ErrAlreadyInPool）。
+// 2026-10-28 收紧：旧版只查 pending——一个切片发布成功后（dispatched）用户在
+// 审核台再点一次入池没有任何拦截，于是同一视频同一平台再发一遍。那个号有
+// 封禁史，重复投稿是成本最高的一类错误，宁可挡住让人先删条目。
+// failed（已退池终态）不在此列：重新入池重试是合理操作。
 func (s *Store) AddPoolItem(it *PoolItem) (int64, error) {
 	if it.Status == "" {
 		it.Status = "pending"
 	}
 	var existing int64
-	if err := s.db.QueryRow(`SELECT id FROM content_pool WHERE source_job=? AND clip=? AND status='pending' LIMIT 1`,
+	if err := s.db.QueryRow(`SELECT id FROM content_pool WHERE source_job=? AND clip=? AND status IN ('pending','dispatched') LIMIT 1`,
 		it.SourceJob, it.Clip).Scan(&existing); err == nil {
 		return existing, ErrAlreadyInPool
 	}

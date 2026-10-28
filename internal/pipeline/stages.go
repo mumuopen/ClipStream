@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"chopperbot/internal/core"
 	"chopperbot/internal/engine"
@@ -397,16 +398,27 @@ func filterClips(clips []engine.Clip, duration float64, fromLLM bool) (kept []en
 	return kept, rejected
 }
 
+// maxTranscriptRunes 送入 LLM 的转写文本上限（按字符数，不按字节）。
+// 旧版用 sb.Len() > 8000 按字节截断：中文 UTF-8 下 8000 字节≈2666 字，
+// 而 600s 分段在游戏主播语速（~400 字/分钟）下可达 4000 字——后半场永远
+// 进不了候选集，而系统提示词又要求“时间必须严格取自文本时间戳”，于是整场
+// 后半段的高光永远选不出来（等分回退也不会补：len(clips)>0 即不再回退）。
+// 12000 字≈600s 快语速全量，DeepSeek 128k 上下文完全吃得下。
+const maxTranscriptRunes = 12000
+
 // llmHighlight 用 LLM 从转写文本 + 弹幕热点（双信号）选出高光区间
 func llmHighlight(ctx context.Context, llm *engine.LLMClient, segs []engine.Segment, hotspots []Hotspot) ([]engine.Clip, error) {
 	var sb strings.Builder
+	runes := 0
 	for _, s := range segs {
 		text := strings.TrimSpace(s.Text)
 		if text == "" {
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("[%.1f-%.1f] %s\n", s.Start, s.End, text))
-		if sb.Len() > 8000 {
+		line := fmt.Sprintf("[%.1f-%.1f] %s\n", s.Start, s.End, text)
+		sb.WriteString(line)
+		runes += utf8.RuneCountInString(line)
+		if runes > maxTranscriptRunes {
 			break
 		}
 	}

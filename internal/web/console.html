@@ -450,6 +450,9 @@ const I18N = {
     live_empty: '还没有盯播的直播间', live_empty2: '添加后开播自动录、下播自动切片',
     live_seg: '段', live_elapsed: '已录',
     live_hint: '每 60 秒检测一次开播；自动录制（600秒/段）→ 下播自动切片进审核台 → 手机收通知。',
+    live_daemon_on: '录制守护运行中',
+    live_daemon_off: '录制守护未运行——开播不会被录制！请启动 clipstream-daemon',
+    live_last_beat: '最后心跳',
     live_confirm_del: '取消盯播并停止录制？（已录文件保留）',
     live_bind: '发到账号', live_bind_none: '按标签自动', live_bind_ok: '已绑定：本房间切片优先发到该账号',
     barrage_ph: '选择直播间（录制时自动统计弹幕）', barrage_nodata: '暂无弹幕数据（直播中才有）',
@@ -522,6 +525,9 @@ const I18N = {
     live_bind: 'publish to', live_bind_none: 'auto by label', live_bind_ok: 'bound: clips from this room go to this account first',
     live_seg: 'seg', live_elapsed: 'for',
     live_hint: 'Checked every 60s; auto-record (600s/seg) → auto-clip to review → phone notify.',
+    live_daemon_on: 'Recorder daemon is running',
+    live_daemon_off: 'Recorder daemon is NOT running -- streams will not be recorded! Start clipstream-daemon',
+    live_last_beat: 'last heartbeat',
     live_confirm_del: 'Unfollow and stop recording this room? (recordings kept)',
     barrage_ph: 'Select a room (chat counted while live)',
     barrage_nodata: 'No danmaku yet (appears while live)',
@@ -751,20 +757,48 @@ function renderReviewDiff(el) {
 
 /* ═══════════ 页面：直播关注（M4，对齐原版 Live Follow/LiverFollower）═══════════ */
 let watches = [];
+// 录制守护进程存活状态（2026-10-28）：此前直播关注页不展示 daemon 状态，
+// daemon 没启动或崩了时页面只显示“待开播”，提示语却说“每 60 秒检测一次开播”——
+// 用户会以为只是没开播，整晚不录。现在页顶常驻一口状态灯。
+let daemonInfo = { running: null, last_beat: 0 };
+async function refreshDaemon() {
+  try {
+    daemonInfo = await fetchJSON('/api/live/daemon');
+  } catch (e) {
+    daemonInfo = { running: null, last_beat: 0 };
+  }
+  const el = document.getElementById('daemon-status');
+  if (el) renderDaemonStatus(el);
+}
+function renderDaemonStatus(el) {
+  if (daemonInfo.running === null) {
+    el.innerHTML = '';
+    return;
+  }
+  if (daemonInfo.running) {
+    el.innerHTML = `<div class="hint" style="color:var(--ok)">● ${T('live_daemon_on')}</div>`;
+    return;
+  }
+  const ago = daemonInfo.last_beat ? fmtDur((Date.now() / 1000) - daemonInfo.last_beat) : '';
+  el.innerHTML = `<div class="err-line">✗ ${T('live_daemon_off')}${ago ? '（' + T('live_last_beat') + ' ' + ago + '）' : ''}</div>`;
+}
 async function refreshWatches() {
   try { watches = await fetchJSON('/api/live/watches'); } catch (e) { return; }
+  refreshDaemon();
   if (page !== 'livefollow') return;
   // 输入框与列表分离：轮询只刷列表，永不重建输入框（贴链接打字到一半不再被清空）
   if ($('#watch-list')) renderWatchList(); else renderLiveFollow($('#page'));
 }
 function renderLiveFollow(el) {
   el.innerHTML = `
+    <div id="daemon-status"></div>
     <div class="feed"><input id="live-url" placeholder="${T('live_ph')}">
     <button onclick="addWatch()">${T('btn_add')}</button></div>
     <div id="watch-list"></div>
     <div class="hint" style="margin-top:10px">${T('live_hint')}</div>`;
   $('#live-url').addEventListener('keydown', e => { if (e.key === 'Enter') addWatch(); });
   renderWatchList();
+  refreshDaemon();
   // 绑定下拉需要账号列表：发布中心之外也要能用（不发发布中心时 accounts 为空）
   if (!accounts.length) { fetchJSON('/api/accounts').then(a => { accounts = a || []; renderWatchList(); }).catch(() => {}); }
 }
@@ -1519,9 +1553,26 @@ async function submitPublish() {
     await fetchJSON('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'publish', input: JSON.stringify(req) }) });
     closePubModal(); refresh();
   } catch (e) {
-    // 429 = 三闸拦截（间隔/每日上限）：不是失败，是风控保护——把原因说清
-    if (String(e.message).startsWith('429')) { alert('发布被节奏保护拦下：' + String(e.message).replace(/^429\s*/, '') + '\n\n若确需立即发布，可到「设置」页把发布间隔/每日上限临时调大（或设 0 解除）。'); return; }
-    alert('创建发布任务失败：' + e.message); 
+    const msg = String(e.message);
+    // 429 = 发布节流闸拦截（风控冷却/在途上限/间隔/每日上限）：不是失败，是保护。
+    // 按闸给可行动建议（2026-10-28）：旧版对四闸统一说“调大间隔/每日”，
+    // 而在途上限与风控冷却两闸调那个没用——风控冷却期调快只会把冷却翻倍。
+    if (msg.startsWith('429')) {
+      const why = msg.replace(/^429\s*/, '');
+      let tip = '';
+      if (why.includes('风控冷却')) {
+        tip = '账号正在平台限流冷却中，强行发布只会把冷却翻倍（24→48→96h，封顶 7 天）。\n建议等冷却到期，或先在「发布中心」确认平台投稿已恢复正常再手动恢复。';
+      } else if (why.includes('在途')) {
+        tip = '同一账号还有上传未完成的发布任务，等它跑完即可（在「任务」页看进度）。这闸不必也不建议调大。';
+      } else if (why.includes('间隔')) {
+        tip = '距上次发布还不够久。确需提前，可到「设置」页临时调小发布间隔（设 0 解除）。';
+      } else if (why.includes('每日')) {
+        tip = '该账号今日配额已用完。确需多发，可到「设置」页临时调大每日上限（设 0 解除）。';
+      }
+      alert('发布被节奏保护拦下：\n' + why + (tip ? '\n\n' + tip : ''));
+      return;
+    }
+    alert('创建发布任务失败：' + e.message);
   }
 }
 // 不采用：丢弃整个待审任务的全部切片（现状粒度：一次录制/下载的产物一起处理）
