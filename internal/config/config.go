@@ -20,6 +20,7 @@ type Config struct {
 	Live      Live      `yaml:"live"`
 	Retention Retention `yaml:"retention"`
 	AutoReview AutoReview `yaml:"auto_review"`
+	PublishGate PublishGate `yaml:"publish_gate"`
 }
 
 type Engines struct {
@@ -147,6 +148,69 @@ type AutoReview struct {
 	BannedWords []string `yaml:"banned_words" json:"banned_words"` // 敏感词黑名单（标题+转写匹配）
 }
 
+// PublishGate 发布前体检门（第 1 期止血版）：每条候选切片导出后、发布前过四关——
+// ①干净度（水印/广告 OCR）②风格基线漂移（场级）③高光分阈值 ④人工确认（审核台）。
+// 任一关不过即拦截（enforce）；dry-run 只记决策日志不拦截。开关关闭时
+// 流水线行为与现状完全一致。
+// 背景（2026-10 事故）：非高光片段被当高光发出、直播间贴片广告/水印混入成品、
+// 直播间风格已变系统无感知继续出片——本闸只做检测拦截+决策日志，不抹水印、
+// 不做发布后数据回标（第 2 期）。
+type PublishGate struct {
+	Enabled bool   `yaml:"enabled" json:"enabled"` // 总开关（默认 true；关=流水线与现状完全一致）
+	Mode    string `yaml:"mode" json:"mode"`    // dry-run（默认，只记日志不拦）| enforce（真拦截）
+	// —— 关卡 1 干净度 ——
+	Clean CleanGate `yaml:"clean" json:"clean"`
+	// —— 关卡 2 风格基线（daemon 侧建基线/比对，切片侧读漂移标记） ——
+	Style StyleGate `yaml:"style" json:"style"`
+	// —— 关卡 3 高光分阈值（接现有 LLM Score；宁缺毋滥，低于阈值拦截） ——
+	MinScore        int  `yaml:"min_score" json:"min_score"`         // 默认 60
+	RejectUnscored  bool `yaml:"reject_unscored" json:"reject_unscored"` // 等分切片（无 LLM Score=0）是否拦（默认 false：只标注不拦）
+	// —— 通用 ——
+	SampleIntervalSec int    `yaml:"sample_interval_sec" json:"sample_interval_sec"` // 干净度抽帧间隔，默认 30s
+	SceneDetect      bool   `yaml:"scene_detect" json:"scene_detect"`             // 补充采样场景切换帧（ffmpeg select=gt(scene,0.4)）
+	ClipTimeoutSec   int    `yaml:"clip_timeout_sec" json:"clip_timeout_sec"`     // 单片检测总上限，默认 120s；超时/工具崩溃一律不发（fail-closed）
+	// 按直播间维护的检测配置（key=room_id）；未配置的房间只跑通用关（2/3），关卡 1 自动跳过
+	Rooms map[string]*RoomGate `yaml:"rooms" json:"rooms"`
+}
+
+// CleanGate 关卡 1：干净度检测（已知水印模板匹配 + 固定位置广告文字 OCR）
+type CleanGate struct {
+	// OCR 引擎：tesseract 可执行文件路径（走 whisper 同款外部 CLI 集成）。
+	// 空 = 未配置：广告 OCR 与台标 OCR 自动跳过（决策日志记 skipped），模板匹配照常
+	OCRBin  string `yaml:"ocr_bin" json:"ocr_bin"`
+	OCRLang string `yaml:"ocr_lang" json:"ocr_lang"` // tesseract 语言包，默认 chi_sim+eng
+	// 命中处置：reject=剔除该片段（默认）| crop=按 SafeCrop 安全区裁切重导出 | manual=转人工
+	Action   string `yaml:"action" json:"action"`
+	SafeCrop string `yaml:"safe_crop" json:"safe_crop"` // crop 处置的安全区矩形 "x,y,w,h"（避开水印区重导出）
+}
+
+// StyleGate 关卡 2：风格基线与漂移（daemon 每段落地时建基线/比对；
+// 第一版只要能报警：允许误报，尽量不漏报）
+type StyleGate struct {
+	HashThresh  int     `yaml:"hash_thresh" json:"hash_thresh"`    // pHash 汉明距离阈值（64bit），默认 12：超此值判漂移
+	ColorThresh float64 `yaml:"color_thresh" json:"color_thresh"` // 主色调直方图距离阈值 0~1，默认 0.35
+	SizeThresh  float64 `yaml:"size_thresh" json:"size_thresh"`  // 分辨率变化阈值：宽高任一缩比低于此值判漂移，默认 0.9
+}
+
+// RoomGate 单个直播间的检测配置（手工框选区域起步：坐标按源视频分辨率）
+type RoomGate struct {
+	// 已知水印位：区域内做模板匹配（Tpl=从无污染帧截的水印小图；未配 Tpl 的项只跳过匹配）
+	Watermarks []RectConf `yaml:"watermarks" json:"watermarks"`
+	// 固定位置广告文字区域：区域内 OCR，命中 Keywords 任一词即污染
+	AdRegions  []RectConf `yaml:"ad_regions" json:"ad_regions"`
+}
+
+// RectConf 矩形区域配置（像素坐标，手工框选起步——从源视频截图量坐标填这里）
+type RectConf struct {
+	Name     string   `yaml:"name" json:"name"`       // 展示名（如「右上角贴片」）
+	X        int      `yaml:"x" json:"x"`
+	Y        int      `yaml:"y" json:"y"`
+	W        int      `yaml:"w" json:"w"`
+	H        int      `yaml:"h" json:"h"`
+	Tpl      string   `yaml:"tpl" json:"tpl"`         // 模板图路径（watermark 用；无则跳过模板匹配）
+	Keywords []string `yaml:"keywords" json:"keywords"` // OCR 命中词（ad_region 用）
+}
+
 func Default() *Config {
 	return &Config{
 		DataDir: "./data",
@@ -158,6 +222,13 @@ func Default() *Config {
 		Live:      Live{CheckIntervalSec: 60, SegmentSec: 600, AutoClip: true, MaxStaleSec: 300, PreviewKeywords: []string{"预告", "凌晨见"}, PoolHigh: 20, PoolLow: 10},
 		Retention: Retention{Enabled: true, SegmentsDays: 7, ConsumedSegDays: 1, MinFreePercent: 10, CheckMinutes: 60, MaxUsagePercent: 50, PublishedKeepDays: 3},
 		AutoReview: AutoReview{Enabled: false, MinScore: 60, HardMinDurSec: 15, HardMaxDurSec: 120, BannedWords: []string{}},
+		PublishGate: PublishGate{
+			Enabled: true, Mode: "dry-run", SampleIntervalSec: 30, SceneDetect: true, ClipTimeoutSec: 120,
+			MinScore: 60, RejectUnscored: false,
+			Clean:  CleanGate{OCRLang: "chi_sim+eng", Action: "reject"},
+			Style:  StyleGate{HashThresh: 12, ColorThresh: 0.35, SizeThresh: 0.9},
+			Rooms:  map[string]*RoomGate{},
+		},
 	}
 }
 

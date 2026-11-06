@@ -18,6 +18,7 @@ import (
 
 	"chopperbot/internal/core"
 	"chopperbot/internal/engine"
+	"chopperbot/internal/gate"
 )
 
 // clipStages M1 搬运转译管线：下载 → 转写 → 高光 → 切片 → 审核
@@ -525,6 +526,7 @@ func stageCut(ctx context.Context, job *core.Job, env *Env) error {
 	}
 
 	var results []ClipResult
+	gated := 0 // 体检门拦截计数（enforce 拦截不入 results；全拦时错误文案与解码失败区分）
 	for i, c := range clips {
 		outPath := filepath.Join(clipsDir, fmt.Sprintf("clip_%02d.mp4", i+1))
 		if err := env.FFMPEG.Cut(ctx, video, outPath, c.Start, c.End); err != nil {
@@ -537,8 +539,45 @@ func stageCut(ctx context.Context, job *core.Job, env *Env) error {
 		if _, err := os.Stat(cover); err == nil {
 			coverRel = relPath(job.Dir, cover) // 提取失败时不留 404 引用
 		}
+
+		// ── 发布前体检门（第 1 期止血版）：导出后、入审核台/池之前过四关 ──
+		// 开关关闭（enabled=false）时本段整体不进，行为与现状完全一致；
+		// dry-run 只记决策不拦截（pass 恒 true）；enforce 拦截的切片不入
+		// results（不进审核台/不进池），文件保留供审计；crop 处置换用裁切素材
+		finalPath := outPath
+		if env.Cfg.PublishGate.Enabled {
+			clipRel := relPath(job.Dir, outPath)
+			in := gate.Input{
+				ClipID:    job.ID + "/" + clipRel, // 决策日志唯一键（人工回填按此定位）
+				ClipPath:  outPath,
+				SessionID: sessionFromSegPath(video),
+				RoomID:    RoomIDFromPath(video),
+				Start:     c.Start,
+				End:       c.End,
+				Score:     c.Score,
+				FFmpegBin: env.Cfg.Engines.FFmpeg,
+				FramesDir: filepath.Join(env.Cfg.DataDir, "gate", "frames", sanitizeGateID(job.ID+"_"+clipRel)),
+			}
+			dec := gate.Check(ctx, &env.Cfg.PublishGate, env.Store, in)
+			if env.GateLog != nil {
+				_ = env.GateLog.Append(dec)
+			}
+			env.log(job, "[体检] 切片 %02d：%s（关1=%s 关2=%s 关3=%s，%dms）%s",
+				i+1, dec.Final, dec.Gate1.Status, dec.Gate2.Status, dec.Gate3.Status,
+				dec.CostMs, gateSummary(dec))
+			if !dec.Pass {
+				gated++
+				env.log(job, "[体检] 切片 %02d 已拦截（%s）——不进入审核台，文件保留供审计", i+1, dec.Final)
+				continue
+			}
+			if dec.CroppedPath != "" {
+				finalPath = dec.CroppedPath
+				env.log(job, "[体检] 切片 %02d 已按安全区裁切：%s", i+1, relPath(job.Dir, finalPath))
+			}
+		}
+
 		results = append(results, ClipResult{
-			File:  relPath(job.Dir, outPath),
+			File:  relPath(job.Dir, finalPath),
 			Cover: coverRel,
 			Title: c.Title,
 			Start: c.Start,
@@ -548,10 +587,44 @@ func stageCut(ctx context.Context, job *core.Job, env *Env) error {
 		env.log(job, "✔ 切片 %02d：%.0fs-%.0fs ｜ %s", i+1, c.Start, c.End, c.Title)
 	}
 	if len(results) == 0 {
+		if gated > 0 && gated == len(clips) {
+			return fmt.Errorf("全部 %d 个切片被体检门拦截（%s 模式）——详见任务日志与 data/gate/decisions.jsonl", gated, env.Cfg.PublishGate.Mode)
+		}
 		return errors.New("所有切片均失败，请检查 ffmpeg 与源文件")
 	}
 	job.SetResult(map[string]any{"clips": results})
 	return nil
+}
+
+// sessionFromSegPath 从分段/合并产物路径解析场标识（room_ts 目录名）。
+// 与 daemon 侧 sessionKey（segDir basename）同口径，保证切片与场基线可关联
+func sessionFromSegPath(path string) string {
+	if m := liveSegRe.FindStringSubmatch(path); len(m) == 5 {
+		return m[1] + "_" + m[2]
+	}
+	return ""
+}
+
+// sanitizeGateID 帧目录名安全化（clipID 含 / 与 :）
+func sanitizeGateID(s string) string {
+	return strings.NewReplacer("/", "_", "\\", "_", ":", "_", "|", "_").Replace(s)
+}
+
+// gateSummary 体检命中/漂移的补充说明（无异常返回空串）
+func gateSummary(d *gate.Decision) string {
+	var parts []string
+	if d.Gate1 != nil && len(d.Gate1.Hits) > 0 {
+		for _, h := range d.Gate1.Hits {
+			parts = append(parts, fmt.Sprintf("命中%s@%.0fs conf=%.2f", h.Kind, h.T, h.Conf))
+		}
+	}
+	if d.Gate2 != nil && d.Gate2.Drifted {
+		parts = append(parts, "本场风格漂移")
+	}
+	if d.Gate1 != nil && d.Gate1.Note != "" {
+		parts = append(parts, d.Gate1.Note)
+	}
+	return strings.Join(parts, "；")
 }
 
 func relPath(base, full string) string {

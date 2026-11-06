@@ -7,6 +7,7 @@ import (
 	"chopperbot/internal/config"
 	"chopperbot/internal/core"
 	"chopperbot/internal/engine"
+	"chopperbot/internal/gate"
 	"chopperbot/internal/notify"
 	"chopperbot/internal/store"
 )
@@ -14,14 +15,15 @@ import (
 // Env 管线运行环境：引擎 + 存储 + 事件总线
 
 type Env struct {
-	Cfg    *config.Config
-	Store  *store.Store
-	YTDLP  *engine.YTDLP
-	FFMPEG *engine.FFMPEG
-	ASR    engine.ASR
-	LLM    *engine.LLMClient
-	Bus    *core.Bus
-	Notify *notify.Pushme
+	Cfg     *config.Config
+	Store   *store.Store
+	YTDLP   *engine.YTDLP
+	FFMPEG  *engine.FFMPEG
+	ASR     engine.ASR
+	LLM     *engine.LLMClient
+	Bus     *core.Bus
+	Notify  *notify.Pushme
+	GateLog *gate.DecisionLog // 体检门决策日志（nil 时体检照跑，仅落任务日志不落 JSONL）
 }
 
 func (env *Env) log(j *core.Job, format string, args ...any) {

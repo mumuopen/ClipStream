@@ -29,6 +29,7 @@ import (
 	"chopperbot/internal/detach"
 	"chopperbot/internal/engine"
 	"chopperbot/internal/engines"
+	"chopperbot/internal/gate"
 	"chopperbot/internal/live"
 	"chopperbot/internal/notify"
 	"chopperbot/internal/pipeline"
@@ -37,7 +38,7 @@ import (
 	"chopperbot/internal/web"
 )
 
-const version = "0.6.5"
+const version = "0.7.0"
 
 func main() {
 	log.SetFlags(log.LstdFlags)
@@ -311,6 +312,22 @@ func engineCheck(cfg *config.Config) {
 	} else {
 		fmt.Printf("  LLM   : %s  model=%s\n", base(cfg.LLM.BaseURL), cfg.LLM.Model)
 	}
+	// 体检门 OCR（可选引擎）：未配只影响广告文字/台标检测，模板匹配照常
+	if g := &cfg.PublishGate; g.Enabled {
+		fmt.Printf("── 体检门：%s %s（干净度抽帧间隔 %ds/超时 %ds）", modeLabel(g.Mode), "开启", g.SampleIntervalSec, g.ClipTimeoutSec)
+		if g.Clean.OCRBin == "" {
+			fmt.Printf("  △ OCR: 未配置（广告文字/台标检测跳过；装 tesseract 后填 publish_gate.clean.ocr_bin）\n")
+		} else {
+			fmt.Printf("  OCR  : %s\n", g.Clean.OCRBin)
+		}
+	}
+}
+
+func modeLabel(mode string) string {
+	if mode == "enforce" {
+		return "enforce（拦截）"
+	}
+	return "dry-run（只记日志不拦）"
 }
 
 // checkBin 引擎检查：LookPath 查存在；带 smokeArgs 时真实执行一次版本命令，
@@ -405,6 +422,7 @@ type app struct {
 	bus      *core.Bus
 	runner   *pipeline.Runner
 	notifier *notify.Pushme
+	gateLog  *gate.DecisionLog // 体检门决策日志（人工回填入口；nil=未初始化，回填跳过）
 }
 
 func setup(cfgPath string, reset bool) (*app, error) {
@@ -428,17 +446,25 @@ func setup(cfgPath string, reset bool) (*app, error) {
 	bus := core.NewBus()
 	ff := &engine.FFMPEG{Bin: cfg.Engines.FFmpeg, ProbeBin: cfg.Engines.Probe}
 	notifier := notify.NewPushme(cfg.Notify.Pushme)
-	env := &pipeline.Env{
-		Cfg:    cfg,
-		Store:  st,
-		YTDLP:  &engine.YTDLP{Bin: cfg.Engines.YtDlp},
-		FFMPEG: ff,
-		ASR:    &engine.WhisperTranscriber{Bin: cfg.Engines.ASR.Binary, Model: cfg.Engines.ASR.Model, FF: ff},
-		LLM:    engine.NewLLMClient(cfg.LLM.BaseURL, cfg.LLM.APIKey, cfg.LLM.Model, cfg.LLM.Thinking, cfg.LLM.Proxy),
-		Bus:    bus,
-		Notify: notifier,
+	// 体检门决策日志：初始化失败不阻断服务（体检照跑，JSONL 缺席只损失回填能力）
+	var gateLog *gate.DecisionLog
+	if gl, err := gate.OpenDecisionLog(cfg.DataDir); err == nil {
+		gateLog = gl
+	} else {
+		fmt.Printf("[gate] 决策日志初始化失败（体检继续，决策 JSONL 与人工回填不可用）: %v\n", err)
 	}
-	return &app{cfg: cfg, store: st, bus: bus, runner: pipeline.NewRunner(env), notifier: notifier}, nil
+	env := &pipeline.Env{
+		Cfg:     cfg,
+		Store:   st,
+		YTDLP:   &engine.YTDLP{Bin: cfg.Engines.YtDlp},
+		FFMPEG:  ff,
+		ASR:     &engine.WhisperTranscriber{Bin: cfg.Engines.ASR.Binary, Model: cfg.Engines.ASR.Model, FF: ff},
+		LLM:     engine.NewLLMClient(cfg.LLM.BaseURL, cfg.LLM.APIKey, cfg.LLM.Model, cfg.LLM.Thinking, cfg.LLM.Proxy),
+		Bus:     bus,
+		Notify:  notifier,
+		GateLog: gateLog,
+	}
+	return &app{cfg: cfg, store: st, bus: bus, runner: pipeline.NewRunner(env), notifier: notifier, gateLog: gateLog}, nil
 }
 
 func (a *app) newJob(input, kind string) (*core.Job, error) {
@@ -540,7 +566,7 @@ func doServe(cfgPath string) error {
 	// M5 每日摘要：早上 09:00 pushme 昨天发生了什么（挂机视角）
 	go dailyDigestTicker(app)
 
-	srv := web.NewServer(app.cfg, cfgPath, app.store, app.runner, app.bus)
+	srv := web.NewServer(app.cfg, cfgPath, app.store, app.runner, app.bus, app.gateLog)
 	addr := app.cfg.Web.Listen
 	if addr == "" {
 		addr = "127.0.0.1:8899"

@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"io/fs"
 	"log"
 	"math/rand"
@@ -24,6 +27,7 @@ import (
 	"chopperbot/internal/biliapi"
 	"chopperbot/internal/config"
 	"chopperbot/internal/core"
+	"chopperbot/internal/gate"
 	"chopperbot/internal/live"
 	"chopperbot/internal/pipeline"
 	"chopperbot/internal/publish"
@@ -39,13 +43,14 @@ type Server struct {
 	store   *store.Store
 	runner  *pipeline.Runner
 	bus     *core.Bus
+	gateLog *gate.DecisionLog // 体检门决策日志（人工回填；nil 时回填跳过）
 
-	loginMu      sync.Mutex
-	qrSessions   map[string]*qrSession // 扫码登录会话（B站 passport 原生 API）
+	loginMu    sync.Mutex
+	qrSessions map[string]*qrSession // 扫码登录会话（B站 passport 原生 API）
 }
 
-func NewServer(cfg *config.Config, cfgPath string, st *store.Store, r *pipeline.Runner, bus *core.Bus) *Server {
-	return &Server{cfg: cfg, cfgPath: cfgPath, store: st, runner: r, bus: bus, qrSessions: map[string]*qrSession{}}
+func NewServer(cfg *config.Config, cfgPath string, st *store.Store, r *pipeline.Runner, bus *core.Bus, gl *gate.DecisionLog) *Server {
+	return &Server{cfg: cfg, cfgPath: cfgPath, store: st, runner: r, bus: bus, gateLog: gl, qrSessions: map[string]*qrSession{}}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -76,6 +81,10 @@ func (s *Server) Handler() http.Handler {
 	// 维护：一键清理历史任务（预览与执行分开，UI 确认弹窗用预览数字）
 	mux.HandleFunc("GET /api/maintenance/purge_preview", s.purgePreview)
 	mux.HandleFunc("POST /api/maintenance/purge", s.purgeExecute)
+	// 体检门：人工确认后一键更新房间风格基线（关卡 2 漂移解除入口）
+	mux.HandleFunc("POST /api/gate/rebaseline", s.gateRebaseline)
+	// 体检决策查询（体检单：审核台详情/回放报告用）
+	mux.HandleFunc("GET /api/gate/decisions", s.gateDecisions)
 	// 全部配置后台化：运营参数 + LLM/引擎/发布段免改文件
 	mux.HandleFunc("GET /api/config", s.getConfig)
 	mux.HandleFunc("PUT /api/config", s.updateConfig)
@@ -526,6 +535,8 @@ func (s *Server) addPool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	it.ID = id
+	// 体检门关卡 4 人工确认回填：入池=人工通过（写回同一条决策记录）
+	s.recordGateHuman(it.SourceJob+"/"+it.Clip, "approved")
 	writeJSON(w, it)
 }
 
@@ -536,6 +547,153 @@ func (s *Server) deletePool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"ok": "true"})
+}
+
+// ── 体检门 API（关卡 2 漂移解除 + 决策查询 + 人工回填）──
+
+// recordGateHuman 人工回填（approved=通过/入池/直接发布，rejected=毙）：
+// 无决策记录（开关关闭期间的任务）静默跳过；仅记失败日志不打断业务
+func (s *Server) recordGateHuman(clipID, action string) {
+	if s.gateLog == nil || clipID == "" {
+		return
+	}
+	if err := s.gateLog.RecordHuman(clipID, action, "console"); err != nil && !gate.IsNotFound(err) {
+		log.Printf("[gate] 人工回填失败 %s %s: %v", action, clipID, err)
+	}
+}
+
+// recordGateHumanByJob 任务级回填（丢弃任务=全部切片标毙）：只覆盖仍 pending
+// 的记录（已有人工结论不翻案）
+func (s *Server) recordGateHumanByJob(jobID, action string) {
+	if s.gateLog == nil || jobID == "" {
+		return
+	}
+	if _, err := s.gateLog.RecordHumanByPrefix(jobID+"/", action, "console"); err != nil {
+		log.Printf("[gate] 任务级人工回填失败 %s %s: %v", action, jobID, err)
+	}
+}
+
+// gateRebaseline 人工确认风格变化是有意的：从本场最新分段重建基线（特征更新+
+// version+1+清漂移标记）——关卡 2 漂移解除的唯一入口
+func (s *Server) gateRebaseline(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RoomID string `json:"room_id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.RoomID == "" {
+		httpError(w, 400, "room_id 必填")
+		return
+	}
+	sid, _, _, drifted, ok := s.store.StyleBaseline(req.RoomID)
+	if !ok {
+		httpError(w, 404, "该房间无基线记录（先开播录制一段后自动建立）")
+		return
+	}
+	segDir := filepath.Join(s.cfg.DataDir, "live", sid)
+	seg, err := latestSeg(segDir)
+	if err != nil {
+		httpError(w, 500, "找不到本场分段素材："+err.Error())
+		return
+	}
+	// 最新段抽帧重建基线（与 daemon 建基线同口径：5 帧取中间帧）
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	frames, err := gate.ExtractCenterFrames(ctx, s.cfg.Engines.FFmpeg, seg,
+		filepath.Join(os.TempDir(), "gate_rebase_"+sanitizeGatePath(req.RoomID)), 5)
+	if err != nil {
+		httpError(w, 500, "基线抽帧失败："+err.Error())
+		return
+	}
+	f, err := decodeFrameFeature(frames[len(frames)/2].Path)
+	if err != nil {
+		httpError(w, 500, "特征提取失败："+err.Error())
+		return
+	}
+	b, _ := json.Marshal(f)
+	ver, err := s.store.UpsertStyleBaseline(req.RoomID, sid, string(b))
+	if err != nil {
+		httpError(w, 500, "基线落库失败："+err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "version": ver,
+		"note": fmt.Sprintf("房间 %s 基线已更新到 v%d（原状态：漂移=%v），本场后续切片恢复正常体检", req.RoomID, ver, drifted)})
+}
+
+// gateDecisions 决策日志查询：?clip_id= 单条体检单；?limit=尾部列表（回放报告用）
+func (s *Server) gateDecisions(w http.ResponseWriter, r *http.Request) {
+	if s.gateLog == nil {
+		writeJSON(w, []*gate.Decision{})
+		return
+	}
+	if clip := r.URL.Query().Get("clip_id"); clip != "" {
+		d, err := s.gateLog.Latest(clip)
+		if err != nil {
+			if gate.IsNotFound(err) {
+				httpError(w, 404, err.Error())
+				return
+			}
+			httpError(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, d)
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	list, err := s.gateLog.ListTail(limit)
+	if err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	if list == nil {
+		list = []*gate.Decision{}
+	}
+	writeJSON(w, list)
+}
+
+// latestSeg 会话目录里最新的一段（seg/merged 序号最大）
+func latestSeg(segDir string) (string, error) {
+	entries, err := os.ReadDir(segDir)
+	if err != nil {
+		return "", err
+	}
+	var best string
+	for _, e := range entries {
+		n := e.Name()
+		if e.IsDir() || !strings.HasSuffix(n, ".flv") {
+			continue
+		}
+		if !strings.HasPrefix(n, "seg_") && !strings.HasPrefix(n, "merged_") {
+			continue
+		}
+		if best == "" || n > filepath.Base(best) {
+			best = filepath.Join(segDir, n)
+		}
+	}
+	if best == "" {
+		return "", fmt.Errorf("目录 %s 无分段文件", segDir)
+	}
+	return best, nil
+}
+
+func sanitizeGatePath(s string) string {
+	return strings.NewReplacer("/", "_", "\\", "_", ":", "_").Replace(s)
+}
+
+// decodeFrameFeature 基线重建用：帧图 → 风格特征
+func decodeFrameFeature(path string) (gate.FrameFeatures, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return gate.FrameFeatures{}, err
+	}
+	defer f.Close()
+	img, _, err := image.Decode(f)
+	if err != nil {
+		return gate.FrameFeatures{}, err
+	}
+	return gate.FeaturesOf(img), nil
 }
 
 // ── 扫码登录（Go 原生：B站 passport TV 端二维码 API，协议与 biliup-rs 一致）──
@@ -1105,6 +1263,8 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 				httpError(w, 500, buildErr)
 				return
 			}
+			// 体检门关卡 4 人工确认回填：手动发布=人工通过
+			s.recordGateHuman(preq.SourceJob+"/"+preq.Clip, "approved")
 			writeJSON(w, job)
 			return
 		}
@@ -1197,6 +1357,10 @@ func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 404, err.Error())
 		return
 	}
+	// 体检门关卡 4 人工确认回填：删任务（审核台"不采用"）= 该任务全部切片标毙。
+	// 只覆盖仍 pending 的记录（已有人工结论的不翻案）；无体检记录（开关关闭
+	// 期间的任务）静默跳过
+	s.recordGateHumanByJob(id, "rejected")
 	writeJSON(w, map[string]string{"ok": "true"})
 }
 

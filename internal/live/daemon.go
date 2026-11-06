@@ -509,7 +509,12 @@ func (d *Daemon) runLoop(ctx context.Context, s *liveSession) {
 
 		// 进程内拉流（分段写 segDir，onSeg 回调更新段计数；首段即算 1；重连续写段号）
 		_, _, streamErr := StreamFLV(ctx, playURL, s.segDir, d.cfg.Live.SegmentSec, countSegFiles(s.segDir),
-			func(segIdx int, _ int64) { s.segCount.Store(int32(segIdx + 1)) })
+			func(segIdx int, _ int64) {
+				s.segCount.Store(int32(segIdx + 1))
+				// 体检门关卡2：分段落地 → 异步场级风格检查（首段建基线/后续比对；
+				// onSeg 在段切换点被同步调用，检测必须异步投递，绝不阻塞拉流）
+				go d.styleCheckAsync(s, segIdx)
+			})
 		if ctx.Err() != nil {
 			return
 		}

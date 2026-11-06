@@ -74,3 +74,38 @@ auto_review:                     # 自动审核（挂机无人值守）
   hard_min_dur_sec: 15           # 硬闸：短于此直接拒发
   hard_max_dur_sec: 120          # 硬闸：长于此直接拒发
   banned_words: []               # 质闸：标题含这些词不自动发（进人工审核台），如 ["违禁词A", "违禁词B"]
+
+publish_gate:                    # 发布前体检门（第 1 期止血版）：候选切片导出后、发布前过四关，
+                                 # 任一关不过即拦截；dry-run 只记日志。关=流水线与现状完全一致
+  enabled: true
+  mode: dry-run                  # dry-run=只记决策日志不拦截（交付默认）| enforce=真拦截
+  sample_interval_sec: 30        # 关卡1抽帧间隔（秒），另可选 scene_detect 补场景切换帧
+  scene_detect: true
+  clip_timeout_sec: 120          # 单片检测总上限；超时/工具崩溃一律不发（fail-closed）
+  min_score: 60                  # 关卡3：高光分阈值（接现有 LLM 评分，低于即拦，宁缺毋滥）
+  reject_unscored: false         # 等分切片（无 LLM 评分，Score=0）是否拦（默认只标注）
+  clean:                         # 关卡1：干净度（模板匹配 + 广告 OCR）
+    ocr_bin: ""                  # tesseract 路径（whisper 同款外部 CLI 集成）；空=OCR 检测跳过
+    ocr_lang: chi_sim+eng
+    action: reject               # 命中处置：reject=剔除 | crop=按 safe_crop 裁切 | manual=转人工
+    safe_crop: ""                # crop 安全区矩形 "x,y,w,h"（如 "0,80,1280,560" 避开水印区重导出）
+  style:                         # 关卡2：风格基线与漂移（daemon 建基线/比对；允许误报不漏报）
+    hash_thresh: 12              # pHash 汉明距离阈值（64bit），超过判漂移
+    color_thresh: 0.35           # 主色调直方图距离阈值 0~1
+    size_thresh: 0.9             # 分辨率缩比阈值：宽高任一低于此比例判漂移
+  rooms:                         # 按直播间维护（key=room_id）；未配房间关卡1自动跳过，关2/3照常
+    # "660000":                  # 示例（取消注释启用）：
+    #   watermarks:              # 已知水印位：区域内模板匹配
+    #     - name: 右上角贴片
+    #       x: 1000              # 区域矩形（像素）——手工框选起步：从源视频截图量坐标填这里
+    #       y: 20
+    #       w: 260
+    #       h: 80
+    #       tpl: ./configs/wm_660000.png   # 模板图（从无污染帧截的水印小图）
+    #   ad_regions:              # 固定位置广告文字：区域内 OCR，命中关键词即污染
+    #     - name: 底部广告条
+    #       x: 0
+    #       y: 900
+    #       w: 1280
+    #       h: 60
+    #       keywords: [广告, 赞助, 直播返利]

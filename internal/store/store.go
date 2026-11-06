@@ -145,6 +145,21 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("升级表 accounts（risk_pause_count）: %w", err)
 		}
 	}
+	// 场级风格基线（体检门关卡 2）：daemon 首段建基线，后续段比对；drifted=1
+	// 时该场所有候选默认拦截转人工，人工确认后 rebaseline 重建特征清标记
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS style_baseline (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		room_id TEXT NOT NULL,
+		session_id TEXT NOT NULL,
+		features TEXT NOT NULL DEFAULT '',
+		version INTEGER NOT NULL DEFAULT 1,
+		drifted INTEGER NOT NULL DEFAULT 0,
+		drift_note TEXT NOT NULL DEFAULT '',
+		created_at INTEGER,
+		updated_at INTEGER
+	)`); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -790,6 +805,62 @@ func (s *Store) AccountByID(id int64) (*Account, error) {
 		return scanAccount(rows)
 	}
 	return nil, fmt.Errorf("账号不存在: %d", id)
+}
+
+// ── 场级风格基线（体检门关卡 2）──
+// 生命周期：daemon 首段落地建基线（UpsertStyleBaseline）→ 后续段比对超阈值
+// MarkStyleDrift（每场一次）→ 切片侧 RoomStyleState 读 drifted 拦截转人工 →
+// 人工确认后 rebaseline（UpsertStyleBaseline 重建特征清标记，version+1）。
+
+// UpsertStyleBaseline 写/重建基线：同 (room_id, session_id) 已有行则特征重建+
+// version+1+清漂移标记（rebaseline 语义），无则新建 v1。返回新版本号
+func (s *Store) UpsertStyleBaseline(roomID, sessionID, features string) (int, error) {
+	now := time.Now().Unix()
+	var id int64
+	var ver int
+	err := s.db.QueryRow(`SELECT id,version FROM style_baseline WHERE room_id=? AND session_id=?`,
+		roomID, sessionID).Scan(&id, &ver)
+	switch {
+	case err == nil: // 重建（首段重录/人工确认 rebaseline）
+		ver++
+		_, err := s.db.Exec(`UPDATE style_baseline SET features=?,version=?,drifted=0,drift_note='',updated_at=? WHERE id=?`,
+			features, ver, now, id)
+		return ver, err
+	case errors.Is(err, sql.ErrNoRows):
+		if _, err := s.db.Exec(`INSERT INTO style_baseline (room_id,session_id,features,version,drifted,created_at,updated_at)
+			VALUES (?,?,?,?,0,?,?)`, roomID, sessionID, features, 1, now, now); err != nil {
+			return 0, err
+		}
+		return 1, nil
+	default:
+		return 0, err
+	}
+}
+
+// MarkStyleDrift 置该场漂移标记（note=偏差详情；重复调用幂等覆盖 note）
+func (s *Store) MarkStyleDrift(roomID, sessionID, note string) error {
+	_, err := s.db.Exec(`UPDATE style_baseline SET drifted=1,drift_note=?,updated_at=? WHERE room_id=? AND session_id=?`,
+		note, time.Now().Unix(), roomID, sessionID)
+	return err
+}
+
+// StyleBaseline 取房间最近一场的基线（daemon 比对用）
+func (s *Store) StyleBaseline(roomID string) (sessionID, features string, ver int, drifted bool, ok bool) {
+	var sid, ft string
+	var v, dr int
+	err := s.db.QueryRow(`SELECT session_id,features,version,drifted FROM style_baseline
+		WHERE room_id=? ORDER BY updated_at DESC, id DESC LIMIT 1`, roomID).Scan(&sid, &ft, &v, &dr)
+	if err != nil {
+		return "", "", 0, false, false
+	}
+	return sid, ft, v, dr == 1, true
+}
+
+// RoomStyleState 房间最近一场基线状态——gate.BaselineReader 接口实现
+// （体检门关卡 2 切片侧读：drifted=true → 整场候选拦截转人工）
+func (s *Store) RoomStyleState(roomID string) (drifted bool, ver int, ok bool) {
+	_, _, v, d, ok := s.StyleBaseline(roomID)
+	return d, v, ok
 }
 
 // ── 一键清理（历史任务与已完结池条目）──
